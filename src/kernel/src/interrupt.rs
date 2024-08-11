@@ -6,6 +6,7 @@ use crate::memory::paging::Page;
 use crate::memory::Frame;
 use crate::print;
 use crate::println;
+use crate::userland::scheduler::SCHEDULER;
 use crate::EntryFlags;
 use crate::MemoryController;
 use alloc::ffi::CString;
@@ -15,7 +16,6 @@ use spin::Mutex;
 use x2apic::lapic::xapic_base;
 use x2apic::lapic::LocalApic;
 use x2apic::lapic::LocalApicBuilder;
-use x2apic::lapic::TimerMode;
 use x86_64::structures::idt::PageFaultErrorCode;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use x86_64::VirtAddr;
@@ -58,7 +58,9 @@ lazy_static! {
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
-        idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
+        unsafe {
+            idt[InterruptIndex::Timer.as_usize()].set_handler_addr(VirtAddr::new(timer as u64));
+        }
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt[InterruptIndex::PrimaryATA.as_usize()].set_handler_fn(primary_ata_interrupt_handler);
         idt[InterruptIndex::SecondaryATA.as_usize()]
@@ -217,12 +219,66 @@ extern "x86-interrupt" fn double_fault_handler(
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
+#[naked]
+#[no_mangle]
+fn timer() {
     unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
+        asm!(
+            r#"
+        push r11
+        push r10
+        push r9
+        push r8
+        push rdi
+        push rsi
+        push rdx
+        push rcx
+        push rax
+        
+        mov rdi, rsp
+        call inner_timer
+        pop rax
+        pop rcx
+        pop rdx
+        pop rsi
+        pop rdi
+        pop r8
+        pop r9
+        pop r10
+        pop r11
+        iretq
+        "#,
+            options(noreturn)
+        );
     }
 }
 
+#[no_mangle]
+extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
+    let mut process = match SCHEDULER.get() {
+        Some(scheduler) => scheduler.lock(),
+        None => {
+            clean_up();
+            return;
+        }
+    };
+    match process.schedule_next() {
+        Some(process) => {
+            println!("Running: {}", process.get_name());
+        }
+        None => {
+            println!("No process ran");
+        }
+    }
+
+    fn clean_up() {
+        unsafe {
+            LAPICS.get().unwrap().lock().end_of_interrupt();
+        }
+    }
+
+    clean_up();
+}
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     println!("AAA");
     /*let mut port = Port::new(0x60);

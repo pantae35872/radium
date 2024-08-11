@@ -70,6 +70,7 @@ pub mod interrupt;
 pub mod memory;
 pub mod print;
 pub mod serial;
+pub mod userland;
 pub mod utils;
 
 use core::fmt::Display;
@@ -231,6 +232,7 @@ pub fn init(information_address: *mut BootInformation) {
     drop(memory_controller);
     ACTIVE_TABLE.init_once(|| Mutex::new(active_table));
     driver::init(&mut frame_allocator);
+    userland::init();
     /*println!(
             r#"nothingos Copyright (C) 2024  Pantae
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.

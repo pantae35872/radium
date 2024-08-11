@@ -72,6 +72,16 @@ impl Add for Vector2 {
     }
 }
 
+impl Add<f32> for Vector2 {
+    type Output = Vector2;
+
+    fn add(self, rhs: f32) -> Self::Output {
+        Self {
+            x: self.x + rhs,
+            y: self.y + rhs,
+        }
+    }
+}
 impl Mul<f32> for Vector2 {
     type Output = Vector2;
     fn mul(self, rhs: f32) -> Self::Output {

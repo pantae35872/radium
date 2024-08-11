@@ -12,7 +12,7 @@ fn main() {
         let mut makefile_build = Command::new("make");
         let mut makefile_run = Command::new("make");
         mv.arg(test_kernel)
-            .arg(root_dir.join("kernel.bin"))
+            .arg(root_dir.join("build/kernel.bin"))
             .current_dir(&curr_dir);
         makefile_build
             .arg("maker-no-kernel")

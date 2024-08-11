@@ -91,7 +91,7 @@ impl TtfRenderer {
             };
 
             if y_offset >= self.curr_line {
-                polygon.move_by((y_offset as f32 * 20.0) - 80.0);
+                polygon.move_by((y_offset as f32 * 23.0) - 80.0);
                 for pixel in polygon.render() {
                     graphics.plot(
                         (pixel.x() as i32 + offset) as usize,
@@ -99,7 +99,7 @@ impl TtfRenderer {
                         self.foreground_color,
                     );
                 }
-                polygon.move_by(-((y_offset as f32 * 20.0) - 80.0));
+                polygon.move_by(-((y_offset as f32 * 23.0) - 80.0));
             }
             offset += (*spaceing as i32 >> 6) + 5;
             if offset > horizontal as i32 {

@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(panic_info_message)]
 #![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
 #![test_runner(nothingos::test_runner)]
@@ -20,7 +19,7 @@ use alloc::vec::Vec;
 use nothingos::driver::storage::{ahci_driver, Drive};
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
 use nothingos::{hlt_loop, println, BootInformation};
-use uguid::guid;
+use uefi::guid;
 
 #[no_mangle]
 fn sys_print(value: &str) {
@@ -38,10 +37,21 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
         .get()
         .expect("AHCI Driver is not initialize")
         .lock();
+    /*instructions::interrupts::without_interrupts(|| {
+        SCHEDULER
+            .get()
+            .unwrap()
+            .lock()
+            .add_process(Process::new(10, "1".into()))
+            .add_process(Process::new(2, "2".into()))
+            .add_process(Process::new(10, "3".into()))
+            .add_process(Process::new(2, "4".into()))
+            .add_process(Process::new(10, "5".into()))
+            .add_process(Process::new(2, "6".into()));
+    });*/
     let mut abc = [0u8; 8192];
     let drive = controller.get_drive(&0).expect("Cannot get drive");
     drive.read(0, &mut abc, 16).unwrap();
-    println!("{:?}", abc);
     let mut gpt = GPTPartitions::new(drive).expect("Error");
     gpt.format().unwrap();
     gpt.set_partiton(
