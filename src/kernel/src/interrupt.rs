@@ -264,10 +264,10 @@ extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
     };
     match process.schedule_next() {
         Some(process) => {
-            println!("Running: {}", process.get_name());
+            //println!("Running: {}", process.get_name());
         }
         None => {
-            println!("No process ran");
+            //println!("No process ran");
         }
     }
 

@@ -32,11 +32,11 @@ fn sys_print(value: &str) {
 #[no_mangle]
 pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     nothingos::init(information_address);
-    println!("Hello worldaaa!!!!");
-    let mut controller = ahci_driver::DRIVER
-        .get()
-        .expect("AHCI Driver is not initialize")
-        .lock();
+    println!("Hello world!");
+    /*let mut controller = ahci_driver::DRIVER
+    .get()
+    .expect("AHCI Driver is not initialize")
+    .lock();*/
     /*instructions::interrupts::without_interrupts(|| {
         SCHEDULER
             .get()
@@ -49,7 +49,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
             .add_process(Process::new(10, "5".into()))
             .add_process(Process::new(2, "6".into()));
     });*/
-    let mut abc = [0u8; 8192];
+    /*let mut abc = [0u8; 8192];
     let drive = controller.get_drive(&0).expect("Cannot get drive");
     drive.read(0, &mut abc, 16).unwrap();
     let mut gpt = GPTPartitions::new(drive).expect("Error");
@@ -72,7 +72,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     )
     .unwrap();
     let partition1 = gpt.read_partition(1).expect("Error");
-    println!("{}", partition1.get_partition_name());
+    println!("{}", partition1.get_partition_name());*/
 
     #[cfg(test)]
     test_main();

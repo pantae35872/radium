@@ -8,7 +8,6 @@ use x86_64::instructions::interrupts;
 
 use self::ttf_renderer::TtfRenderer;
 
-pub mod ttf_parser;
 pub mod ttf_renderer;
 
 pub static DRIVER: OnceCell<Mutex<Print>> = OnceCell::uninit();

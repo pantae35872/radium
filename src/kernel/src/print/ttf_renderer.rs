@@ -1,32 +1,35 @@
+use core::usize;
+
 use alloc::{collections::BTreeMap, vec::Vec};
+use fontdue::{Font, FontSettings, Metrics};
 
-use crate::{graphics, utils::math::Polygon, BootInformation};
+use crate::{graphics, BootInformation};
 
-use super::ttf_parser::TtfParser;
-
+const PIXEL_SIZE: usize = 18;
 pub struct TtfRenderer {
     data: Vec<char>,
-    cache: BTreeMap<char, (Polygon, u32)>,
-    parser: TtfParser<'static>,
+    cache: BTreeMap<char, (Metrics, Vec<u8>)>,
     foreground_color: u32,
-    curr_line: u64,
+    font: Font,
 }
 
 impl TtfRenderer {
     pub fn new(boot_info: &BootInformation, foreground_color: u32) -> Self {
-        let mut parser = unsafe {
-            TtfParser::new(core::slice::from_raw_parts_mut(
-                boot_info.font_start as *mut u8,
-                (boot_info.font_end - boot_info.font_start) as usize,
-            ))
+        let font = unsafe {
+            Font::from_bytes(
+                core::slice::from_raw_parts(
+                    boot_info.font_start as *mut u8,
+                    (boot_info.font_end - boot_info.font_start) as usize,
+                ),
+                FontSettings::default(),
+            )
+            .unwrap()
         };
-        parser.parse().unwrap();
         Self {
             data: Vec::with_capacity(5000),
-            cache: BTreeMap::new(),
-            parser,
             foreground_color,
-            curr_line: 0,
+            font,
+            cache: BTreeMap::new(),
         }
     }
 
@@ -51,62 +54,59 @@ impl TtfRenderer {
                 return true;
             }
             None => {
-                let mut polygon = self.parser.draw_char(&charactor);
-                polygon.0.set_y(100.0);
-                self.cache.insert(*charactor, polygon);
+                let font = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
+                self.cache.insert(*charactor, font);
                 return false;
             }
         };
     }
 
+    fn adjust_brightness(color: u32, alpha: u8) -> u32 {
+        let alpha = alpha as f32 / 255.0;
+
+        let red = (color >> 16) & 0xFF;
+        let green = (color >> 8) & 0xFF;
+        let blue = color & 0xFF;
+        let new_red = (red as f32 * alpha) as u32;
+        let new_green = (green as f32 * alpha) as u32;
+        let new_blue = (blue as f32 * alpha) as u32;
+
+        (new_red << 16) | (new_green << 8) | new_blue
+    }
+
     pub fn update(&mut self) {
+        let mut graphics = graphics::DRIVER.get().unwrap().lock();
         let mut offset = 1;
         let mut y_offset = 0;
-        let mut graphics = graphics::DRIVER.get().unwrap().lock();
-        let (horizontal, _vertical) = graphics.get_res();
         for charactor in &self.data {
-            if *charactor == ' ' {
-                offset += 16;
-                if offset > horizontal as i32 {
-                    y_offset += 1;
-                    offset = 16;
-                }
-                continue;
-            }
-
             if *charactor == '\n' {
                 y_offset += 1;
                 offset = 1;
                 continue;
             }
-
-            let (polygon, spaceing) = match self.cache.get_mut(&charactor) {
+            let (metrics, bitmap) = match self.cache.get_mut(&charactor) {
                 Some(polygon) => polygon,
                 None => {
-                    let mut polygon = self.parser.draw_char(&charactor);
-                    polygon.0.set_y(100.0);
-                    self.cache.insert(*charactor, polygon);
+                    let font = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
+                    self.cache.insert(*charactor, font);
                     self.cache.get_mut(charactor).unwrap()
                 }
             };
-
-            if y_offset >= self.curr_line {
-                polygon.move_by((y_offset as f32 * 23.0) - 80.0);
-                for pixel in polygon.render() {
-                    graphics.plot(
-                        (pixel.x() as i32 + offset) as usize,
-                        pixel.y() as usize,
-                        self.foreground_color,
-                    );
+            let mut x = metrics.width;
+            let mut y = PIXEL_SIZE;
+            for pixel in bitmap.iter().rev() {
+                graphics.plot(
+                    x + offset,
+                    ((y + y_offset * PIXEL_SIZE) as i32 - metrics.ymin) as usize,
+                    Self::adjust_brightness(self.foreground_color, *pixel),
+                );
+                x -= 1;
+                if x <= 0 {
+                    y -= 1;
+                    x = metrics.width;
                 }
-                polygon.move_by(-((y_offset as f32 * 23.0) - 80.0));
             }
-            offset += (*spaceing as i32 >> 6) + 5;
-            if offset > horizontal as i32 {
-                y_offset += 1;
-                offset = 0;
-            }
+            offset += metrics.advance_width as usize + 1;
         }
-        self.curr_line = y_offset;
     }
 }
