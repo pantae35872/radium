@@ -9,6 +9,7 @@ use alloc::alloc::alloc;
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bitfield_struct::bitfield;
+use bitflags::Flags;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
 use x86_64::{PhysAddr, VirtAddr};
@@ -17,7 +18,7 @@ use crate::driver::pci;
 use crate::memory::paging::Page;
 use crate::memory::{AreaFrameAllocator, Frame};
 use crate::utils::VolatileCell;
-use crate::{get_physical, println, EntryFlags, ACTIVE_TABLE};
+use crate::{get_physical, inline_if, println, serial_println, EntryFlags, ACTIVE_TABLE};
 
 use super::Drive;
 
@@ -62,69 +63,37 @@ enum HbaPortIpm {
     DevSleep = 8,
 }
 
-#[bitfield(u16, order = Lsb)]
-pub struct HbaCmdHeaderByte2 {
-    #[bits(5)]
-    cfl: u8,
-    #[bits(1)]
-    a: bool,
-    #[bits(1)]
-    w: bool,
-    #[bits(1)]
-    p: bool,
-    #[bits(1)]
-    r: bool,
-    #[bits(1)]
-    b: bool,
-    #[bits(1)]
-    c: bool,
-    #[bits(1)]
-    rsv: bool,
-    #[bits(4)]
-    pmp: u8,
+#[derive(Debug, Copy, Clone)]
+#[repr(transparent)]
+struct HbaCmdHeaderFlags(u16);
+
+bitflags! {
+    impl HbaCmdHeaderFlags: u16 {
+        const A = 1 << 5; // ATAPI
+        const W = 1 << 6; // Write
+        const P = 1 << 7; // Prefetchable
+        const R = 1 << 8; // Reset
+        const B = 1 << 9; // Bist
+        const C = 1 << 10; // Clear Busy upon R_OK
+    }
+}
+
+impl HbaCmdHeaderFlags {
+    #[inline]
+    fn set_cfs(&mut self, size: usize) {
+        self.0.set_bits(0..=4, size as _);
+    }
 }
 
 #[repr(C)]
 pub struct HbaCmdHeader {
     // DWORD 0
-    byte0_1: HbaCmdHeaderByte2,
+    flags: VolatileCell<HbaCmdHeaderFlags>,
     prdtl: VolatileCell<u16>,
     // DWORD 1
     prdbc: VolatileCell<u32>,
     ctba: VolatileCell<PhysAddr>,
     rsv1: [VolatileCell<u32>; 4],
-}
-
-impl HbaCmdHeader {
-    pub fn set_cfl(&mut self, value: &u8) {
-        self.byte0_1.set_cfl(*value);
-    }
-
-    pub fn set_a(&mut self, value: &bool) {
-        self.byte0_1.set_a(*value);
-    }
-
-    pub fn set_w(&mut self, value: &bool) {
-        self.byte0_1.set_w(*value);
-    }
-
-    pub fn set_p(&mut self, value: &bool) {
-        self.byte0_1.set_p(*value);
-    }
-
-    pub fn set_r(&mut self, value: &bool) {
-        self.byte0_1.set_r(*value);
-    }
-    pub fn set_b(&mut self, value: &bool) {
-        self.byte0_1.set_b(*value);
-    }
-    pub fn set_c(&mut self, value: &bool) {
-        self.byte0_1.set_c(*value);
-    }
-
-    pub fn set_pmp(&mut self, value: &u8) {
-        self.byte0_1.set_pmp(*value);
-    }
 }
 
 #[bitfield(u8, order = Lsb)]
@@ -165,7 +134,8 @@ pub struct FisRegH2D {
     featureh: VolatileCell<u8>, // Feature register, 15:8
 
     // DWORD 3
-    count: VolatileCell<u16>,  // Count register, 7:0
+    countl: VolatileCell<u8>, // Count register, 7:0
+    counth: VolatileCell<u8>,
     icc: VolatileCell<u8>,     // Isochronous command completion
     control: VolatileCell<u8>, // Control register
 
@@ -223,7 +193,7 @@ impl HbaPRDTEntry {
 
     pub fn set_dbc(&mut self, value: u32) {
         let mut old = self.dw3.get();
-        old.set_bits(0..21, value as _);
+        old.set_bits(0..21, value);
 
         self.dw3.set(old);
     }
@@ -485,7 +455,6 @@ impl AhciPort {
         let cmdheader = unsafe { &mut *(virt_clb.as_mut_ptr() as *mut [HbaCmdHeader; 32]) };
         for i in 0..32 {
             cmdheader[i].prdtl.set(8);
-            cmdheader[i].prdbc.set(0);
             let virt_ctba: VirtAddr =
                 unsafe { VirtAddr::new(alloc(Layout::from_size_align(4096, 128).unwrap()) as u64) };
             unsafe {
@@ -550,10 +519,18 @@ impl AhciDrive {
         let mut count = original_count;
         let slot = port.find_cmdslot()?;
         let cmd_header = port.cmd_header(slot);
-        cmd_header.set_cfl(&((size_of::<FisRegH2D>() / size_of::<u32>()) as u8));
-        cmd_header.set_w(&false);
-        cmd_header.set_c(&true);
-        cmd_header.set_p(&true);
+
+        let mut flags = cmd_header.flags.get();
+        if command == 0x35 {
+            flags.intersects(HbaCmdHeaderFlags::W);
+        } else {
+            flags.remove(HbaCmdHeaderFlags::W);
+        }
+
+        flags.insert(HbaCmdHeaderFlags::P | HbaCmdHeaderFlags::C);
+        flags.set_cfs(size_of::<FisRegH2D>() / size_of::<u32>());
+        cmd_header.flags.set(flags);
+
         cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
         let cmdtbl = port.cmd_tbl()?;
         let mut buf_address = get_physical(VirtAddr::new(buffer.as_ptr() as u64)).unwrap();
@@ -588,7 +565,8 @@ impl AhciDrive {
             cmdfis.lba3.set((lba >> 24) as u8);
             cmdfis.lba4.set((lba >> 32) as u8);
             cmdfis.lba5.set((lba >> 40) as u8);
-            cmdfis.count.set(original_count as u16);
+            cmdfis.countl.set((original_count & 0xFF) as u8);
+            cmdfis.counth.set((original_count >> 8) as u8);
         } else {
             cmdfis.device.set(0);
         }
@@ -596,7 +574,9 @@ impl AhciDrive {
         while port.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
             core::hint::spin_loop();
         }
+
         while port.hba_port.ci.get() & (1 << slot) == 1 {
+            serial_println!("{:?}", port.hba_port.is.get());
             if port.hba_port.is.get().contains(HbaPortIS::TFES) {
                 return Err(SataDriveError::TaskFileError(port.hba_port.serr.get()));
             }
