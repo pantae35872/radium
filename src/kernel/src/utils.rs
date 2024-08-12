@@ -1,8 +1,7 @@
-use core::cell::UnsafeCell;
+use core::{cell::UnsafeCell, fmt::Debug};
 
 pub mod buffer_reader;
 pub mod converter;
-pub mod oserror;
 pub mod port;
 
 #[macro_export]
@@ -40,5 +39,11 @@ impl<T: Copy> VolatileCell<T> {
     #[inline]
     pub fn set(&self, value: T) {
         unsafe { core::ptr::write_volatile(self.value.get(), value) }
+    }
+}
+
+impl<T: Copy + Debug> Debug for VolatileCell<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.get())
     }
 }

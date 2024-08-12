@@ -2,6 +2,7 @@ use core::usize;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
+use x86_64::registers::control;
 
 use crate::{graphics, BootInformation};
 
@@ -78,6 +79,7 @@ impl TtfRenderer {
         let mut graphics = graphics::DRIVER.get().unwrap().lock();
         let mut offset = 1;
         let mut y_offset = 0;
+        let (horizontal, _vertical) = graphics.get_res();
         for charactor in &self.data {
             if *charactor == '\n' {
                 y_offset += 1;
@@ -107,6 +109,10 @@ impl TtfRenderer {
                 }
             }
             offset += metrics.advance_width as usize + 1;
+            if offset > horizontal - 10 {
+                y_offset += 1;
+                offset = 1;
+            }
         }
     }
 }

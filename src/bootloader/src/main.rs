@@ -34,6 +34,7 @@ use uefi::{
     CStr16, Handle, Status,
 };
 use uefi_raw::protocol::file_system::FileAttribute;
+use uefi_services::println;
 
 fn set_output_mode(system_table: &mut SystemTable<Boot>) {
     let mut largest_mode: Option<OutputMode> = None;
@@ -377,7 +378,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     unsafe {
         asm!(
             r#"
-            xor rbp, rbp
             jmp {}
         "#,
         in(reg) entrypoint,

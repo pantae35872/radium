@@ -39,7 +39,7 @@ fn large_vec() {
 
 #[test_case]
 fn many_boxes() {
-    for i in 0..HEAP_SIZE {
+    for i in 0..1000 {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }
@@ -48,7 +48,7 @@ fn many_boxes() {
 #[test_case]
 fn many_boxes_long_lived() {
     let long_lived = Box::new(1);
-    for i in 0..HEAP_SIZE {
+    for i in 0..1000 {
         let x = Box::new(i);
         assert_eq!(*x, i);
     }

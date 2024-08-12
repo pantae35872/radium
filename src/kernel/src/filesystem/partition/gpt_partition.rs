@@ -1,3 +1,5 @@
+use core::error::Error;
+use core::fmt::Display;
 use core::mem::size_of;
 use core::slice;
 
@@ -10,9 +12,8 @@ use uuid::Uuid;
 use crate::driver::storage::{Drive, CHS};
 use crate::println;
 use crate::utils::floorf64;
-use crate::utils::oserror::OSError;
 
-use super::msdos_partition::MSDosPartition;
+use super::msdos_partition::{MSDosPartition, MSDosPartitionError};
 
 #[derive(Debug, Clone, Copy)]
 struct ProtectiveMasterBootRecord {
@@ -25,20 +26,20 @@ struct ProtectiveMasterBootRecord {
 }
 
 impl ProtectiveMasterBootRecord {
-    pub fn new() -> Result<Self, Box<OSError>> {
-        Ok(ProtectiveMasterBootRecord {
+    pub fn new() -> Self {
+        ProtectiveMasterBootRecord {
             bootable: false,
-            start_chs: CHS::new(0, 0, 0)?,
+            start_chs: CHS::new(0, 0, 0).expect("Should not failed"),
             os_type: 0,
-            end_chs: CHS::new(0, 0, 0)?,
+            end_chs: CHS::new(0, 0, 0).expect("Should not failed"),
             start_lba: 0,
             end_lba: 0,
-        })
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-#[repr(packed)]
+#[repr(C)]
 struct PartitionTableHeader {
     signature: [u8; 8],
     gpt_revision: u32,
@@ -135,28 +136,62 @@ where
     sector_number_entries: usize,
 }
 
+#[derive(Debug)]
+pub enum GPTPartitionError<T: Error> {
+    ProtectiveMBRError(MSDosPartitionError<T>),
+    CorruptedGPT,
+    DiskError(T),
+}
+
+impl<T: Error + Display> Display for GPTPartitionError<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ProtectiveMBRError(mbr_error) => write!(
+                f,
+                "failed to perform protective mbr operation. mbr error: {}",
+                mbr_error
+            ),
+            Self::CorruptedGPT => write!(
+                f,
+                "You either have corrupted gpt or invalid gpt with no backup"
+            ),
+            Self::DiskError(disk_error) => write!(
+                f,
+                "trying to perform disk operation with disk error: {}",
+                disk_error,
+            ),
+        }
+    }
+}
+
+impl<T: Error + Display> Error for GPTPartitionError<T> {}
+
 impl<'a, T: Drive> GPTPartitions<'a, T> {
-    pub fn new(drive: &'a mut T) -> Result<Self, Box<OSError>> {
-        Ok(Self {
-            protective_master_boot_record: ProtectiveMasterBootRecord::new()?,
+    pub fn new(drive: &'a mut T) -> Self {
+        Self {
+            protective_master_boot_record: ProtectiveMasterBootRecord::new(),
             partition_table_header: PartitionTableHeader::new(),
             partition_entries: [PartitionEntries::new(); 32],
             drive,
             entries_per_sector: 0,
             sector_number_entries: 0,
-        })
+        }
     }
 
-    pub fn format(&mut self) -> Result<(), Box<OSError>> {
-        MSDosPartition::new(self.drive)?.format()?;
+    pub fn format(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        MSDosPartition::new(self.drive)
+            .format()
+            .map_err(GPTPartitionError::ProtectiveMBRError)?;
         self.protective_master_boot_record.bootable = false;
         self.protective_master_boot_record.start_lba = 1;
-        self.protective_master_boot_record.start_chs = CHS::from_lba(1)?;
+        self.protective_master_boot_record.start_chs =
+            CHS::from_lba(1).expect("Constant should not failed");
         self.protective_master_boot_record.os_type = 0xEE;
         self.protective_master_boot_record.end_lba =
             self.drive.lba_end().try_into().unwrap_or(0xFFFFFFFF);
         self.protective_master_boot_record.end_chs =
-            CHS::from_lba(self.drive.lba_end().try_into().unwrap_or(0xFFFFFFFF))?;
+            CHS::from_lba(self.drive.lba_end().try_into().unwrap_or(0xFFFFFFFF))
+                .unwrap_or(CHS::new(255, 63, 1023).expect("Constant should not failed"));
 
         self.partition_table_header.signature = [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54];
         self.partition_table_header.reserved_zero = [0; 420];
@@ -179,7 +214,10 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
         Ok(())
     }
 
-    pub fn read_partition(&mut self, number: usize) -> Result<PartitionEntry, Box<OSError>> {
+    pub fn read_partition(
+        &mut self,
+        number: usize,
+    ) -> Result<PartitionEntry, GPTPartitionError<T::Error>> {
         self.load_gpt()?;
         let entries_lba = (floorf64((number as f64 / 4.0) + 0.25) - 1.0) as usize;
         let mut entry_index = number % 4;
@@ -198,7 +236,7 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
         end_lba: u64,
         attributes: u64,
         partition_name: &[u8; 72],
-    ) -> Result<(), Box<OSError>> {
+    ) -> Result<(), GPTPartitionError<T::Error>> {
         self.load_gpt()?;
 
         let entries_lba = (floorf64((drive_number as f64 / 4.0) + 0.25) - 1.0) as usize;
@@ -222,16 +260,22 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
         Ok(())
     }
 
-    fn load_gpt(&mut self) -> Result<(), Box<OSError>> {
-        let mut mbr = MSDosPartition::new(self.drive)?;
-        mbr.load_mbr()?;
-        let par = mbr.read_partition(0)?;
-        self.protective_master_boot_record.start_lba = par.get_start_lba();
-        self.protective_master_boot_record.start_chs = par.get_start_chs();
-        self.protective_master_boot_record.os_type = par.get_id();
-        self.protective_master_boot_record.end_chs = par.get_end_chs();
-        self.protective_master_boot_record.bootable = par.get_bootable();
-        self.protective_master_boot_record.end_lba = par.get_end_lba();
+    fn load_gpt(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        let mut mbr = MSDosPartition::new(self.drive);
+        match mbr.load_mbr() {
+            Ok(_) => {
+                let par = mbr
+                    .read_partition(0)
+                    .map_err(GPTPartitionError::ProtectiveMBRError)?;
+                self.protective_master_boot_record.start_lba = par.get_start_lba();
+                self.protective_master_boot_record.start_chs = par.get_start_chs();
+                self.protective_master_boot_record.os_type = par.get_id();
+                self.protective_master_boot_record.end_chs = par.get_end_chs();
+                self.protective_master_boot_record.bootable = par.get_bootable();
+                self.protective_master_boot_record.end_lba = par.get_end_lba();
+            }
+            Err(_) => {}
+        };
 
         let header_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -240,9 +284,21 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
             )
         };
 
-        self.drive.read(1, header_bytes, 1)?;
+        self.drive
+            .read(1, header_bytes, 1)
+            .map_err(GPTPartitionError::DiskError)?;
+
+        if self.partition_table_header.partition_entry_size == 0 {
+            self.recover_header()?;
+        }
 
         self.entries_per_sector = 512 / self.partition_table_header.partition_entry_size;
+
+        if self.entries_per_sector == 0 {
+            self.recover_header()?;
+            self.entries_per_sector = 512 / self.partition_table_header.partition_entry_size;
+        }
+
         self.sector_number_entries = (self.partition_table_header.number_partition_entries
             / self.entries_per_sector) as usize;
 
@@ -253,26 +309,29 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
             )
         };
 
-        self.drive.read(
-            self.partition_table_header.start_partition_entry_lba,
-            entries_bytes,
-            self.sector_number_entries,
-        )?;
+        self.drive
+            .read(
+                self.partition_table_header.start_partition_entry_lba,
+                entries_bytes,
+                self.sector_number_entries,
+            )
+            .map_err(GPTPartitionError::DiskError)?;
 
         self.validate()?;
         Ok(())
     }
 
-    fn save_gpt(&mut self) -> Result<(), Box<OSError>> {
+    fn save_gpt(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
-        let mut mbr = MSDosPartition::new(self.drive)?;
+        let mut mbr = MSDosPartition::new(self.drive);
         mbr.set_partition(
             self.protective_master_boot_record.os_type,
             0,
             self.protective_master_boot_record.start_lba,
             self.protective_master_boot_record.end_lba,
             self.protective_master_boot_record.bootable,
-        )?;
+        )
+        .map_err(GPTPartitionError::ProtectiveMBRError)?;
 
         let header_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -295,26 +354,95 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
         self.partition_table_header.checksum = crc32.sum32();
 
         self.drive
-            .write(1, header_bytes, size_of::<PartitionTableHeader>() / 512)?;
+            .write(1, header_bytes, size_of::<PartitionTableHeader>() / 512)
+            .map_err(GPTPartitionError::DiskError)?;
 
         let start_lba = self.partition_table_header.start_partition_entry_lba;
 
         self.drive
-            .write(start_lba, entries_bytes, self.sector_number_entries)?;
+            .write(start_lba, entries_bytes, self.sector_number_entries)
+            .map_err(GPTPartitionError::DiskError)?;
 
-        self.drive.write(
-            self.drive.lba_end(),
-            header_bytes,
-            size_of::<PartitionTableHeader>() / 512,
-        )?;
+        self.drive
+            .write(
+                self.drive.lba_end(),
+                header_bytes,
+                size_of::<PartitionTableHeader>() / 512,
+            )
+            .map_err(GPTPartitionError::DiskError)?;
         let start_lba = self.drive.lba_end() - self.sector_number_entries as u64;
         self.drive
-            .write(start_lba, entries_bytes, self.sector_number_entries)?;
+            .write(start_lba, entries_bytes, self.sector_number_entries)
+            .map_err(GPTPartitionError::DiskError)?;
 
         Ok(())
     }
 
-    pub fn validate(&mut self) -> Result<(), Box<OSError>> {
+    fn recover_entries(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        let mut crc32 = crc32::Digest::new(crc32::IEEE);
+        let entries_bytes: &mut [u8] = unsafe {
+            slice::from_raw_parts_mut(
+                &mut self.partition_entries as *mut _ as *mut u8,
+                size_of::<PartitionEntries>() * self.sector_number_entries,
+            )
+        };
+        let start_lba = self.drive.lba_end()
+            - ((self.partition_table_header.number_partition_entries / self.entries_per_sector)
+                as u64
+                + 1);
+
+        self.drive
+            .read(start_lba, entries_bytes, self.sector_number_entries)
+            .map_err(GPTPartitionError::DiskError)?;
+        crc32.reset();
+        crc32.write(&entries_bytes);
+
+        if self.partition_table_header.partition_entry_array_checksum == crc32.sum32() {
+            println!("Entries backup is valid, restoring from backup");
+            let start_lba = self.partition_table_header.start_partition_entry_lba;
+            self.drive
+                .write(start_lba, entries_bytes, self.sector_number_entries)
+                .map_err(GPTPartitionError::DiskError)?;
+        } else {
+            return Err(GPTPartitionError::CorruptedGPT);
+        }
+
+        return Ok(());
+    }
+
+    fn recover_header(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        let mut crc32 = crc32::Digest::new(crc32::IEEE);
+        let header_bytes: &mut [u8] = unsafe {
+            slice::from_raw_parts_mut(
+                &mut self.partition_table_header as *mut _ as *mut u8,
+                size_of::<PartitionTableHeader>(),
+            )
+        };
+        self.drive
+            .read(
+                self.drive.lba_end(),
+                header_bytes,
+                size_of::<PartitionTableHeader>() / 512,
+            )
+            .map_err(GPTPartitionError::DiskError)?;
+        crc32.reset();
+        crc32.write(&header_bytes[0..0x5c]);
+        if self.partition_table_header.checksum == crc32.sum32()
+            || self.partition_table_header.signature
+                == [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54]
+        {
+            println!("Header backup is valid, restoring from backup");
+            self.drive
+                .write(1, header_bytes, size_of::<PartitionTableHeader>() / 512)
+                .map_err(GPTPartitionError::DiskError)?;
+        } else {
+            return Err(GPTPartitionError::CorruptedGPT);
+        }
+
+        return Ok(());
+    }
+
+    pub fn validate(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
         let header_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -337,57 +465,14 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
             || self.partition_table_header.signature
                 != [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54]
         {
-            println!("drive header is corrupt try recover from backup");
-            self.drive.read(
-                self.drive.lba_end(),
-                header_bytes,
-                size_of::<PartitionTableHeader>() / 512,
-            )?;
-            crc32.reset();
-            crc32.write(&header_bytes[0..0x5c]);
-            if self.partition_table_header.checksum == crc32.sum32()
-                || self.partition_table_header.signature
-                    == [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54]
-            {
-                println!("Header backup is valid, restoring from backup");
-                self.drive
-                    .write(1, header_bytes, size_of::<PartitionTableHeader>() / 512)?;
-            } else {
-                return Err(Box::new(OSError::new(
-                    "Your header backup is not valid, drive is fully corrupted",
-                )));
-            }
+            println!("drive header is corrupt trying to recover from backup");
+            self.recover_header()?;
         }
         crc32.reset();
         crc32.write(&entries_bytes);
         if self.partition_table_header.partition_entry_array_checksum != crc32.sum32() {
-            println!("drive entries is corrupt try recover from backup");
-            let entries_bytes: &mut [u8] = unsafe {
-                slice::from_raw_parts_mut(
-                    &mut self.partition_entries as *mut _ as *mut u8,
-                    size_of::<PartitionEntries>() * self.sector_number_entries,
-                )
-            };
-            let start_lba = self.drive.lba_end()
-                - ((self.partition_table_header.number_partition_entries / self.entries_per_sector)
-                    as u64
-                    + 1);
-
-            self.drive
-                .read(start_lba, entries_bytes, self.sector_number_entries)?;
-            crc32.reset();
-            crc32.write(&entries_bytes);
-
-            if self.partition_table_header.partition_entry_array_checksum == crc32.sum32() {
-                println!("Entries backup is valid, restoring from backup");
-                let start_lba = self.partition_table_header.start_partition_entry_lba;
-                self.drive
-                    .write(start_lba, entries_bytes, self.sector_number_entries)?;
-            } else {
-                return Err(Box::new(OSError::new(
-                    "Your entries backup is not valid, drive is fully corrupted",
-                )));
-            }
+            println!("drive entries is corrupt trying to recover from backup");
+            self.recover_entries()?;
         }
         Ok(())
     }

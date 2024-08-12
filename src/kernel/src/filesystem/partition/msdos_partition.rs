@@ -1,8 +1,6 @@
-use alloc::boxed::Box;
-use core::mem::size_of;
+use core::{error::Error, fmt::Display, mem::size_of};
 
-use crate::driver::storage::{Drive, CHS};
-use crate::utils::oserror::OSError;
+use crate::driver::storage::{CHSError, Drive, CHS};
 
 #[repr(packed)]
 #[derive(Clone, Copy, Debug)]
@@ -28,15 +26,15 @@ struct MasterBootRecord {
 }
 
 impl PartitionTableEntry {
-    pub fn new() -> Result<Self, Box<OSError>> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             bootable: 0,
-            start_chs: CHS::new(0, 0, 0)?,
+            start_chs: CHS::new(0, 0, 0).expect("Should not failed"),
             partition_id: 0,
-            end_chs: CHS::new(0, 0, 0)?,
+            end_chs: CHS::new(0, 0, 0).expect("Should not failed"),
             start_lba: 0,
             end_lba: 0,
-        })
+        }
     }
 
     pub fn set_bootable(&mut self, bootable: bool) {
@@ -89,14 +87,14 @@ impl PartitionTableEntry {
 }
 
 impl MasterBootRecord {
-    pub fn new() -> Result<Self, Box<OSError>> {
-        Ok(Self {
+    pub fn new() -> Self {
+        Self {
             bootloader: [0; 440],
             signature: 0,
             unused: 0,
-            primary_partition: [PartitionTableEntry::new()?; 4],
+            primary_partition: [PartitionTableEntry::new(); 4],
             magicnumber: 0,
-        })
+        }
     }
 }
 
@@ -108,15 +106,44 @@ where
     drive: &'a mut T,
 }
 
+#[derive(Debug)]
+pub enum MSDosPartitionError<T: Error> {
+    InvalidMBR,
+    SetPartitionChsError(CHSError),
+    InvalidPartitionNumber(usize),
+    DriveFailed(T),
+}
+
+impl<T: Error + Display> Display for MSDosPartitionError<T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidMBR => write!(f, "Drive is not mbr"),
+            Self::SetPartitionChsError(chs) => {
+                write!(f, "Trying to set partition with chs error: {}", chs)
+            }
+            Self::InvalidPartitionNumber(number) => {
+                write!(f, "Invalid partition number {}", number)
+            }
+            Self::DriveFailed(sata_error) => write!(
+                f,
+                "Performing mbr partition with drive error: {}",
+                sata_error
+            ),
+        }
+    }
+}
+
+impl<T: Error + Display> Error for MSDosPartitionError<T> {}
+
 impl<'a, T: Drive> MSDosPartition<'a, T> {
-    pub fn new(drive: &'a mut T) -> Result<Self, Box<OSError>> {
-        Ok(Self {
-            master_boot_record: MasterBootRecord::new()?,
+    pub fn new(drive: &'a mut T) -> Self {
+        Self {
+            master_boot_record: MasterBootRecord::new(),
             drive,
-        })
+        }
     }
 
-    pub fn load_mbr(&mut self) -> Result<(), Box<OSError>> {
+    pub fn load_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
         let mbr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
                 &mut self.master_boot_record as *mut _ as *mut u8,
@@ -124,28 +151,32 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
             )
         };
 
-        self.drive.read(0, mbr_bytes, 1)?;
+        self.drive
+            .read(0, mbr_bytes, 1)
+            .map_err(MSDosPartitionError::DriveFailed)?;
 
         if self.master_boot_record.magicnumber != 0xAA55 {
-            return Err(Box::new(OSError::new("Not valid ms dos drive.")));
+            return Err(MSDosPartitionError::InvalidMBR);
         }
 
         Ok(())
     }
 
-    pub fn save_mbr(&mut self) -> Result<(), Box<OSError>> {
+    pub fn save_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
         let mbr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
                 &mut self.master_boot_record as *mut _ as *mut u8,
                 size_of::<MasterBootRecord>(),
             )
         };
-        self.drive.write(0, mbr_bytes, 1)?;
+        self.drive
+            .write(0, mbr_bytes, 1)
+            .map_err(MSDosPartitionError::DriveFailed)?;
         Ok(())
     }
 
-    pub fn format(&mut self) -> Result<(), Box<OSError>> {
-        self.master_boot_record = MasterBootRecord::new()?;
+    pub fn format(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
+        self.master_boot_record = MasterBootRecord::new();
         self.master_boot_record.magicnumber = 0xAA55;
         self.save_mbr()?;
         return Ok(());
@@ -154,11 +185,11 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
     pub fn read_partition(
         &mut self,
         partition_number: usize,
-    ) -> Result<PartitionTableEntry, Box<OSError>> {
+    ) -> Result<PartitionTableEntry, MSDosPartitionError<T::Error>> {
         if partition_number >= 4 {
-            return Err(Box::new(OSError::new(
-                "Partition number cannot be more than 3 starts at 0",
-            )));
+            return Err(MSDosPartitionError::InvalidPartitionNumber(
+                partition_number,
+            ));
         }
 
         Ok(self.master_boot_record.primary_partition[partition_number])
@@ -171,20 +202,19 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
         start_lba: u32,
         end_lba: u32,
         bootable: bool,
-    ) -> Result<(), Box<OSError>> {
+    ) -> Result<(), MSDosPartitionError<T::Error>> {
         self.load_mbr()?;
-        if self.master_boot_record.magicnumber != 0xAA55 {
-            return Err(Box::new(OSError::new("Drive is not formatted as mbr")));
-        }
 
         let partition = &mut self.master_boot_record.primary_partition[partition_number];
         partition.set_bootable(bootable);
         partition.set_start_lba(start_lba);
         partition.set_end_lba(end_lba);
         partition.set_partition_id(partition_id);
-        let start_chs = CHS::from_lba(start_lba)?;
+        let start_chs =
+            CHS::from_lba(start_lba).map_err(MSDosPartitionError::SetPartitionChsError)?;
         partition.set_start_chs(start_chs);
-        let end_chs = CHS::from_lba((start_lba + end_lba) - 1)?;
+        let end_chs = CHS::from_lba((start_lba + end_lba) - 1)
+            .map_err(MSDosPartitionError::SetPartitionChsError)?;
         partition.set_end_chs(end_chs);
 
         self.save_mbr()?;

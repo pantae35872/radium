@@ -5,6 +5,7 @@ section .text
 bits 64
 boot_start:
   mov rsp, stack_top
+  mov rbp, stack_bottom
   call set_up_page_tables
   call enable_paging
   mov ax, 0

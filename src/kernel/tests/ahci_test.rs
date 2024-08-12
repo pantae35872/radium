@@ -42,7 +42,7 @@ fn simple_read_write() {
         data[index + 1] = num as u8;
     }
 
-    let drive = controller.get_drive(&0).expect("Cannot get drive");
+    let drive = controller.get_drive(0).expect("Cannot get drive");
     drive
         .read(0, &mut backup_data, TEST_SIZE_IN_SECTOR)
         .unwrap();
@@ -53,5 +53,5 @@ fn simple_read_write() {
     for (read, wrote) in data.iter().zip(read_data) {
         assert_eq!(*read, wrote);
     }
-    drive.write(0, &backup_data, TEST_SIZE_IN_SECTOR).unwrap();
+    //drive.write(0, &backup_data, TEST_SIZE_IN_SECTOR).unwrap();
 }

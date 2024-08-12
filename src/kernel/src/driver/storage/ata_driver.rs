@@ -1,10 +1,31 @@
-use alloc::boxed::Box;
+use core::error::Error;
+use core::fmt::Display;
 
-use crate::utils::oserror::OSError;
+use crate::inline_if;
 use crate::utils::port::{Port16Bit, Port8Bit};
-use crate::{inline_if, println};
 
 use super::Drive;
+
+#[derive(Debug)]
+pub enum AtaDriveError {
+    InvalidByteCount(usize),
+    DriveError(u8),
+}
+
+impl Display for AtaDriveError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::InvalidByteCount(count) => write!(
+                f,
+                "Trying to read once with byte count that is more than 512. value: {}",
+                count
+            ),
+            Self::DriveError(status) => write!(f, "Drive error with status {}", status),
+        }
+    }
+}
+
+impl Error for AtaDriveError {}
 
 pub struct ATADrive {
     data_port: Port16Bit,
@@ -83,26 +104,15 @@ impl ATADrive {
             data[i] = self.data_port.read();
         }
 
-        let drive_size_in_sectors = (data[61] as u64) << 16 | data[60] as u64;
-
-        let drive_size_in_gb_b10 = (drive_size_in_sectors as f64) * 512.0 / 1e9;
-
-        let drive_size_in_gb_b2 = (drive_size_in_sectors * 512) / (1 << 30);
-
-        println!(
-            "Drive size base 10: {}, base 2: {}",
-            drive_size_in_gb_b10, drive_size_in_gb_b2
-        );
-
         let lba_end_low = u64::from(data[100]);
         let lba_end_high = u64::from(data[101]);
 
         self.lba_end = ((lba_end_high << 16) | lba_end_low) - 1;
     }
 
-    fn write_once(&mut self, sector: u64, data: &[u8], count: usize) -> Result<(), Box<OSError>> {
+    fn write_once(&mut self, sector: u64, data: &[u8], count: usize) -> Result<(), AtaDriveError> {
         if (sector & 0xF0000000) != 0 || count > self.bytes_per_sector {
-            return Err(Box::new(OSError::new("Drive error")));
+            return Err(AtaDriveError::InvalidByteCount(count));
         }
 
         self.device_port
@@ -138,9 +148,9 @@ impl ATADrive {
         sector: u64,
         data: &mut [u8],
         count: usize,
-    ) -> Result<(), Box<OSError>> {
+    ) -> Result<(), AtaDriveError> {
         if (sector & 0xF0000000) != 0 || count > self.bytes_per_sector {
-            return Err(Box::new(OSError::new("Drive error")));
+            return Err(AtaDriveError::InvalidByteCount(count));
         }
 
         self.device_port
@@ -165,7 +175,7 @@ impl ATADrive {
         status = self.command_port.read();
 
         if (status & 0x01) != 0 {
-            return Err(Box::new(OSError::new("Drive error")));
+            return Err(AtaDriveError::DriveError(status));
         }
 
         for i in (0..count).step_by(2) {
@@ -183,7 +193,7 @@ impl ATADrive {
         return Ok(());
     }
 
-    pub fn flush(&mut self) -> Result<(), Box<OSError>> {
+    pub fn flush(&mut self) -> Result<(), AtaDriveError> {
         self.device_port.write(&inline_if!(self.master, 0xE0, 0xF0));
         self.command_port.write(&0xE7);
         let mut status;
@@ -197,18 +207,20 @@ impl ATADrive {
         status = self.command_port.read();
 
         if (status & 0x01) != 0 {
-            return Err(Box::new(OSError::new("Drive error")));
+            return Err(AtaDriveError::DriveError(status));
         }
         return Ok(());
     }
 }
 
 impl Drive for ATADrive {
+    type Error = AtaDriveError;
+
     fn lba_end(&self) -> u64 {
         self.lba_end
     }
 
-    fn write(&mut self, from_sector: u64, buffer: &[u8], count: usize) -> Result<(), Box<OSError>> {
+    fn write(&mut self, from_sector: u64, buffer: &[u8], count: usize) -> Result<(), Self::Error> {
         for i in 0..count {
             self.write_once(
                 from_sector + i as u64,
@@ -224,7 +236,7 @@ impl Drive for ATADrive {
         from_sector: u64,
         buffer: &mut [u8],
         count: usize,
-    ) -> Result<(), Box<OSError>> {
+    ) -> Result<(), Self::Error> {
         for i in 0..count {
             self.read_once(
                 from_sector + i as u64,

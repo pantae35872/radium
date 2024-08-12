@@ -63,7 +63,10 @@ pub fn init(memory_controller: &mut MemoryController) {
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
         memory_controller.active_table.map(
             page,
-            EntryFlags::WRITABLE,
+            EntryFlags::WRITABLE
+                | EntryFlags::PRESENT
+                | EntryFlags::WRITE_THROUGH
+                | EntryFlags::NO_CACHE,
             memory_controller.frame_allocator,
         );
     }
