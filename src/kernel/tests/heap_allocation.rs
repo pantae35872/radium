@@ -9,7 +9,6 @@ extern crate nothingos;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use nothingos::allocator::HEAP_SIZE;
 use nothingos::BootInformation;
 
 #[no_mangle]

@@ -80,7 +80,7 @@ bitflags! {
 
 impl HbaCmdHeaderFlags {
     #[inline]
-    fn set_cfs(&mut self, size: usize) {
+    fn set_cfl(&mut self, size: usize) {
         self.0.set_bits(0..=4, size as _);
     }
 }
@@ -92,7 +92,9 @@ pub struct HbaCmdHeader {
     prdtl: VolatileCell<u16>,
     // DWORD 1
     prdbc: VolatileCell<u32>,
+    // DWORD 2-3
     ctba: VolatileCell<PhysAddr>,
+    // DWORD 4-7
     rsv1: [VolatileCell<u32>; 4],
 }
 
@@ -176,12 +178,10 @@ pub struct HbaMem {
 #[repr(C)]
 pub struct HbaPRDTEntry {
     dba: VolatileCell<PhysAddr>,
-    rsv0: VolatileCell<u32>, // Reserved
+    _reserved: VolatileCell<u32>, // Reserved
 
     // DW3
-    dw3: VolatileCell<u32>, // Byte count, 4M max
-                            //rsv1: u32, // Reserved
-                            //i: u32,    // Interrupt on completion
+    dw3: VolatileCell<u32>,
 }
 
 impl HbaPRDTEntry {
@@ -209,7 +209,7 @@ pub struct HbaCmdTbl {
     acmd: [VolatileCell<u8>; 16], // ATAPI command, 12 or 16 bytes
 
     // 0x50
-    rsv: [VolatileCell<u8>; 48], // Reserved
+    _reserved: [VolatileCell<u8>; 48], // Reserved
 
     // 0x80
     prdt_entry: [HbaPRDTEntry; 1], // Physical region descriptor table entries, 0 ~ 65535
@@ -355,21 +355,21 @@ impl Display for AhciDriveType {
 pub struct HbaPort {
     clb: VolatileCell<PhysAddr>,
     fb: VolatileCell<PhysAddr>,
-    is: VolatileCell<HbaPortIS>,       // 0x10, interrupt status
-    ie: VolatileCell<HbaPortIE>,       // 0x14, interrupt enable
-    cmd: VolatileCell<HbaPortCmd>,     // 0x18, command and status
-    _reserved: VolatileCell<u32>,      // 0x1C, Reserved
-    tfd: VolatileCell<u32>,            // 0x20, task file data
-    sig: VolatileCell<u32>,            // 0x24, signature
-    ssts: VolatileCell<HbaSataStatus>, // 0x28, SATA status (SCR0:SStatus)
-    sctl: VolatileCell<u32>,           // 0x2C, SATA control (SCR2:SControl)
-    serr: VolatileCell<u32>,           // 0x30, SATA error (SCR1:SError)
-    sact: VolatileCell<u32>,           // 0x34, SATA active (SCR3:SActive)
-    ci: VolatileCell<u32>,             // 0x38, command issue
-    sntf: VolatileCell<u32>,           // 0x3C, SATA notification (SCR4:SNotification)
-    fbs: VolatileCell<u32>,            // 0x40, FIS-based switch control
-    rsv1: [VolatileCell<u32>; 11],     // 0x44 ~ 0x6F, Reserved
-    vendor: [VolatileCell<u32>; 4],    // 0x70 ~ 0x7F, vendor specific
+    is: VolatileCell<HbaPortIS>,         // 0x10, interrupt status
+    ie: VolatileCell<HbaPortIE>,         // 0x14, interrupt enable
+    cmd: VolatileCell<HbaPortCmd>,       // 0x18, command and status
+    _reserved: VolatileCell<u32>,        // 0x1C, Reserved
+    tfd: VolatileCell<u32>,              // 0x20, task file data
+    sig: VolatileCell<u32>,              // 0x24, signature
+    ssts: VolatileCell<HbaSataStatus>,   // 0x28, SATA status (SCR0:SStatus)
+    sctl: VolatileCell<u32>,             // 0x2C, SATA control (SCR2:SControl)
+    serr: VolatileCell<u32>,             // 0x30, SATA error (SCR1:SError)
+    sact: VolatileCell<u32>,             // 0x34, SATA active (SCR3:SActive)
+    ci: VolatileCell<u32>,               // 0x38, command issue
+    sntf: VolatileCell<u32>,             // 0x3C, SATA notification (SCR4:SNotification)
+    fbs: VolatileCell<u32>,              // 0x40, FIS-based switch control
+    _reserved1: [VolatileCell<u32>; 11], // 0x44 ~ 0x6F, Reserved
+    vendor: [VolatileCell<u32>; 4],      // 0x70 ~ 0x7F, vendor specific
 }
 
 pub struct AhciPort {
@@ -444,9 +444,9 @@ impl AhciPort {
         }
         self.hba_port.clb.set(get_physical(virt_clb).unwrap());
         let virt_fb: VirtAddr =
-            unsafe { VirtAddr::new(alloc(Layout::from_size_align(256, 256).unwrap()) as u64) };
+            unsafe { VirtAddr::new(alloc(Layout::from_size_align(0xFF, 256).unwrap()) as u64) };
         unsafe {
-            write_bytes(virt_fb.as_mut_ptr::<u8>(), 0, 256);
+            write_bytes(virt_fb.as_mut_ptr::<u8>(), 0, 0xFF);
         }
         self.hba_port.fb.set(get_physical(virt_fb).unwrap());
         self.fb = virt_fb;
@@ -483,6 +483,7 @@ impl AhciPort {
 
 impl HbaMem {
     pub fn get_port(&mut self, port: usize) -> &'static mut HbaPort {
+        println!("Hba Mem Size: {}", size_of::<HbaMem>());
         unsafe { &mut *((self as *mut HbaMem).offset(1) as *mut HbaPort).add(port) }
     }
 }
@@ -507,6 +508,7 @@ impl AhciDrive {
         }
     }
 
+    // TODO: Ensure that buffer is word align (2 byte align)
     fn run_command(
         &mut self,
         lba: u64,
@@ -528,7 +530,7 @@ impl AhciDrive {
         }
 
         flags.insert(HbaCmdHeaderFlags::P | HbaCmdHeaderFlags::C);
-        flags.set_cfs(size_of::<FisRegH2D>() / size_of::<u32>());
+        flags.set_cfl(size_of::<FisRegH2D>() / size_of::<u32>());
         cmd_header.flags.set(flags);
 
         cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
@@ -539,7 +541,7 @@ impl AhciDrive {
             cmdtbl.get_prdt_entry(i).dba.set(buf_address);
             cmdtbl.get_prdt_entry(i).set_dbc(8 * 1024 - 1);
             cmdtbl.get_prdt_entry(i).set_i(false);
-            buf_address += (4 * 1024) as u64;
+            buf_address += (8 * 1024) as u64;
             count -= 16;
             i += 1;
         }
@@ -576,7 +578,6 @@ impl AhciDrive {
         }
 
         while port.hba_port.ci.get() & (1 << slot) == 1 {
-            serial_println!("{:?}", port.hba_port.is.get());
             if port.hba_port.is.get().contains(HbaPortIS::TFES) {
                 return Err(SataDriveError::TaskFileError(port.hba_port.serr.get()));
             }
@@ -689,6 +690,10 @@ impl AhciController {
                     || (vendor == 0x8086 && device == 0x2829)
                     || (vendor == 0x8086 && device == 0xa103)
                 {
+                    let command = pci.read(&bus, &slot, &0, &0x04);
+                    pci.write(&bus, &slot, &0, &0x4, &(command | 1 << 1 | 1 << 2));
+
+                    println!("{}", pci.read(&bus, &slot, &0, &0x3c) & 0xFF);
                     return Some(pci.read(&bus, &slot, &0, &0x24).into());
                 }
             }

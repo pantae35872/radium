@@ -51,7 +51,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     });*/
     let drive = controller.get_drive(0).expect("Cannot get drive");
     println!("size: {}", drive.lba_end());
-    let mut gpt = GPTPartitions::new(drive);
+    //let mut gpt = GPTPartitions::new(drive);
     /*gpt.format().unwrap();
     gpt.set_partiton(
         1,
@@ -70,8 +70,8 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
         },
     )
     .unwrap();*/
-    let partition1 = gpt.read_partition(1).expect("Error");
-    println!("{}", partition1.get_partition_name());
+    //let partition1 = gpt.read_partition(1).expect("Error");
+    //println!("{}", partition1.get_partition_name());
 
     #[cfg(test)]
     test_main();

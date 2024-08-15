@@ -16,7 +16,7 @@ disk:
 	qemu-img create -f qcow2 disk.img 1G
 
 run: 
-	qemu-system-x86_64 -cdrom build/os.iso -m 1G -bios OVMF.fd -drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split -no-reboot -enable-kvm -cpu host,+rdrand -display gtk 
+	qemu-system-x86_64 -cdrom build/os.iso -m 1G -bios OVMF.fd -drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split -no-reboot -enable-kvm -cpu host,+rdrand -display gtk #-d trace:ahci*
 
 test-run:
 	qemu-system-x86_64 -cdrom build/os.iso -m 1G -bios OVMF.fd -serial stdio -drive id=disk,file=disk.img,if=none,format=qcow2 -device isa-debug-exit,iobase=0xf4,iosize=0x04 -device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split -no-reboot -enable-kvm -cpu host,+rdrand -display none 

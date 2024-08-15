@@ -13,6 +13,10 @@ use alloc::ffi::CString;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
 use spin::Mutex;
+use x2apic::ioapic::IoApic;
+use x2apic::ioapic::IrqFlags;
+use x2apic::ioapic::IrqMode;
+use x2apic::ioapic::RedirectionTableEntry;
 use x2apic::lapic::xapic_base;
 use x2apic::lapic::LocalApic;
 use x2apic::lapic::LocalApicBuilder;
@@ -78,6 +82,7 @@ pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 pub const LAPIC_VADDR: usize = 0xFFFFFFFFFFF00000;
 pub const LAPIC_SIZE: usize = 0xFFF;
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
+pub static IOAPICS: OnceCell<Mutex<IoApic>> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -130,6 +135,17 @@ pub fn init(memory_controller: &mut MemoryController) {
             lapic.enable();
         }
         Mutex::new(lapic)
+    });
+    IOAPICS.init_once(|| unsafe {
+        let mut ioapic = IoApic::new(LAPIC_VADDR as u64);
+        let mut entry = RedirectionTableEntry::default();
+        entry.set_mode(IrqMode::Fixed);
+        entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
+        entry.set_dest(LAPICS.get().unwrap().lock().id() as u8);
+        entry.set_vector(PIC_1_OFFSET + 14);
+        ioapic.set_table_entry(11, entry);
+        ioapic.enable_irq(11);
+        Mutex::new(ioapic)
     });
     IDT.load();
 }
@@ -355,7 +371,7 @@ extern "C" fn inner_syscall(stack_frame: &mut FullInterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn primary_ata_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    //println!("a");
+    println!("a");
 
     unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
