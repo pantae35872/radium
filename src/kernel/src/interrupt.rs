@@ -279,7 +279,7 @@ extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
         }
     };
     match process.schedule_next() {
-        Some(process) => {
+        Some(_process) => {
             //println!("Running: {}", process.get_name());
         }
         None => {

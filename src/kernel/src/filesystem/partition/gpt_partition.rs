@@ -3,7 +3,6 @@ use core::fmt::Display;
 use core::mem::size_of;
 use core::slice;
 
-use alloc::boxed::Box;
 use alloc::string::String;
 use crc::{crc32, Hasher32};
 use uguid::Guid;

@@ -9,7 +9,6 @@ use alloc::alloc::alloc;
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bitfield_struct::bitfield;
-use bitflags::Flags;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
 use x86_64::{PhysAddr, VirtAddr};
@@ -18,7 +17,7 @@ use crate::driver::pci;
 use crate::memory::paging::Page;
 use crate::memory::{AreaFrameAllocator, Frame};
 use crate::utils::VolatileCell;
-use crate::{get_physical, inline_if, println, serial_println, EntryFlags, ACTIVE_TABLE};
+use crate::{get_physical, println, EntryFlags, ACTIVE_TABLE};
 
 use super::Drive;
 
@@ -483,7 +482,6 @@ impl AhciPort {
 
 impl HbaMem {
     pub fn get_port(&mut self, port: usize) -> &'static mut HbaPort {
-        println!("Hba Mem Size: {}", size_of::<HbaMem>());
         unsafe { &mut *((self as *mut HbaMem).offset(1) as *mut HbaPort).add(port) }
     }
 }
@@ -693,7 +691,6 @@ impl AhciController {
                     let command = pci.read(&bus, &slot, &0, &0x04);
                     pci.write(&bus, &slot, &0, &0x4, &(command | 1 << 1 | 1 << 2));
 
-                    println!("{}", pci.read(&bus, &slot, &0, &0x3c) & 0xFF);
                     return Some(pci.read(&bus, &slot, &0, &0x24).into());
                 }
             }

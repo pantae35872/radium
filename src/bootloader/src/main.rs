@@ -34,7 +34,6 @@ use uefi::{
     CStr16, Handle, Status,
 };
 use uefi_raw::protocol::file_system::FileAttribute;
-use uefi_services::println;
 
 fn set_output_mode(system_table: &mut SystemTable<Boot>) {
     let mut largest_mode: Option<OutputMode> = None;

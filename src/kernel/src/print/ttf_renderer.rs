@@ -2,7 +2,6 @@ use core::usize;
 
 use alloc::{collections::BTreeMap, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
-use x86_64::registers::control;
 
 use crate::{graphics, BootInformation};
 
