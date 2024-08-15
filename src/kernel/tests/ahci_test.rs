@@ -6,11 +6,11 @@
 
 extern crate nothingos;
 
-use core::{alloc::Layout, usize};
+use core::usize;
 
 use nothingos::{
     driver::storage::{ahci_driver, Drive},
-    serial_println, BootInformation,
+    BootInformation,
 };
 use x86_64::instructions::random;
 
@@ -50,11 +50,8 @@ fn simple_read_write() {
 
     let mut read_data = [0u8; TEST_SIZE_IN_SECTOR * 512];
     drive.read(0, &mut read_data, TEST_SIZE_IN_SECTOR).unwrap();
-    for i in 0..TEST_SIZE_IN_SECTOR {
-        serial_println!("Sector: {}\n{:?}", i, &read_data[(i * 512)..(i + 1) * 512]);
-    }
     for (read, wrote) in data.iter().zip(read_data) {
         assert_eq!(*read, wrote);
     }
-    //drive.write(0, &backup_data, TEST_SIZE_IN_SECTOR).unwrap();
+    drive.write(0, &backup_data, TEST_SIZE_IN_SECTOR).unwrap();
 }
