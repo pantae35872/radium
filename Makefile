@@ -48,7 +48,7 @@ maker-no-kernel: fat
 
 define build_bootloader
 	cd src/bootloader && cargo build $(if $(1),--release,) --target x86_64-unknown-uefi && \
-	cp target/x86_64-unknown-uefi/$(if $(1),release,debug)/$(NAME).efi target/x86_64-unknown-uefi/$(if $(1),release,debug)/bootx64.efi
+	cp target/x86_64-unknown-uefi/$(if $(1),release,debug)/$(NAME)-bootloader.efi target/x86_64-unknown-uefi/$(if $(1),release,debug)/bootx64.efi
 	mcopy -i $(FAT_IMG) src/bootloader/target/x86_64-unknown-uefi/$(if $(1),release,debug)/bootx64.efi ::/efi/boot
 endef
 

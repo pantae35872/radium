@@ -346,6 +346,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     unsafe {
         (&mut *boot_info).framebuffer = framebuffer as *mut u32;
     }
+
     for mode in gop.modes(system_table.boot_services()) {
         if mode.info().resolution() == (1920, 1080) {
             gop.set_mode(&mode).expect("Could not set mode");

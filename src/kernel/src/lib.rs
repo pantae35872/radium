@@ -98,7 +98,14 @@ pub trait Testable {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("{}", info);
+    //println!("{}", info);
+    let mut graphics = graphics::DRIVER.get().unwrap().lock();
+    let (horizontal, vertical) = graphics.get_res();
+    for x in 0..horizontal {
+        for y in 0..vertical {
+            graphics.plot(x, y, 0xFFFFFFF);
+        }
+    }
     test_panic_handler(info);
     hlt_loop();
 }
