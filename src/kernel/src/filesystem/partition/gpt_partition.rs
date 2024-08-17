@@ -378,6 +378,7 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
     }
 
     fn recover_entries(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        println!("Warning trying to recover entries");
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
         let entries_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -410,6 +411,7 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
     }
 
     fn recover_header(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
+        println!("Warning trying to recover header");
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
         let header_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(

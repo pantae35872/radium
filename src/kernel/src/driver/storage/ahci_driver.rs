@@ -534,6 +534,7 @@ impl AhciDrive {
         cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
         let cmdtbl = port.cmd_tbl()?;
         let mut buf_address = get_physical(VirtAddr::new(buffer.as_ptr() as u64)).unwrap();
+        assert!(buf_address.is_aligned(2u64));
         let mut i: usize = 0;
         while i < cmd_header.prdtl.get() as usize - 1 {
             cmdtbl.get_prdt_entry(i).dba.set(buf_address);
@@ -574,7 +575,6 @@ impl AhciDrive {
         while port.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
             core::hint::spin_loop();
         }
-
         while port.hba_port.ci.get() & (1 << slot) == 1 {
             if port.hba_port.is.get().contains(HbaPortIS::TFES) {
                 return Err(SataDriveError::TaskFileError(port.hba_port.serr.get()));
@@ -682,16 +682,20 @@ impl AhciController {
         let mut device: u32;
         for bus in 0..256 {
             for slot in 0..32 {
-                vendor = pci.read_config(&bus, &slot, &0, &(0x00 | 0x0));
-                device = pci.read_config(&bus, &slot, &0, &(0x00 | 0x02));
+                vendor = pci.read_config(bus, slot, 0, 0x00 | 0x0);
+                device = pci.read_config(bus, slot, 0, 0x00 | 0x02);
                 if (vendor == 0x8086 && device == 0x2922)
                     || (vendor == 0x8086 && device == 0x2829)
                     || (vendor == 0x8086 && device == 0xa103)
                 {
-                    let command = pci.read(&bus, &slot, &0, &0x04);
-                    pci.write(&bus, &slot, &0, &0x4, &(command | 1 << 1 | 1 << 2));
+                    let command = pci.read(bus, slot, 0, 0x04);
+                    pci.write(bus, slot, 0, 0x4, command | 1 << 1 | 1 << 2);
 
-                    return Some(pci.read(&bus, &slot, &0, &0x24).into());
+                    let mut interrupt = pci.read(bus, slot, 0, 0x3C);
+                    interrupt.set_bits(0..8, 10);
+                    pci.write(bus, slot, 0, 0x3C, interrupt);
+
+                    return Some(pci.read(bus, slot, 0, 0x24).into());
                 }
             }
         }

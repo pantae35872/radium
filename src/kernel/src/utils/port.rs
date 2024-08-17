@@ -9,10 +9,10 @@ impl Port16Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: &u16) {
+    pub fn write(&self, data: u16) {
         unsafe {
             asm!("outw %ax, %dx", 
-                in("ax") *data,
+                in("ax") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
         }
@@ -39,10 +39,10 @@ impl Port8Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: &u8) {
+    pub fn write(&self, data: u8) {
         unsafe {
             asm!("outb %al, %dx", 
-                in("al") *data,
+                in("al") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
         }
@@ -69,10 +69,10 @@ impl Port32Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: &u32) {
+    pub fn write(&self, data: u32) {
         unsafe {
             asm!("outl %eax, %dx",
-                in("eax") *data,
+                in("eax") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
         }

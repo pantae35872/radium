@@ -61,11 +61,11 @@ impl ATADrive {
     }
 
     pub fn identify(&mut self) {
-        self.device_port.write(&inline_if!(self.master, 0xA0, 0xB0));
+        self.device_port.write(inline_if!(self.master, 0xA0, 0xB0));
 
-        self.control_port.write(&0);
+        self.control_port.write(0);
 
-        self.device_port.write(&0xA0);
+        self.device_port.write(0xA0);
 
         let mut status = self.command_port.read();
 
@@ -73,13 +73,13 @@ impl ATADrive {
             return;
         }
 
-        self.device_port.write(&inline_if!(self.master, 0xA0, 0xB0));
+        self.device_port.write(inline_if!(self.master, 0xA0, 0xB0));
 
-        self.sector_count_port.write(&0);
-        self.lba_low_port.write(&0);
-        self.lba_mid_port.write(&0);
-        self.lba_hi_port.write(&0);
-        self.command_port.write(&0xEC);
+        self.sector_count_port.write(0);
+        self.lba_low_port.write(0);
+        self.lba_mid_port.write(0);
+        self.lba_hi_port.write(0);
+        self.command_port.write(0xEC);
 
         status = self.command_port.read();
 
@@ -116,16 +116,14 @@ impl ATADrive {
         }
 
         self.device_port
-            .write(&((inline_if!(self.master, 0xE0, 0xF0) | ((sector & 0x0F000000) >> 24)) as u8));
-        self.error_port.write(&0);
-        self.sector_count_port.write(&1);
+            .write((inline_if!(self.master, 0xE0, 0xF0) | ((sector & 0x0F000000) >> 24)) as u8);
+        self.error_port.write(0);
+        self.sector_count_port.write(1);
 
-        self.lba_low_port.write(&((sector & 0x000000FF) as u8));
-        self.lba_mid_port
-            .write(&(((sector & 0x0000FF00) >> 8) as u8));
-        self.lba_hi_port
-            .write(&(((sector & 0x00FF0000) >> 16) as u8));
-        self.command_port.write(&0x30);
+        self.lba_low_port.write((sector & 0x000000FF) as u8);
+        self.lba_mid_port.write(((sector & 0x0000FF00) >> 8) as u8);
+        self.lba_hi_port.write(((sector & 0x00FF0000) >> 16) as u8);
+        self.command_port.write(0x30);
 
         for i in (0..count).step_by(2) {
             let mut wdata = data[i] as u16;
@@ -133,11 +131,11 @@ impl ATADrive {
                 wdata |= (data[i + 1] as u16) << 8;
             }
 
-            self.data_port.write(&wdata);
+            self.data_port.write(wdata);
         }
 
         for _i in ((count + (count % 2))..self.bytes_per_sector).step_by(2) {
-            self.data_port.write(&0x0000);
+            self.data_port.write(0x0000);
         }
         self.flush()?;
         return Ok(());
@@ -154,16 +152,14 @@ impl ATADrive {
         }
 
         self.device_port
-            .write(&((inline_if!(self.master, 0xE0, 0xF0) | ((sector & 0x0F000000) >> 24)) as u8));
-        self.error_port.write(&0);
-        self.sector_count_port.write(&1);
+            .write((inline_if!(self.master, 0xE0, 0xF0) | ((sector & 0x0F000000) >> 24)) as u8);
+        self.error_port.write(0);
+        self.sector_count_port.write(1);
 
-        self.lba_low_port.write(&((sector & 0x000000FF) as u8));
-        self.lba_mid_port
-            .write(&(((sector & 0x0000FF00) >> 8) as u8));
-        self.lba_hi_port
-            .write(&(((sector & 0x00FF0000) >> 16) as u8));
-        self.command_port.write(&0x20);
+        self.lba_low_port.write((sector & 0x000000FF) as u8);
+        self.lba_mid_port.write(((sector & 0x0000FF00) >> 8) as u8);
+        self.lba_hi_port.write(((sector & 0x00FF0000) >> 16) as u8);
+        self.command_port.write(0x20);
 
         let mut status;
         loop {
@@ -194,8 +190,8 @@ impl ATADrive {
     }
 
     pub fn flush(&mut self) -> Result<(), AtaDriveError> {
-        self.device_port.write(&inline_if!(self.master, 0xE0, 0xF0));
-        self.command_port.write(&0xE7);
+        self.device_port.write(inline_if!(self.master, 0xE0, 0xF0));
+        self.command_port.write(0xE7);
         let mut status;
         loop {
             status = self.command_port.read();

@@ -80,7 +80,9 @@ pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 
 pub const LAPIC_VADDR: usize = 0xFFFFFFFFFFF00000;
+pub const IO_APIC_MMIO_VADDR: usize = 0xFFFFFFFFFF000000;
 pub const LAPIC_SIZE: usize = 0xFFF;
+pub const IO_APIC_MMIO_SIZE: usize = 0x1000;
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
 pub static IOAPICS: OnceCell<Mutex<IoApic>> = OnceCell::uninit();
 
@@ -123,6 +125,24 @@ pub fn init(memory_controller: &mut MemoryController) {
             memory_controller.frame_allocator,
         );
     }
+    for (page, frame) in Page::range_inclusive(
+        Page::containing_address(IO_APIC_MMIO_VADDR),
+        Page::containing_address(IO_APIC_MMIO_VADDR + IO_APIC_MMIO_SIZE - 1),
+    )
+    .zip(Frame::range_inclusive(
+        Frame::containing_address(0xFEC00000),
+        Frame::containing_address(0xFEC00000 + IO_APIC_MMIO_SIZE - 1),
+    )) {
+        memory_controller.active_table.map_to(
+            page,
+            frame,
+            EntryFlags::PRESENT
+                | EntryFlags::NO_CACHE
+                | EntryFlags::WRITABLE
+                | EntryFlags::WRITE_THROUGH,
+            memory_controller.frame_allocator,
+        );
+    }
     LAPICS.init_once(|| {
         let mut lapic = LocalApicBuilder::new()
             .timer_vector(32)
@@ -137,14 +157,14 @@ pub fn init(memory_controller: &mut MemoryController) {
         Mutex::new(lapic)
     });
     IOAPICS.init_once(|| unsafe {
-        let mut ioapic = IoApic::new(LAPIC_VADDR as u64);
+        let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR as u64);
         let mut entry = RedirectionTableEntry::default();
         entry.set_mode(IrqMode::Fixed);
         entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
         entry.set_dest(LAPICS.get().unwrap().lock().id() as u8);
         entry.set_vector(PIC_1_OFFSET + 14);
-        ioapic.set_table_entry(11, entry);
-        ioapic.enable_irq(11);
+        ioapic.set_table_entry(10, entry);
+        ioapic.enable_irq(10);
         Mutex::new(ioapic)
     });
     IDT.load();
@@ -371,7 +391,7 @@ extern "C" fn inner_syscall(stack_frame: &mut FullInterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn primary_ata_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    println!("a");
+    print!("a");
 
     unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
