@@ -10,6 +10,12 @@ Nothing OS is currently in the very early stages of development and is not yet u
 * ```GNU mtools```
 * ```dosfstools``` (mkfs.vfat)
 * ```qemu``` (optional: require if you want to test or run it in qemu)
+* ```make```
+## Getting the source code
+```bash
+git clone https://github.com/pantae35872/nothingos
+cd nothingos
+```
 ## Build and Run
 Before building the OS, you need to choose a font. It is recommended to use OpenSans Regular. 
 Copy the font file (`.ttf`) to the project directory and rename it to ```kernel-font.ttf```
@@ -23,3 +29,5 @@ make disk
 # run using QEMU
 make run
 ```
+## Contributing
+At this time, I am not planning to accept contributions to the project.
