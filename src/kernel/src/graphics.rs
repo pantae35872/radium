@@ -4,7 +4,7 @@ use conquer_once::spin::OnceCell;
 use spin::mutex::Mutex;
 use uefi::proto::console::gop::{ModeInfo, PixelFormat};
 
-use crate::BootInformation;
+use common::BootInformation;
 
 pub static DRIVER: OnceCell<Mutex<Graphic>> = OnceCell::uninit();
 

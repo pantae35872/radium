@@ -2,7 +2,7 @@ use core::{error::Error, fmt::Display, mem::size_of};
 
 use crate::driver::storage::{CHSError, Drive, CHS};
 
-#[repr(packed)]
+#[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct PartitionTableEntry {
     bootable: u8,
@@ -15,11 +15,11 @@ pub struct PartitionTableEntry {
     end_lba: u32,
 }
 
-#[repr(packed)]
+#[repr(C)]
 struct MasterBootRecord {
     bootloader: [u8; 440],
     signature: u32,
-    unused: u16,
+    _unused: u16,
 
     primary_partition: [PartitionTableEntry; 4],
     magicnumber: u16,
@@ -91,7 +91,7 @@ impl MasterBootRecord {
         Self {
             bootloader: [0; 440],
             signature: 0,
-            unused: 0,
+            _unused: 0,
             primary_partition: [PartitionTableEntry::new(); 4],
             magicnumber: 0,
         }

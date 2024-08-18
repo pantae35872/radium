@@ -4,7 +4,8 @@
 #![test_runner(nothingos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use nothingos::{serial_println, BootInformation};
+use common::BootInformation;
+use nothingos::serial_println;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {

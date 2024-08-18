@@ -1,6 +1,7 @@
 use core::usize;
 
-use alloc::{collections::BTreeMap, vec::Vec};
+use alloc::vec::Vec;
+use common::hash_map::HashMap;
 use fontdue::{Font, FontSettings, Metrics};
 
 use crate::{graphics, BootInformation};
@@ -8,7 +9,7 @@ use crate::{graphics, BootInformation};
 const PIXEL_SIZE: usize = 18;
 pub struct TtfRenderer {
     data: Vec<char>,
-    cache: BTreeMap<char, (Metrics, Vec<u8>)>,
+    cache: HashMap<char, (Metrics, Vec<u8>)>,
     foreground_color: u32,
     font: Font,
 }
@@ -29,7 +30,7 @@ impl TtfRenderer {
             data: Vec::with_capacity(5000),
             foreground_color,
             font,
-            cache: BTreeMap::new(),
+            cache: HashMap::with_capacity(255),
         }
     }
 

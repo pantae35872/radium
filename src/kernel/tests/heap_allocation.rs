@@ -9,7 +9,7 @@ extern crate nothingos;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use nothingos::BootInformation;
+use common::BootInformation;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {

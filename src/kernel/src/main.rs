@@ -14,9 +14,10 @@ extern crate spin;
 use core::arch::asm;
 
 use alloc::ffi::CString;
+use common::BootInformation;
 use nothingos::driver::storage::ahci_driver;
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
-use nothingos::{hlt_loop, println, BootInformation};
+use nothingos::{hlt_loop, println};
 
 #[no_mangle]
 fn sys_print(value: &str) {

@@ -4,7 +4,7 @@
 #![test_runner(nothingos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use nothingos::BootInformation;
+use common::BootInformation;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {

@@ -6,7 +6,8 @@
 
 extern crate nothingos;
 
-use nothingos::{println, BootInformation};
+use common::BootInformation;
+use nothingos::println;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {

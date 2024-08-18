@@ -8,10 +8,8 @@ extern crate nothingos;
 
 use core::usize;
 
-use nothingos::{
-    driver::storage::{ahci_driver, Drive},
-    BootInformation,
-};
+use common::BootInformation;
+use nothingos::driver::storage::{ahci_driver, Drive};
 use x86_64::instructions::random;
 
 #[no_mangle]

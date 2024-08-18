@@ -11,7 +11,6 @@
 #![feature(naked_functions)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
-#![allow(dead_code)]
 #[macro_use]
 extern crate bitflags;
 
@@ -78,15 +77,14 @@ use core::panic::PanicInfo;
 use core::usize;
 
 use allocator::{HEAP_SIZE, HEAP_START};
+use common::BootInformation;
 use conquer_once::spin::OnceCell;
-use elf_rs::{Elf, SectionHeaderEntry, SectionHeaderFlags};
+use elf_rs::{SectionHeaderEntry, SectionHeaderFlags};
 use interrupt::LAPIC_SIZE;
 use memory::paging::{ActivePageTable, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
 use memory::AreaFrameAllocator;
 use spin::Mutex;
-use uefi::proto::console::gop::Mode;
-use uefi::table::boot::MemoryMap;
 use x2apic::lapic::xapic_base;
 use x86_64::registers::control::Cr0Flags;
 use x86_64::registers::model_specific::EferFlags;
@@ -163,22 +161,6 @@ pub fn get_physical_with_controller(
     };
 }
 
-#[repr(C)]
-#[derive(Debug)]
-pub struct BootInformation {
-    pub largest_addr: u64,
-    pub gop_mode: Mode,
-    pub framebuffer: *mut u32,
-    pub runtime_system_table: u64,
-    pub memory_map: *mut MemoryMap<'static>,
-    pub kernel_start: u64,
-    pub kernel_end: u64,
-    pub elf_section: Elf<'static>,
-    pub boot_info_start: u64,
-    pub boot_info_end: u64,
-    pub font_start: u64,
-    pub font_end: u64,
-}
 pub struct MemoryController<'area_frame_allocator, 'active_table> {
     active_table: &'active_table mut ActivePageTable,
     frame_allocator: &'area_frame_allocator mut AreaFrameAllocator<'static>,

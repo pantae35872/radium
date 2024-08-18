@@ -6,13 +6,14 @@ extern crate alloc;
 use crate::toml::TomlValue;
 use alloc::borrow::ToOwned;
 use alloc::vec::Vec;
+use common::toml::lexer::TomlLexer;
+use common::BootInformation;
 use core::arch::asm;
 use core::mem::size_of;
 use core::ptr::write_bytes;
 use core::slice;
 use core::str;
 use elf_rs::{Elf, ElfFile, ProgramType};
-use uefi::proto::console::gop::Mode;
 use uefi::proto::media::file::FileInfo;
 use uefi::proto::media::file::RegularFile;
 use uefi::table::boot::AllocateType;
@@ -34,6 +35,7 @@ use uefi::{
     CStr16, Handle, Status,
 };
 use uefi_raw::protocol::file_system::FileAttribute;
+use uefi_services::println;
 
 fn set_output_mode(system_table: &mut SystemTable<Boot>) {
     let mut largest_mode: Option<OutputMode> = None;
@@ -55,23 +57,6 @@ fn set_output_mode(system_table: &mut SystemTable<Boot>) {
 }
 
 pub mod toml;
-
-#[repr(C)]
-#[derive(Debug)]
-struct BootInformation {
-    largest_addr: u64,
-    gop_mode: Mode,
-    framebuffer: *mut u32,
-    runtime_system_table: u64,
-    memory_map: *mut MemoryMap<'static>,
-    kernel_start: u64,
-    kernel_end: u64,
-    elf_section: Elf<'static>,
-    boot_info_start: u64,
-    boot_info_end: u64,
-    font_start: u64,
-    font_end: u64,
-}
 
 #[entry]
 fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
@@ -152,6 +137,8 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let info_file =
         unsafe { core::str::from_raw_parts(info_buffer.as_ptr(), info.file_size() as usize) };
+    let lexer = TomlLexer::new(info_file);
+    println!("{:?}", lexer.tokenize());
 
     let info_file: Vec<(&str, TomlValue)> = toml::parse_toml(info_file).unwrap();
 
@@ -325,6 +312,20 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     drop(protocol);
     drop(scoped_simple_file_system);
+
+    println!("Press any key to boot...");
+
+    loop {
+        match system_table.stdin().read_key() {
+            Ok(key) => match key {
+                Some(_) => break,
+                None => {}
+            },
+            Err(err) => {
+                panic!("Failed to read key: {}", err);
+            }
+        }
+    }
 
     let handle = system_table
         .boot_services()

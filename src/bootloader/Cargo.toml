@@ -12,3 +12,6 @@ uefi-raw = "0.5.1"
 uefi-services = "0.24.0"
 uart_16550 = "0.2.0"
 x86_64 = "0.15.1"
+
+[dependencies.common]
+path = "../common"
