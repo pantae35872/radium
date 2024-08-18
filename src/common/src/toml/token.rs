@@ -2,7 +2,7 @@ use core::fmt::Display;
 
 use alloc::string::String;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TomlToken {
     String(String),
     Interger(i64),
