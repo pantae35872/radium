@@ -1,3 +1,4 @@
+use core::fmt::Debug;
 use core::{borrow::Borrow, hash::Hash};
 
 use alloc::vec;
@@ -37,12 +38,25 @@ impl Hasher for DJB2Hasher {
     }
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq)]
 pub struct HashMap<K, V> {
     buckets: Vec<Vec<(K, V)>>,
     capacity: usize,
     size: usize,
     load_factor: f64,
+}
+
+impl<K: Debug, V: Debug> Debug for HashMap<K, V> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "HashMap: {{ Length: {}, Values: {{ \n", self.size())?;
+        for bucket in &self.buckets {
+            for (key, value) in bucket {
+                write!(f, "Key: {:?}, Value: {:?}\n", key, value)?;
+            }
+        }
+        write!(f, "}} }}");
+        return Ok(());
+    }
 }
 
 impl<K, V> HashMap<K, V> {
@@ -58,6 +72,10 @@ impl<K, V> HashMap<K, V> {
             size: 0,
             load_factor: 0.75,
         }
+    }
+
+    pub fn size(&self) -> usize {
+        return self.size;
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
@@ -108,6 +126,14 @@ impl<K: Eq + Hash, V> HashMap<K, V> {
 }
 
 impl<K: Eq + Hash, V> HashMap<K, V> {
+    pub fn exists<Q: ?Sized>(&self, key: &Q) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq,
+    {
+        self.get(key).is_some()
+    }
+
     pub fn get<Q: ?Sized>(&self, key: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
@@ -141,6 +167,20 @@ impl<K: Eq + Hash, V> HashMap<K, V> {
     }
 }
 
+impl<K: Eq + Hash + Clone, V> HashMap<K, V> {
+    pub fn get_or_insert_mut<F>(&mut self, key: &K, insert: F) -> &mut V
+    where
+        F: Fn() -> V,
+    {
+        if self.exists(key) {
+            return self.get_mut(key).unwrap();
+        } else {
+            self.insert(key.clone(), insert());
+            return self.get_mut(key).unwrap();
+        }
+    }
+}
+
 impl<K: Eq + Hash, V> HashMap<K, V> {
     pub fn remove<Q: ?Sized>(&mut self, key: &Q) -> Option<V>
     where
@@ -158,6 +198,17 @@ impl<K: Eq + Hash, V> HashMap<K, V> {
             return Some(bucket.swap_remove(pos).1);
         }
         return None;
+    }
+}
+
+impl<K: Clone, V: Clone> Clone for HashMap<K, V> {
+    fn clone(&self) -> Self {
+        HashMap {
+            buckets: self.buckets.clone(),
+            capacity: self.capacity,
+            size: self.size,
+            load_factor: self.load_factor,
+        }
     }
 }
 

@@ -129,6 +129,10 @@ impl<'a> TomlLexer<'a> {
                     {
                         self.consume();
                         self.consume();
+
+                        if self.peek(0).is_some_and(|e| e == '\n') {
+                            self.consume();
+                        }
                         loop {
                             while self.peek(0).is_some_and(|e| e != '\\' && e != '\"') {
                                 buffer.push(self.consume().unwrap());
@@ -165,6 +169,19 @@ impl<'a> TomlLexer<'a> {
                                 }
                                 continue;
                             }
+
+                            if self.peek(0).is_some_and(|e| e == '\"')
+                                || self.peek(1).is_some_and(|e| e == '\"')
+                            {
+                                if self.peek(0).is_some_and(|e| e == '\"')
+                                    && self.peek(1).is_some_and(|e| e == '\"')
+                                {
+                                    buffer.push(self.consume().unwrap());
+                                }
+                                buffer.push(self.consume().unwrap());
+                                continue;
+                            }
+                            break;
                         }
                         break;
                     }
@@ -226,8 +243,8 @@ impl<'a> TomlLexer<'a> {
                             }
 
                             if self.peek(0).is_some_and(|e| e == '\'')
-                                || self.peek(1).is_some_and(|e| e == '\'')
-                                || self.peek(2).is_some_and(|e| e == '\'')
+                                && self.peek(1).is_some_and(|e| e == '\'')
+                                && self.peek(2).is_some_and(|e| e == '\'')
                             {
                                 self.consume();
                                 self.consume();
@@ -237,6 +254,11 @@ impl<'a> TomlLexer<'a> {
                             if self.peek(0).is_some_and(|e| e == '\'')
                                 || self.peek(1).is_some_and(|e| e == '\'')
                             {
+                                if self.peek(0).is_some_and(|e| e == '\'')
+                                    && self.peek(1).is_some_and(|e| e == '\'')
+                                {
+                                    buffer.push(self.consume().unwrap());
+                                }
                                 buffer.push(self.consume().unwrap());
                                 continue;
                             }
@@ -283,6 +305,11 @@ impl<'a> TomlLexer<'a> {
                     self.consume();
 
                     while self.peek(0).is_some_and(|e| e.is_digit(8)) {
+                        if self.peek(0).is_some_and(|e| e == '_') {
+                            self.consume();
+                            continue;
+                        }
+
                         buffer.push(self.consume().unwrap());
                     }
 
@@ -297,6 +324,11 @@ impl<'a> TomlLexer<'a> {
                     self.consume();
 
                     while self.peek(0).is_some_and(|e| e.is_digit(2)) {
+                        if self.peek(0).is_some_and(|e| e == '_') {
+                            self.consume();
+                            continue;
+                        }
+
                         buffer.push(self.consume().unwrap());
                     }
 
@@ -308,7 +340,13 @@ impl<'a> TomlLexer<'a> {
                 }
 
                 buffer.push(self.consume().unwrap());
-                while self.peek(0).is_some_and(|e| e.is_digit(10)) {
+
+                while self.peek(0).is_some_and(|e| e.is_digit(10) || e == '_') {
+                    if self.peek(0).is_some_and(|e| e == '_') {
+                        self.consume();
+                        continue;
+                    }
+
                     buffer.push(self.consume().unwrap());
                 }
                 if self.peek(0).is_some_and(|e| e == '.') {

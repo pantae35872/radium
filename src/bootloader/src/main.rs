@@ -3,10 +3,12 @@
 #![feature(str_from_raw_parts)]
 #![feature(allocator_api)]
 extern crate alloc;
-use crate::toml::TomlValue;
 use alloc::borrow::ToOwned;
 use alloc::vec::Vec;
+use common::toml;
 use common::toml::lexer::TomlLexer;
+use common::toml::parser::TomlParser;
+use common::toml::parser::TomlValue;
 use common::BootInformation;
 use core::arch::asm;
 use core::mem::size_of;
@@ -55,8 +57,6 @@ fn set_output_mode(system_table: &mut SystemTable<Boot>) {
             .expect("Could not change text mode");
     }
 }
-
-pub mod toml;
 
 #[entry]
 fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
@@ -137,30 +137,20 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let info_file =
         unsafe { core::str::from_raw_parts(info_buffer.as_ptr(), info.file_size() as usize) };
-    let lexer = TomlLexer::new(info_file);
-    println!("{:?}", lexer.tokenize());
 
-    let info_file: Vec<(&str, TomlValue)> = toml::parse_toml(info_file).unwrap();
+    let info_file: TomlValue = toml::parse_toml(info_file).expect("Cannot parse kernel info file");
 
-    let mut kernel_file: &str = "";
-    let mut kernel_font_file: &str = "";
-    for (key, value) in info_file {
-        if key == "kernel_file" {
-            match value {
-                TomlValue::String(s) => {
-                    kernel_file = s;
-                }
-                TomlValue::Integer(_) => panic!("Kernel file is not a string"),
-            }
-        } else if key == "font_file" {
-            match value {
-                TomlValue::String(s) => {
-                    kernel_font_file = s;
-                }
-                TomlValue::Integer(_) => panic!("Kernel font file is not a string"),
-            }
-        }
-    }
+    let mut kernel_file: &str = info_file
+        .get("kernel_file")
+        .expect("No kernel file found in info file")
+        .as_string()
+        .expect("Kernel file is not a string value in file info");
+    let mut kernel_font_file: &str = info_file
+        .get("font_file")
+        .expect("No font file found in info file")
+        .as_string()
+        .expect("Font file is not a string value in file info");
+
     let mut buf = [0; 64];
     let filename = match CStr16::from_str_with_buf(
         ("\\boot\\".to_owned() + kernel_font_file).as_str(),
