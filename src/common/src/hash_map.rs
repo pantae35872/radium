@@ -1,7 +1,6 @@
 use core::fmt::Debug;
 use core::{borrow::Borrow, hash::Hash};
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use core::hash::Hasher;
@@ -54,7 +53,7 @@ impl<K: Debug, V: Debug> Debug for HashMap<K, V> {
                 write!(f, "Key: {:?}, Value: {:?}\n", key, value)?;
             }
         }
-        write!(f, "}} }}");
+        write!(f, "}} }}")?;
         return Ok(());
     }
 }

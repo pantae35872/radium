@@ -4,10 +4,7 @@
 #![feature(allocator_api)]
 extern crate alloc;
 use alloc::borrow::ToOwned;
-use alloc::vec::Vec;
 use common::toml;
-use common::toml::lexer::TomlLexer;
-use common::toml::parser::TomlParser;
 use common::toml::parser::TomlValue;
 use common::BootInformation;
 use core::arch::asm;

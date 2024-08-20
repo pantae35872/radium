@@ -1,10 +1,9 @@
-use core::{error::Error, fmt::Display, hash::Hash, ops::Index};
+use core::{error::Error, fmt::Display, ops::Index};
 
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use uefi::table::runtime::VariableAttributes;
 
 use crate::hash_map::HashMap;
 
@@ -48,13 +47,6 @@ pub struct TomlParser {
 }
 
 impl TomlValue {
-    fn insert(&mut self, key: String, value: TomlValue) {
-        match self {
-            TomlValue::Table(ref mut table) => table.insert(key, value),
-            _ => {}
-        }
-    }
-
     fn insert_deep(&mut self, keys: Vec<String>, value: TomlValue) -> Result<(), TomlParserError> {
         let mut table = self.as_table_mut().ok_or(TomlParserError::NotATable)?;
         for key in &keys[..keys.len() - 1] {
@@ -190,7 +182,7 @@ impl TomlParser {
                 }
                 TomlToken::LBracket => {
                     self.consume();
-                    let table_name = self.parse_table_name()?;
+                    let _table_name = self.parse_table_name()?;
                     todo!();
                 }
                 TomlToken::NewLine => {
