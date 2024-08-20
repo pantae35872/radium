@@ -1,4 +1,4 @@
-use core::{error::Error, fmt::Display, hash::Hash};
+use core::{error::Error, fmt::Display, hash::Hash, ops::Index};
 
 use alloc::{
     string::{String, ToString},
@@ -83,8 +83,8 @@ impl TomlValue {
         }
     }
 
-    pub fn get<T: ToString>(&self, key: T) -> Option<&TomlValue> {
-        return self.as_table()?.get(&key.to_string());
+    pub fn get<K: AsRef<str>>(&self, key: K) -> Option<&TomlValue> {
+        return self.as_table()?.get(key.as_ref());
     }
 
     pub fn as_array(&self) -> Option<&Array> {
@@ -120,6 +120,18 @@ impl TomlValue {
             TomlValue::Boolean(value) => return Some(*value),
             _ => return None,
         }
+    }
+}
+
+impl<K: AsRef<str>> Index<K> for TomlValue {
+    type Output = TomlValue;
+
+    fn index(&self, key: K) -> &Self::Output {
+        return self
+            .as_table()
+            .expect("Cannot index into a table because TomlValue is not a table")
+            .get(key.as_ref())
+            .expect("Key not found");
     }
 }
 

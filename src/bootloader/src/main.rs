@@ -140,12 +140,12 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let info_file: TomlValue = toml::parse_toml(info_file).expect("Cannot parse kernel info file");
 
-    let mut kernel_file: &str = info_file
+    let kernel_file: &str = info_file
         .get("kernel_file")
         .expect("No kernel file found in info file")
         .as_string()
         .expect("Kernel file is not a string value in file info");
-    let mut kernel_font_file: &str = info_file
+    let kernel_font_file: &str = info_file
         .get("font_file")
         .expect("No font file found in info file")
         .as_string()
