@@ -47,10 +47,10 @@ pub struct HashMap<K, V> {
 
 impl<K: Debug, V: Debug> Debug for HashMap<K, V> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "HashMap: {{ Length: {}, Values: {{ \n", self.size())?;
+        write!(f, "HashMap: {{ Length: {}, Values: {{ ", self.size())?;
         for bucket in &self.buckets {
             for (key, value) in bucket {
-                write!(f, "Key: {:?}, Value: {:?}\n", key, value)?;
+                write!(f, "Key: {:?}, Value: {:?}", key, value)?;
             }
         }
         write!(f, "}} }}")?;

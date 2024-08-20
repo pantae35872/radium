@@ -75,6 +75,13 @@ impl TomlValue {
         }
     }
 
+    fn as_table_owned(self) -> Option<Table> {
+        match self {
+            TomlValue::Table(table) => return Some(table),
+            _ => return None,
+        }
+    }
+
     pub fn get<K: AsRef<str>>(&self, key: K) -> Option<&TomlValue> {
         return self.as_table()?.get(key.as_ref());
     }
@@ -163,27 +170,21 @@ impl TomlParser {
 
         while let Some(token) = self.peek(0).cloned() {
             match token {
-                TomlToken::Identifier(identifier) | TomlToken::String(identifier) => {
-                    self.consume();
-                    let keys = self.parse_keys(identifier)?;
-                    self.expect_token(TomlToken::Equal)?;
-                    let value = self.parse_value()?;
-                    main_map.insert_deep(keys, value)?;
-                    self.expect_token(TomlToken::NewLine)?;
-                }
-                TomlToken::Interger(interger) => {
-                    let identifier = interger.to_string();
-                    self.consume();
-                    let keys = self.parse_keys(identifier)?;
-                    self.expect_token(TomlToken::Equal)?;
-                    let value = self.parse_value()?;
-                    main_map.insert_deep(keys, value)?;
+                TomlToken::Identifier(_) | TomlToken::String(_) | TomlToken::Interger(_) => {
+                    self.parse_key_value(&mut main_map)?;
                     self.expect_token(TomlToken::NewLine)?;
                 }
                 TomlToken::LBracket => {
                     self.consume();
-                    let _table_name = self.parse_table_name()?;
-                    todo!();
+                    let table_name = self.parse_table_name()?;
+                    let mut table = TomlValue::Table(HashMap::new());
+                    self.clear_newline();
+                    while self.peek(0).is_some_and(|e| *e != TomlToken::LBracket) {
+                        self.parse_key_value(&mut table)?;
+                        self.expect_token(TomlToken::NewLine)?;
+                        self.clear_newline();
+                    }
+                    main_map.insert_deep(table_name, table)?;
                 }
                 TomlToken::NewLine => {
                     self.consume();
@@ -195,6 +196,34 @@ impl TomlParser {
         }
 
         return Ok(main_map);
+    }
+
+    fn parse_key_value(&mut self, buffer: &mut TomlValue) -> Result<(), TomlParserError> {
+        while let Some(token) = self.peek(0).cloned() {
+            match token {
+                TomlToken::Identifier(identifier) | TomlToken::String(identifier) => {
+                    self.consume();
+                    let keys = self.parse_keys(identifier)?;
+                    self.expect_token(TomlToken::Equal)?;
+                    let value = self.parse_value()?;
+                    buffer.insert_deep(keys, value)?;
+                    break;
+                }
+                TomlToken::Interger(interger) => {
+                    let identifier = interger.to_string();
+                    self.consume();
+                    let keys = self.parse_keys(identifier)?;
+                    self.expect_token(TomlToken::Equal)?;
+                    let value = self.parse_value()?;
+                    buffer.insert_deep(keys, value)?;
+                    break;
+                }
+                unexpected => {
+                    return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
+                }
+            }
+        }
+        return Ok(());
     }
 
     fn parse_keys(&mut self, first_iden: String) -> Result<Vec<String>, TomlParserError> {
@@ -210,6 +239,9 @@ impl TomlParser {
                     {
                         TomlToken::Identifier(identifier) | TomlToken::String(identifier) => {
                             keys.push(identifier.clone());
+                        }
+                        TomlToken::Interger(interger) => {
+                            keys.push(interger.to_string());
                         }
                         unexpected => {
                             return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
@@ -227,16 +259,20 @@ impl TomlParser {
         return Ok(keys);
     }
 
-    fn parse_table_name(&mut self) -> Result<String, TomlParserError> {
-        match self
+    fn parse_table_name(&mut self) -> Result<Vec<String>, TomlParserError> {
+        let table_name = match self
             .consume()
             .ok_or(TomlParserError::UnexpectedToken(None))?
+            .clone()
         {
             TomlToken::String(identifier) | TomlToken::Identifier(identifier) => {
-                return Ok(identifier.clone());
+                self.parse_keys(identifier)?
             }
+            TomlToken::Interger(interger) => self.parse_keys(interger.to_string())?,
             unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
         };
+        self.expect_token(TomlToken::RBracket)?;
+        return Ok(table_name);
     }
 
     fn parse_value(&mut self) -> Result<TomlValue, TomlParserError> {
@@ -254,11 +290,60 @@ impl TomlParser {
     }
 
     fn parse_inline_table(&mut self) -> Result<Table, TomlParserError> {
-        todo!();
+        let mut table = TomlValue::Table(HashMap::new());
+        while self.peek(0).is_some() {
+            self.clear_newline();
+            self.parse_key_value(&mut table)?;
+            self.clear_newline();
+            if self.peek(0).is_some_and(|e| *e == TomlToken::Comma) {
+                self.consume();
+                self.clear_newline();
+                if self.peek(0).is_some_and(|e| *e == TomlToken::RCurly) {
+                    self.consume();
+                    break;
+                }
+                continue;
+            }
+            if self.peek(0).is_some_and(|e| *e == TomlToken::RCurly) {
+                self.consume();
+                break;
+            } else {
+                self.expect_token(TomlToken::Comma)?;
+            }
+        }
+        return Ok(table.as_table_owned().unwrap());
     }
 
     fn parse_array(&mut self) -> Result<Array, TomlParserError> {
-        todo!();
+        let mut array = Vec::new();
+        while self.peek(0).is_some() {
+            self.clear_newline();
+            let value = self.parse_value()?;
+            array.push(value);
+            self.clear_newline();
+            if self.peek(0).is_some_and(|e| *e == TomlToken::Comma) {
+                self.consume();
+                self.clear_newline();
+                if self.peek(0).is_some_and(|e| *e == TomlToken::RBracket) {
+                    self.consume();
+                    break;
+                }
+                continue;
+            }
+            if self.peek(0).is_some_and(|e| *e == TomlToken::RBracket) {
+                self.consume();
+                break;
+            } else {
+                self.expect_token(TomlToken::Comma)?;
+            }
+        }
+        return Ok(array);
+    }
+
+    fn clear_newline(&mut self) {
+        while self.peek(0).is_some_and(|e| *e == TomlToken::NewLine) {
+            self.consume();
+        }
     }
 
     fn expect_token(&mut self, expected: TomlToken) -> Result<(), TomlParserError> {

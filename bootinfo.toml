@@ -1,2 +1,6 @@
 kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
+
+  [product]
+type = { name = "Nail" }
+type.edible = false
