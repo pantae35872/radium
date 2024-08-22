@@ -1,6 +1,22 @@
 kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
 
-  [product]
-type = { name = "Nail" }
-type.edible = false
+[[fruits]]
+name = "apple"
+
+[fruits.physical]  # subtable
+color = "red"
+shape = "round"
+
+[[fruits.varieties]]  # nested array of tables
+name = "red delicious"
+
+[[fruits.varieties]]
+name = "granny smith"
+
+
+[[fruits]]
+name = "banana"
+
+[[fruits.varieties]]
+name = "plantain"

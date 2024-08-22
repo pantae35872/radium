@@ -50,7 +50,7 @@ impl<K: Debug, V: Debug> Debug for HashMap<K, V> {
         write!(f, "HashMap: {{ Length: {}, Values: {{ ", self.size())?;
         for bucket in &self.buckets {
             for (key, value) in bucket {
-                write!(f, "Key: {:?}, Value: {:?}", key, value)?;
+                write!(f, "Key: {:?}, Value: {:?} ", key, value)?;
             }
         }
         write!(f, "}} }}")?;

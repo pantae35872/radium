@@ -27,6 +27,7 @@ pub enum TomlParserError {
     UnexpectedToken(Option<TomlToken>),
     KeyNotFound(String),
     NotATable,
+    NotAArray,
 }
 
 impl Display for TomlParserError {
@@ -35,6 +36,7 @@ impl Display for TomlParserError {
             Self::UnexpectedToken(token) => write!(f, "Unexpected Token: {:?}", token),
             Self::KeyNotFound(key) => write!(f, "Key not found: {}", key),
             Self::NotATable => write!(f, "Toml value is not a table"),
+            Self::NotAArray => write!(f, "Toml value is not a array"),
         }
     }
 }
@@ -50,14 +52,57 @@ impl TomlValue {
     fn insert_deep(&mut self, keys: Vec<String>, value: TomlValue) -> Result<(), TomlParserError> {
         let mut table = self.as_table_mut().ok_or(TomlParserError::NotATable)?;
         for key in &keys[..keys.len() - 1] {
-            table = table
-                .get_or_insert_mut(key, || TomlValue::Table(HashMap::new()))
+            let table_or_array = table.get_or_insert_mut(key, || TomlValue::Table(HashMap::new()));
+            if table_or_array.as_table_mut().is_some() {
+                table = table_or_array.as_table_mut().unwrap();
+                continue;
+            }
+            let array = table_or_array
+                .as_array_mut()
+                .ok_or(TomlParserError::NotAArray)?;
+            if array.is_empty() {
+                array.push(TomlValue::Table(HashMap::new()));
+            }
+            table = array
+                .last_mut()
+                .unwrap()
                 .as_table_mut()
                 .ok_or(TomlParserError::NotATable)?;
         }
         if let Some(key) = keys.last() {
             table.insert(key.clone(), value);
         }
+        return Ok(());
+    }
+
+    fn insert_deep_array(
+        &mut self,
+        keys: Vec<String>,
+        i_table: Table,
+    ) -> Result<(), TomlParserError> {
+        let mut array = self
+            .as_table_mut()
+            .ok_or(TomlParserError::NotATable)?
+            .get_or_insert_mut(&keys.first().unwrap(), || TomlValue::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or(TomlParserError::NotAArray)?;
+
+        for name in &keys[1..] {
+            let mut current_array = array;
+
+            if current_array.last_mut().is_none() {
+                current_array.push(TomlValue::Table(HashMap::new()));
+            }
+            array = current_array
+                .last_mut()
+                .unwrap()
+                .as_table_mut()
+                .ok_or(TomlParserError::NotATable)?
+                .get_or_insert_mut(name, || TomlValue::Array(Vec::new()))
+                .as_array_mut()
+                .ok_or(TomlParserError::NotAArray)?;
+        }
+        array.push(TomlValue::Table(i_table));
         return Ok(());
     }
 
@@ -87,6 +132,13 @@ impl TomlValue {
     }
 
     pub fn as_array(&self) -> Option<&Array> {
+        match self {
+            TomlValue::Array(array) => return Some(array),
+            _ => return None,
+        }
+    }
+
+    fn as_array_mut(&mut self) -> Option<&mut Array> {
         match self {
             TomlValue::Array(array) => return Some(array),
             _ => return None,
@@ -175,6 +227,12 @@ impl TomlParser {
                     self.expect_token(TomlToken::NewLine)?;
                 }
                 TomlToken::LBracket => {
+                    if self.peek(0).is_some_and(|e| *e == TomlToken::LBracket)
+                        && self.peek(1).is_some_and(|e| *e == TomlToken::LBracket)
+                    {
+                        self.parse_table_array(&mut main_map)?;
+                        continue;
+                    }
                     self.consume();
                     let table_name = self.parse_table_name()?;
                     let mut table = TomlValue::Table(HashMap::new());
@@ -196,6 +254,25 @@ impl TomlParser {
         }
 
         return Ok(main_map);
+    }
+
+    fn parse_table_array(&mut self, main_map: &mut TomlValue) -> Result<(), TomlParserError> {
+        self.consume();
+        self.consume();
+        let table_name = self.parse_table_name()?;
+        self.expect_token(TomlToken::RBracket)?;
+
+        let mut table = TomlValue::Table(HashMap::new());
+        self.clear_newline();
+        while self.peek(0).is_some_and(|e| *e != TomlToken::LBracket) {
+            self.parse_key_value(&mut table)?;
+            self.expect_token(TomlToken::NewLine)?;
+            self.clear_newline();
+        }
+
+        main_map.insert_deep_array(table_name, table.as_table_owned().unwrap())?;
+
+        return Ok(());
     }
 
     fn parse_key_value(&mut self, buffer: &mut TomlValue) -> Result<(), TomlParserError> {
@@ -318,6 +395,10 @@ impl TomlParser {
         let mut array = Vec::new();
         while self.peek(0).is_some() {
             self.clear_newline();
+            if self.peek(0).is_some_and(|e| *e == TomlToken::RBracket) {
+                self.consume();
+                break;
+            }
             let value = self.parse_value()?;
             array.push(value);
             self.clear_newline();
