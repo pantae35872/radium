@@ -88,7 +88,7 @@ impl TomlValue {
             .ok_or(TomlParserError::NotAArray)?;
 
         for name in &keys[1..] {
-            let mut current_array = array;
+            let current_array = array;
 
             if current_array.last_mut().is_none() {
                 current_array.push(TomlValue::Table(HashMap::new()));
