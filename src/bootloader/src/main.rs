@@ -137,8 +137,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let info_file: TomlValue = toml::parse_toml(info_file).expect("Cannot parse kernel info file");
 
-    println!("{:?}", info_file);
-
     let kernel_file: &str = info_file
         .get("kernel_file")
         .expect("No kernel file found in info file")
