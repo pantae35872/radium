@@ -13,6 +13,7 @@ use core::ptr::write_bytes;
 use core::slice;
 use core::str;
 use elf_rs::{Elf, ElfFile, ProgramType};
+use uefi::proto::console::text::Color;
 use uefi::proto::media::file::FileInfo;
 use uefi::proto::media::file::RegularFile;
 use uefi::table::boot::AllocateType;
@@ -60,6 +61,14 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut system_table).unwrap();
 
     set_output_mode(&mut system_table);
+    system_table
+        .stdout()
+        .set_color(Color::LightGreen, Color::Black)
+        .expect("Failed to set color");
+    system_table
+        .stdout()
+        .clear()
+        .expect("Could not clear screen");
     let entrypoint: u64;
     let protocol = match system_table
         .boot_services()

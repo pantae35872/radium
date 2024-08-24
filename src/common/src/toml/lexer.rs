@@ -142,6 +142,14 @@ impl<'a> TomlLexer<'a> {
                                 && self.peek(1).is_some_and(|e| e == '\"')
                                 && self.peek(2).is_some_and(|e| e == '\"')
                             {
+                                if self.peek(3).is_some_and(|e| e == '\"') {
+                                    buffer.push('\"');
+                                    self.consume();
+                                }
+                                if self.peek(3).is_some_and(|e| e == '\"') {
+                                    buffer.push('\"');
+                                    self.consume();
+                                }
                                 self.consume();
                                 self.consume();
                                 self.consume();
@@ -246,6 +254,14 @@ impl<'a> TomlLexer<'a> {
                                 && self.peek(1).is_some_and(|e| e == '\'')
                                 && self.peek(2).is_some_and(|e| e == '\'')
                             {
+                                if self.peek(3).is_some_and(|e| e == '\'') {
+                                    buffer.push('\'');
+                                    self.consume();
+                                }
+                                if self.peek(3).is_some_and(|e| e == '\'') {
+                                    buffer.push('\'');
+                                    self.consume();
+                                }
                                 self.consume();
                                 self.consume();
                                 self.consume();

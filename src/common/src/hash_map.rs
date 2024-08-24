@@ -169,7 +169,7 @@ impl<K: Eq + Hash, V> HashMap<K, V> {
 impl<K: Eq + Hash + Clone, V> HashMap<K, V> {
     pub fn get_or_insert_mut<F>(&mut self, key: &K, insert: F) -> &mut V
     where
-        F: Fn() -> V,
+        F: FnOnce() -> V,
     {
         if self.exists(key) {
             return self.get_mut(key).unwrap();
