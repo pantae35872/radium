@@ -4,7 +4,7 @@
 #![test_runner(nothingos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
-use common::BootInformation;
+use common::boot::BootInformation;
 use nothingos::serial_println;
 
 #[no_mangle]

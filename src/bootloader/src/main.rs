@@ -4,9 +4,9 @@
 #![feature(allocator_api)]
 extern crate alloc;
 use alloc::borrow::ToOwned;
+use common::boot::BootInformation;
 use common::toml;
 use common::toml::parser::TomlValue;
-use common::BootInformation;
 use core::arch::asm;
 use core::mem::size_of;
 use core::ptr::write_bytes;
@@ -18,7 +18,6 @@ use uefi::proto::media::file::FileInfo;
 use uefi::proto::media::file::RegularFile;
 use uefi::table::boot::AllocateType;
 use uefi::table::boot::MemoryDescriptor;
-use uefi::table::boot::MemoryMap;
 use uefi::table::boot::OpenProtocolAttributes;
 use uefi::table::boot::OpenProtocolParams;
 use uefi::{
@@ -358,13 +357,12 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         }
     }
     drop(gop);
-    let (system_table, mut memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
+    let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
     unsafe {
-        (&mut *boot_info).memory_map = &mut memory_map as *mut MemoryMap<'static>;
+        (&mut *boot_info).memory_map = memory_map;
         (&mut *boot_info).runtime_system_table = system_table.get_current_system_table_addr();
         (&mut *boot_info).largest_addr = [
-            &memory_map as *const MemoryMap<'static> as u64 + size_of::<MemoryMap>() as u64 - 1,
-            memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64
+            (*boot_info).memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64
                 + size_of::<MemoryDescriptor>() as u64
                 - 1,
             boot_info as u64 + size_of::<BootInformation>() as u64 - 1,

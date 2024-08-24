@@ -77,7 +77,7 @@ use core::panic::PanicInfo;
 use core::usize;
 
 use allocator::{HEAP_SIZE, HEAP_START};
-use common::BootInformation;
+use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
 use elf_rs::{SectionHeaderEntry, SectionHeaderFlags};
 use interrupt::LAPIC_SIZE;
@@ -182,14 +182,13 @@ impl<'area_frame_allocator, 'active_table> MemoryController<'area_frame_allocato
 }
 pub fn init(information_address: *mut BootInformation) {
     let boot_info = unsafe { &mut *information_address };
-    let memory_map = unsafe { &*boot_info.memory_map };
     let apic_physical_address: u64 = unsafe { xapic_base() };
     let mut frame_allocator = memory::area_frame_allocator::AreaFrameAllocator::new(
         boot_info.kernel_start as usize,
         boot_info.kernel_end as usize,
         apic_physical_address as usize,
         apic_physical_address as usize + LAPIC_SIZE as usize - 1,
-        memory_map,
+        &boot_info.memory_map,
     );
     enable_nxe_bit();
     enable_write_protect_bit();
@@ -215,6 +214,10 @@ pub fn init(information_address: *mut BootInformation) {
     ACTIVE_TABLE.init_once(|| Mutex::new(active_table));
     driver::init(&mut frame_allocator);
     userland::init();
+    boot_info
+        .memory_map
+        .entries()
+        .for_each(|e| serial_println!("{:?}", e));
     /*println!(
             r#"nothingos Copyright (C) 2024  Pantae
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.

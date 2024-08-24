@@ -269,7 +269,6 @@ where
         let frame = allocator.allocate_frame().expect("no more frames");
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
-    let memory_map = unsafe { &*boot_info.memory_map };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         for section in boot_info.elf_section.section_header_iter() {
             if !section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
@@ -296,18 +295,18 @@ where
             mapper.identity_map(frame, EntryFlags::PRESENT, allocator)
         }
 
-        mapper.identity_map(
-            Frame::containing_address(boot_info.memory_map as usize),
-            EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
-            allocator,
-        );
+        //mapper.identity_map(
+        //   Frame::containing_address(boot_info.memory_map as usize),
+        //    EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
+        //    allocator,
+        //);
 
-        let memory_map_start = Frame::containing_address(memory_map.entries().next().unwrap()
-            as *const MemoryDescriptor
-            as usize);
-        let memory_map_end = Frame::containing_address(memory_map.entries().last().unwrap()
-            as *const MemoryDescriptor
-            as usize);
+        let memory_map_start = Frame::containing_address(
+            boot_info.memory_map.entries().next().unwrap() as *const MemoryDescriptor as usize,
+        );
+        let memory_map_end = Frame::containing_address(
+            boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as usize,
+        );
         let bootinfo_start = Frame::containing_address(boot_info.boot_info_start as usize);
         let bootinfo_end = Frame::containing_address(boot_info.boot_info_end as usize);
         for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {

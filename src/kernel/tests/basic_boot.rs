@@ -6,7 +6,7 @@
 
 extern crate nothingos;
 
-use common::BootInformation;
+use common::boot::BootInformation;
 use nothingos::println;
 
 #[no_mangle]

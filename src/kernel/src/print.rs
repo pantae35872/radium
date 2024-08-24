@@ -36,7 +36,7 @@ macro_rules! println {
     }};
 }
 
-pub fn init(bootinfo: &mut BootInformation, foreground_color: u32) {
+pub fn init(bootinfo: &BootInformation, foreground_color: u32) {
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color)));
 }
 
@@ -45,7 +45,7 @@ pub struct Print {
 }
 
 impl Print {
-    pub fn new(bootinfo: &mut BootInformation, foreground: u32) -> Self {
+    pub fn new(bootinfo: &BootInformation, foreground: u32) -> Self {
         let mut renderer = TtfRenderer::new(bootinfo, foreground);
         for charactor in "Out of heap memory".chars() {
             renderer.cache(&charactor);
