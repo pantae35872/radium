@@ -53,17 +53,13 @@ impl<'a> TomlLexer<'a> {
     }
 
     fn peek(&self, offset: usize) -> Option<char> {
-        return self
-            .buffer
-            .as_bytes()
-            .get(self.index + offset)
-            .map(|&b| b as char);
+        return self.buffer[(self.index + offset)..].chars().next();
     }
 
     fn consume(&mut self) -> Option<char> {
-        if let Some(&byte) = self.buffer.as_bytes().get(self.index) {
+        if let Some(charactor) = self.buffer[self.index..].chars().next() {
             self.index += 1;
-            return Some(byte as char);
+            return Some(charactor);
         } else {
             return None;
         }
