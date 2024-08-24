@@ -15,7 +15,7 @@ fn main() {
             .arg(root_dir.join("build/kernel.bin"))
             .current_dir(&curr_dir);
         makefile_build
-            .arg("maker-no-kernel")
+            .arg("make-test-kernel")
             .current_dir(&root_dir)
             .stdout(Stdio::null())
             .stderr(Stdio::null());

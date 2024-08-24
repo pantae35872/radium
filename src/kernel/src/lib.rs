@@ -184,10 +184,6 @@ pub fn init(information_address: *mut BootInformation) {
     ACTIVE_TABLE.init_once(|| Mutex::new(active_table));
     driver::init(&mut frame_allocator);
     userland::init();
-    boot_info
-        .memory_map
-        .entries()
-        .for_each(|e| serial_println!("{:?}", e));
     /*println!(
             r#"nothingos Copyright (C) 2024  Pantae
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.

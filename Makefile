@@ -3,7 +3,7 @@ ifeq (test,$(firstword $(MAKECMDGOALS)))
   $(eval $(RUN_ARGS):;@:)
 endif
 
-.PHONY: debug release clean fat run maker-no-kernel os-runner test-run test disk update
+.PHONY: debug release clean fat run make-test-kernel os-runner test-run test disk update
 .DEFAULT_GOAL := debug
 
 NAME := nothingos
@@ -39,10 +39,11 @@ update:
 	cd src/kernel && cargo update 
 	cd src/os-runner && cargo update
 
-maker-no-kernel: fat
+make-test-kernel: fat
 	$(call build_bootloader)
 	@mcopy -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
-	@mcopy -i $(FAT_IMG) bootinfo.toml kernel-font.ttf ::/boot
+	@mcopy -i $(FAT_IMG) test_bootinfo.toml kernel-font.ttf ::/boot
+	@mmove -i $(FAT_IMG) boot/test_bootinfo.toml boot/bootinfo.toml 
 	@cp $(FAT_IMG) $(ISO_DIR)
 	@xorriso -as mkisofs -quiet -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR) > /dev/null
 

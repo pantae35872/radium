@@ -8,7 +8,6 @@ use core::{u32, usize};
 use alloc::alloc::alloc;
 use alloc::vec::Vec;
 use bit_field::BitField;
-use bitfield_struct::bitfield;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
 use x86_64::{PhysAddr, VirtAddr};
@@ -97,16 +96,6 @@ pub struct HbaCmdHeader {
     rsv1: [VolatileCell<u32>; 4],
 }
 
-#[bitfield(u8, order = Lsb)]
-pub struct FisRegH2DByte1 {
-    #[bits(4)]
-    pmport: u8,
-    #[bits(3)]
-    rsv: u8,
-    #[bits(1)]
-    command: bool,
-}
-
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 enum FisType {
@@ -118,7 +107,7 @@ enum FisType {
 pub struct FisRegH2D {
     // DWORD 0
     fis_type: VolatileCell<FisType>, // FIS_TYPE_REG_H2D
-    byte_1: FisRegH2DByte1,
+    flags: VolatileCell<u8>,
     command: VolatileCell<u8>,  // Command register
     featurel: VolatileCell<u8>, // Feature register, 7:0
 
@@ -145,8 +134,10 @@ pub struct FisRegH2D {
 }
 
 impl FisRegH2D {
-    pub fn set_command(&mut self, value: &bool) {
-        self.byte_1.set_command(*value);
+    pub fn set_command(&mut self, value: bool) {
+        let mut old_flags = self.flags.get();
+        old_flags.set_bit(7, value);
+        self.flags.set(old_flags);
     }
 }
 
@@ -556,7 +547,7 @@ impl AhciDrive {
         cmdfis.featurel.set(0x00);
         cmdfis.featureh.set(0x00);
         cmdfis.fis_type.set(FisType::RegH2D);
-        cmdfis.set_command(&true);
+        cmdfis.set_command(true);
         cmdfis.command.set(command);
         if lba_mode {
             cmdfis.lba0.set(lba as u8);

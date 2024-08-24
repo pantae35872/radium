@@ -324,7 +324,14 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     drop(protocol);
     drop(scoped_simple_file_system);
 
-    any_key_boot(&mut system_table);
+    if info_file
+        .get("any_key_boot")
+        .expect("any_key_boot boot config not found")
+        .as_bool()
+        .expect("any_key_boot is not a boolean")
+    {
+        any_key_boot(&mut system_table);
+    }
 
     let handle = system_table
         .boot_services()
