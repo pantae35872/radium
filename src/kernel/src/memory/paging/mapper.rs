@@ -1,7 +1,7 @@
-use x86_64::VirtAddr;
+use x86_64::{PhysAddr, VirtAddr};
 
 use super::table::{self, Level4, Table};
-use super::{Page, PhysicalAddress, VirtualAddress, ENTRY_COUNT};
+use super::{Page, ENTRY_COUNT};
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
 use crate::EntryFlags;
 use core::ptr::Unique;
@@ -25,10 +25,11 @@ impl Mapper {
         unsafe { self.p4.as_mut() }
     }
 
-    pub fn translate(&self, virtual_address: VirtualAddress) -> Option<PhysicalAddress> {
-        let offset = virtual_address % PAGE_SIZE;
-        self.translate_page(Page::containing_address(virtual_address))
-            .map(|frame| frame.number * PAGE_SIZE + offset)
+    pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
+        let offset = virtual_address.as_u64() % PAGE_SIZE;
+        return self
+            .translate_page(Page::containing_address(virtual_address.as_u64()))
+            .map(|frame| PhysAddr::new(frame.number * PAGE_SIZE + offset));
     }
 
     pub fn translate_page(&self, page: Page) -> Option<Frame> {
@@ -36,7 +37,7 @@ impl Mapper {
 
         let huge_page = || {
             p3.and_then(|p3| {
-                let p3_entry = &p3[page.p3_index()];
+                let p3_entry = &p3[page.p3_index() as usize];
                 // 1GiB page?
                 if let Some(start_frame) = p3_entry.pointed_frame() {
                     if p3_entry.flags().contains(EntryFlags::HUGE_PAGE) {
@@ -50,7 +51,7 @@ impl Mapper {
                     }
                 }
                 if let Some(p2) = p3.next_table(page.p3_index()) {
-                    let p2_entry = &p2[page.p2_index()];
+                    let p2_entry = &p2[page.p2_index() as usize];
                     if let Some(start_frame) = p2_entry.pointed_frame() {
                         if p2_entry.flags().contains(EntryFlags::HUGE_PAGE) {
                             assert!(start_frame.number % ENTRY_COUNT == 0);
@@ -66,7 +67,7 @@ impl Mapper {
 
         p3.and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| p1[page.p1_index()].pointed_frame())
+            .and_then(|p1| p1[page.p1_index() as usize].pointed_frame())
             .or_else(huge_page)
     }
 
@@ -79,8 +80,8 @@ impl Mapper {
         let p2 = p3.next_table_create(page.p3_index(), allocator);
         let p1 = p2.next_table_create(page.p2_index(), allocator);
 
-        assert!(p1[page.p1_index()].is_unused());
-        p1[page.p1_index()].set(frame, flags | EntryFlags::PRESENT);
+        assert!(p1[page.p1_index() as usize].is_unused());
+        p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
     }
     pub fn map<A>(&mut self, page: Page, flags: EntryFlags, allocator: &mut A)
     where
@@ -94,7 +95,7 @@ impl Mapper {
     where
         A: FrameAllocator,
     {
-        let page = Page::containing_address(frame.start_address());
+        let page = Page::containing_address(frame.start_address().as_u64());
         self.map_to(page, frame, flags, allocator)
     }
 
@@ -104,7 +105,9 @@ impl Mapper {
     {
         use x86_64::instructions::tlb;
 
-        assert!(self.translate(page.start_address()).is_some());
+        assert!(self
+            .translate(VirtAddr::new(page.start_address()))
+            .is_some());
 
         let p1 = self
             .p4_mut()
@@ -112,8 +115,8 @@ impl Mapper {
             .and_then(|p3| p3.next_table_mut(page.p3_index()))
             .and_then(|p2| p2.next_table_mut(page.p2_index()))
             .expect("mapping code does not support huge pages");
-        let frame = p1[page.p1_index()].pointed_frame().unwrap();
-        p1[page.p1_index()].set_unused();
+        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
+        p1[page.p1_index() as usize].set_unused();
         tlb::flush(VirtAddr::new(page.start_address() as u64));
         allocator.deallocate_frame(frame);
     }

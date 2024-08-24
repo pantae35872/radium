@@ -79,10 +79,10 @@ lazy_static! {
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 
-pub const LAPIC_VADDR: usize = 0xFFFFFFFFFFF00000;
-pub const IO_APIC_MMIO_VADDR: usize = 0xFFFFFFFFFF000000;
-pub const LAPIC_SIZE: usize = 0xFFF;
-pub const IO_APIC_MMIO_SIZE: usize = 0x1000;
+pub const LAPIC_VADDR: u64 = 0xFFFFFFFFFFF00000;
+pub const IO_APIC_MMIO_VADDR: u64 = 0xFFFFFFFFFF000000;
+pub const LAPIC_SIZE: u64 = 0xFFF;
+pub const IO_APIC_MMIO_SIZE: u64 = 0x1000;
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
 pub static IOAPICS: OnceCell<Mutex<IoApic>> = OnceCell::uninit();
 
@@ -111,8 +111,8 @@ pub fn init(memory_controller: &mut MemoryController) {
     let apic_end_page = Page::containing_address(LAPIC_VADDR + LAPIC_SIZE - 1);
     for (page, frame) in
         Page::range_inclusive(apic_start_page, apic_end_page).zip(Frame::range_inclusive(
-            Frame::containing_address(apic_physical_address as usize),
-            Frame::containing_address(apic_physical_address as usize + LAPIC_SIZE - 1),
+            Frame::containing_address(apic_physical_address),
+            Frame::containing_address(apic_physical_address + LAPIC_SIZE - 1),
         ))
     {
         memory_controller.active_table.map_to(

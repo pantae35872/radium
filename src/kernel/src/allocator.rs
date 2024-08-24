@@ -7,8 +7,8 @@ use crate::{memory::paging::Page, EntryFlags, MemoryController};
 
 use self::linked_list::LinkedListAllocator;
 
-pub const HEAP_START: usize = 0xFFFFFFFFF0000000;
-pub const HEAP_SIZE: usize = 1024 * 1024 * 32; // 100 KiB
+pub const HEAP_START: u64 = 0xFFFFFFFFF0000000;
+pub const HEAP_SIZE: u64 = 1024 * 1024 * 16; // 32 Mib
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
@@ -71,6 +71,8 @@ pub fn init(memory_controller: &mut MemoryController) {
         );
     }
     unsafe {
-        GLOBAL_ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        GLOBAL_ALLOCATOR
+            .lock()
+            .init(HEAP_START as usize, HEAP_SIZE as usize);
     }
 }

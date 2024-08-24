@@ -23,8 +23,8 @@ use super::Drive;
 
 pub static DRIVER: OnceCell<Mutex<AhciController>> = OnceCell::uninit();
 
-pub const ABAR_START: usize = 0xFFFFFFFF00000000;
-pub const ABAR_SIZE: usize = size_of::<HbaMem>();
+pub const ABAR_START: u64 = 0xFFFFFFFF00000000;
+pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
 
 #[derive(Debug)]
 pub enum SataDriveError {
@@ -711,8 +711,8 @@ pub fn init(area_frame_allocator: &mut AreaFrameAllocator) {
     if let Some(abar_address) = abar_address {
         for (page, frame) in
             Page::range_inclusive(abar_start_page, abar_end_page).zip(Frame::range_inclusive(
-                Frame::containing_address(abar_address as usize),
-                Frame::containing_address(abar_address as usize + ABAR_SIZE),
+                Frame::containing_address(abar_address),
+                Frame::containing_address(abar_address + ABAR_SIZE),
             ))
         {
             ACTIVE_TABLE

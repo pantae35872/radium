@@ -1,5 +1,7 @@
+use x86_64::VirtAddr;
+
 use super::table::{Level1, Table};
-use super::{ActivePageTable, Page, VirtualAddress};
+use super::{ActivePageTable, Page};
 use crate::memory::{Frame, FrameAllocator};
 use crate::EntryFlags;
 
@@ -19,13 +21,13 @@ impl TemporaryPage {
         }
     }
 
-    pub fn map(&mut self, frame: Frame, active_table: &mut ActivePageTable) -> VirtualAddress {
+    pub fn map(&mut self, frame: Frame, active_table: &mut ActivePageTable) -> VirtAddr {
         assert!(
             active_table.translate_page(self.page).is_none(),
             "temporary page is already mapped"
         );
         active_table.map_to(self.page, frame, EntryFlags::WRITABLE, &mut self.allocator);
-        self.page.start_address()
+        return VirtAddr::new(self.page.start_address());
     }
 
     pub fn unmap(&mut self, active_table: &mut ActivePageTable) {
@@ -37,7 +39,7 @@ impl TemporaryPage {
         frame: Frame,
         active_table: &mut ActivePageTable,
     ) -> &mut Table<Level1> {
-        unsafe { &mut *(self.map(frame, active_table) as *mut Table<Level1>) }
+        unsafe { &mut *(self.map(frame, active_table).as_mut_ptr::<Table<Level1>>()) }
     }
 }
 

@@ -54,21 +54,21 @@ impl StackAllocator {
 
 #[derive(Debug)]
 pub struct Stack {
-    top: usize,
-    bottom: usize,
+    top: u64,
+    bottom: u64,
 }
 
 impl Stack {
-    fn new(top: usize, bottom: usize) -> Stack {
+    fn new(top: u64, bottom: u64) -> Stack {
         assert!(top > bottom);
         Stack { top, bottom }
     }
 
-    pub fn top(&self) -> usize {
+    pub fn top(&self) -> u64 {
         self.top
     }
 
-    pub fn bottom(&self) -> usize {
+    pub fn bottom(&self) -> u64 {
         self.bottom
     }
 }

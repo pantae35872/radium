@@ -80,12 +80,10 @@ use allocator::{HEAP_SIZE, HEAP_START};
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
 use elf_rs::{SectionHeaderEntry, SectionHeaderFlags};
-use interrupt::LAPIC_SIZE;
 use memory::paging::{ActivePageTable, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
 use memory::AreaFrameAllocator;
 use spin::Mutex;
-use x2apic::lapic::xapic_base;
 use x86_64::registers::control::Cr0Flags;
 use x86_64::registers::model_specific::EferFlags;
 use x86_64::{PhysAddr, VirtAddr};
@@ -136,29 +134,10 @@ static ACTIVE_TABLE: OnceCell<Mutex<ActivePageTable>> = OnceCell::uninit();
 pub fn get_physical(address: VirtAddr) -> Option<PhysAddr> {
     match ACTIVE_TABLE.get() {
         Some(memory_controller) => {
-            match memory_controller
-                .lock()
-                .translate(address.as_u64() as usize)
-            {
-                Some(addr) => return Some(PhysAddr::new(addr as u64)),
-                None => return None,
-            };
+            return memory_controller.lock().translate(address);
         }
         None => return None,
     }
-}
-
-pub fn get_physical_with_controller(
-    address: VirtAddr,
-    memory_controller: &mut MemoryController,
-) -> Option<PhysAddr> {
-    match memory_controller
-        .active_table
-        .translate(address.as_u64() as usize)
-    {
-        Some(addr) => return Some(PhysAddr::new(addr as u64)),
-        None => return None,
-    };
 }
 
 pub struct MemoryController<'area_frame_allocator, 'active_table> {
@@ -174,22 +153,13 @@ impl<'area_frame_allocator, 'active_table> MemoryController<'area_frame_allocato
     }
 
     pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
-        match self.active_table.translate(addr.as_u64() as usize) {
-            Some(addr) => return Some(PhysAddr::new(addr as u64)),
-            None => return None,
-        };
+        return self.active_table.translate(addr);
     }
 }
 pub fn init(information_address: *mut BootInformation) {
     let boot_info = unsafe { &mut *information_address };
-    let apic_physical_address: u64 = unsafe { xapic_base() };
-    let mut frame_allocator = memory::area_frame_allocator::AreaFrameAllocator::new(
-        boot_info.kernel_start as usize,
-        boot_info.kernel_end as usize,
-        apic_physical_address as usize,
-        apic_physical_address as usize + LAPIC_SIZE as usize - 1,
-        &boot_info.memory_map,
-    );
+    let mut frame_allocator =
+        memory::area_frame_allocator::AreaFrameAllocator::new(&boot_info.memory_map);
     enable_nxe_bit();
     enable_write_protect_bit();
     let mut active_table = memory::remap_the_kernel(&mut frame_allocator, &boot_info);

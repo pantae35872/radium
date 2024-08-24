@@ -1,6 +1,7 @@
+use x86_64::PhysAddr;
+
 pub use self::area_frame_allocator::AreaFrameAllocator;
 pub use self::paging::remap_the_kernel;
-use self::paging::PhysicalAddress;
 
 pub mod area_frame_allocator;
 pub mod paging;
@@ -8,19 +9,19 @@ pub mod stack_allocator;
 
 #[derive(PartialEq, PartialOrd, Clone)]
 pub struct Frame {
-    number: usize,
+    number: u64,
 }
 
-pub const PAGE_SIZE: usize = 4096;
+pub const PAGE_SIZE: u64 = 4096;
 
 impl Frame {
-    pub fn containing_address(address: usize) -> Frame {
+    pub fn containing_address(address: u64) -> Frame {
         Frame {
             number: address / PAGE_SIZE,
         }
     }
-    pub fn start_address(&self) -> PhysicalAddress {
-        self.number * PAGE_SIZE
+    pub fn start_address(&self) -> PhysAddr {
+        PhysAddr::new(self.number * PAGE_SIZE)
     }
     pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
         FrameIter { start, end }

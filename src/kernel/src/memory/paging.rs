@@ -18,42 +18,34 @@ mod mapper;
 mod table;
 mod temporary_page;
 
-const ENTRY_COUNT: usize = 512;
-
-pub type PhysicalAddress = usize;
-pub type VirtualAddress = usize;
+const ENTRY_COUNT: u64 = 512;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Page {
-    number: usize,
+    number: u64,
 }
 
 impl Page {
-    pub fn containing_address(address: VirtualAddress) -> Page {
-        assert!(
-            address < 0x0000_8000_0000_0000 || address >= 0xffff_8000_0000_0000,
-            "invalid address: 0x{:x}",
-            address
-        );
+    pub fn containing_address(address: u64) -> Page {
         Page {
             number: address / PAGE_SIZE,
         }
     }
 
-    pub fn start_address(&self) -> usize {
+    pub fn start_address(&self) -> u64 {
         self.number * PAGE_SIZE
     }
 
-    fn p4_index(&self) -> usize {
+    fn p4_index(&self) -> u64 {
         (self.number >> 27) & 0o777
     }
-    fn p3_index(&self) -> usize {
+    fn p3_index(&self) -> u64 {
         (self.number >> 18) & 0o777
     }
-    fn p2_index(&self) -> usize {
+    fn p2_index(&self) -> u64 {
         (self.number >> 9) & 0o777
     }
-    fn p1_index(&self) -> usize {
+    fn p1_index(&self) -> u64 {
         (self.number >> 0) & 0o777
     }
 
@@ -61,10 +53,10 @@ impl Page {
         PageIter { start, end }
     }
 }
-impl Add<usize> for Page {
+impl Add<u64> for Page {
     type Output = Page;
 
-    fn add(self, rhs: usize) -> Page {
+    fn add(self, rhs: u64) -> Page {
         Page {
             number: self.number + rhs,
         }
@@ -133,8 +125,7 @@ impl ActivePageTable {
         use x86_64::instructions::tlb;
         {
             let (level_4_table_frame, _) = control::Cr3::read();
-            let backup =
-                Frame::containing_address(level_4_table_frame.start_address().as_u64() as usize);
+            let backup = Frame::containing_address(level_4_table_frame.start_address().as_u64());
 
             let p4_table = temporary_page.map_table_frame(backup.clone(), self);
 
@@ -156,13 +147,10 @@ impl ActivePageTable {
     pub fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
         let (level_4_table_frame, _) = control::Cr3::read();
         let old_table = InactivePageTable {
-            p4_frame: Frame::containing_address(
-                level_4_table_frame.start_address().as_u64() as usize
-            ),
+            p4_frame: Frame::containing_address(level_4_table_frame.start_address().as_u64()),
         };
-        let frame =
-            PhysFrame::from_start_address(PhysAddr::new(new_table.p4_frame.start_address() as u64))
-                .expect("Failed to cr3 frame");
+        let frame = PhysFrame::from_start_address(new_table.p4_frame.start_address())
+            .expect("Failed to cr3 frame");
         unsafe {
             Cr3::write(frame, Cr3Flags::PAGE_LEVEL_WRITETHROUGH);
         }
@@ -173,10 +161,11 @@ impl ActivePageTable {
         unsafe { self.p4.as_ref() }
     }
 
-    pub fn translate(&self, virtual_address: VirtualAddress) -> Option<PhysicalAddress> {
-        let offset = virtual_address % PAGE_SIZE;
-        self.translate_page(Page::containing_address(virtual_address))
-            .map(|frame| frame.number * PAGE_SIZE + offset)
+    pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
+        let offset = virtual_address.as_u64() % PAGE_SIZE;
+        return self
+            .translate_page(Page::containing_address(virtual_address.as_u64()))
+            .map(|frame| PhysAddr::new(frame.number * PAGE_SIZE + offset));
     }
 
     fn translate_page(&self, page: Page) -> Option<Frame> {
@@ -184,7 +173,7 @@ impl ActivePageTable {
 
         let huge_page = || {
             p3.and_then(|p3| {
-                let p3_entry = &p3[page.p3_index()];
+                let p3_entry = &p3[page.p3_index() as usize];
                 if let Some(start_frame) = p3_entry.pointed_frame() {
                     if p3_entry.flags().contains(EntryFlags::HUGE_PAGE) {
                         assert!(start_frame.number % (ENTRY_COUNT * ENTRY_COUNT) == 0);
@@ -196,7 +185,7 @@ impl ActivePageTable {
                     }
                 }
                 if let Some(p2) = p3.next_table(page.p3_index()) {
-                    let p2_entry = &p2[page.p2_index()];
+                    let p2_entry = &p2[page.p2_index() as usize];
                     if let Some(start_frame) = p2_entry.pointed_frame() {
                         if p2_entry.flags().contains(EntryFlags::HUGE_PAGE) {
                             assert!(start_frame.number % ENTRY_COUNT == 0);
@@ -212,7 +201,7 @@ impl ActivePageTable {
 
         p3.and_then(|p3| p3.next_table(page.p3_index()))
             .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| p1[page.p1_index()].pointed_frame())
+            .and_then(|p1| p1[page.p1_index() as usize].pointed_frame())
             .or_else(huge_page)
     }
 
@@ -222,7 +211,9 @@ impl ActivePageTable {
     {
         use x86_64::instructions::tlb;
 
-        assert!(self.translate(page.start_address()).is_some());
+        assert!(self
+            .translate(VirtAddr::new(page.start_address()))
+            .is_some());
 
         let p1 = self
             .p4_mut()
@@ -230,8 +221,8 @@ impl ActivePageTable {
             .and_then(|p3| p3.next_table_mut(page.p3_index()))
             .and_then(|p2| p2.next_table_mut(page.p2_index()))
             .expect("mapping code does not support huge pages");
-        let frame = p1[page.p1_index()].pointed_frame().unwrap();
-        p1[page.p1_index()].set_unused();
+        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
+        p1[page.p1_index() as usize].set_unused();
         tlb::flush(VirtAddr::new(page.start_address() as u64));
         allocator.deallocate_frame(frame);
     }
@@ -275,40 +266,33 @@ where
                 continue;
             }
             assert!(
-                section.addr() as usize % PAGE_SIZE == 0,
+                section.addr() % PAGE_SIZE == 0,
                 "sections need to be page aligned"
             );
 
             let flags = EntryFlags::from_elf_section_flags(&section);
 
-            let start_frame = Frame::containing_address(section.addr() as usize);
-            let end_frame =
-                Frame::containing_address((section.addr() + section.size() - 1) as usize);
+            let start_frame = Frame::containing_address(section.addr());
+            let end_frame = Frame::containing_address(section.addr() + section.size() - 1);
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 mapper.identity_map(frame, flags, allocator);
             }
         }
-        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start as usize);
-        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end as usize);
+        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start);
+        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end);
 
         for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
             mapper.identity_map(frame, EntryFlags::PRESENT, allocator)
         }
 
-        //mapper.identity_map(
-        //   Frame::containing_address(boot_info.memory_map as usize),
-        //    EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
-        //    allocator,
-        //);
-
         let memory_map_start = Frame::containing_address(
-            boot_info.memory_map.entries().next().unwrap() as *const MemoryDescriptor as usize,
+            boot_info.memory_map.entries().next().unwrap() as *const MemoryDescriptor as u64,
         );
         let memory_map_end = Frame::containing_address(
-            boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as usize,
+            boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64,
         );
-        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start as usize);
-        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end as usize);
+        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start);
+        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end);
         for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {
             if frame >= bootinfo_start && frame <= bootinfo_end {
                 continue;
@@ -321,16 +305,16 @@ where
         }
 
         let (width, height) = boot_info.gop_mode.info().resolution();
-        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer as usize);
+        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer as u64);
         let frame_buffer_end = Frame::containing_address(
-            boot_info.framebuffer as usize
+            boot_info.framebuffer as u64
                 + inline_if!(
                     boot_info.gop_mode.info().pixel_format() == PixelFormat::Rgb
                         || boot_info.gop_mode.info().pixel_format() == PixelFormat::Bgr,
                     4,
                     0
-                ) * width
-                    * height,
+                ) * width as u64
+                    * height as u64,
         );
 
         for frame in Frame::range_inclusive(frame_buffer_start, frame_buffer_end) {
@@ -341,8 +325,8 @@ where
             );
         }
 
-        let font_start = Frame::containing_address(boot_info.font_start as usize);
-        let font_end = Frame::containing_address(boot_info.font_end as usize);
+        let font_start = Frame::containing_address(boot_info.font_start);
+        let font_end = Frame::containing_address(boot_info.font_end);
 
         for frame in Frame::range_inclusive(font_start, font_end) {
             mapper.identity_map(
@@ -351,20 +335,10 @@ where
                 allocator,
             );
         }
-
-        //let vga_buffer_frame = Frame::containing_address(0xb8000);
-        //mapper.identity_map(vga_buffer_frame, EntryFlags::WRITABLE, allocator);
-
-        //let video_start = Frame::containing_address(0xA0000);
-        //let video_end = Frame::containing_address(0xAF000);
-
-        //for frame in Frame::range_inclusive(video_start, video_end) {
-        //    mapper.identity_map(frame, EntryFlags::WRITABLE, allocator);
-        //}
     });
 
     let old_table = active_table.switch(new_table);
-    let old_p4_page = Page::containing_address(old_table.p4_frame.start_address());
+    let old_p4_page = Page::containing_address(old_table.p4_frame.start_address().as_u64());
     active_table.unmap(old_p4_page, allocator);
 
     active_table
