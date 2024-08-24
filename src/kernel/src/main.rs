@@ -14,10 +14,13 @@ extern crate spin;
 use core::arch::asm;
 
 use alloc::ffi::CString;
+use alloc::vec;
+use alloc::vec::Vec;
 use common::BootInformation;
 use nothingos::driver::storage::ahci_driver;
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
 use nothingos::{hlt_loop, println};
+use uefi::guid;
 
 #[no_mangle]
 fn sys_print(value: &str) {
@@ -66,7 +69,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
             array
         },
     )
-    .unwrap();*/
+    .expect("Error");*/
     let partition1 = gpt.read_partition(1).expect("Error");
     println!("{}", partition1.get_partition_name());
 

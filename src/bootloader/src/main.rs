@@ -56,6 +56,22 @@ fn set_output_mode(system_table: &mut SystemTable<Boot>) {
     }
 }
 
+fn any_key_boot(system_table: &mut SystemTable<Boot>) {
+    println!("press any key to boot...");
+
+    loop {
+        match system_table.stdin().read_key() {
+            Ok(key) => match key {
+                Some(_) => break,
+                None => {}
+            },
+            Err(err) => {
+                panic!("failed to read key: {}", err);
+            }
+        }
+    }
+}
+
 #[entry]
 fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut system_table).unwrap();
@@ -309,19 +325,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     drop(protocol);
     drop(scoped_simple_file_system);
 
-    println!("Press any key to boot...");
-
-    loop {
-        match system_table.stdin().read_key() {
-            Ok(key) => match key {
-                Some(_) => break,
-                None => {}
-            },
-            Err(err) => {
-                panic!("Failed to read key: {}", err);
-            }
-        }
-    }
+    any_key_boot(&mut system_table);
 
     let handle = system_table
         .boot_services()

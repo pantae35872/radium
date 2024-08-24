@@ -571,6 +571,7 @@ impl AhciDrive {
         } else {
             cmdfis.device.set(0);
         }
+
         port.hba_port.ci.set(1 << slot);
         while port.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
             core::hint::spin_loop();
