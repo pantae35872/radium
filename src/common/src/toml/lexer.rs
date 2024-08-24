@@ -53,11 +53,11 @@ impl<'a> TomlLexer<'a> {
     }
 
     fn peek(&self, offset: usize) -> Option<char> {
-        return self.buffer[(self.index + offset)..].chars().next();
+        return self.buffer.chars().nth(self.index + offset);
     }
 
     fn consume(&mut self) -> Option<char> {
-        if let Some(charactor) = self.buffer[self.index..].chars().next() {
+        if let Some(charactor) = self.buffer.chars().nth(self.index) {
             self.index += 1;
             return Some(charactor);
         } else {
