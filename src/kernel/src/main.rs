@@ -15,7 +15,7 @@ use core::arch::asm;
 
 use alloc::ffi::CString;
 use common::boot::BootInformation;
-use nothingos::driver::storage::ahci_driver;
+use nothingos::driver::storage::ahci_driver::get_ahci;
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
 use nothingos::println;
 use nothingos::task::executor::Executor;
@@ -68,10 +68,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
-            let mut controller = ahci_driver::DRIVER
-                .get()
-                .expect("AHCI Driver is not initialize")
-                .lock();
+            let mut controller = get_ahci().get_contoller().lock();
             let drive = controller.get_drive(0).expect("Cannot get drive");
             let mut gpt = GPTPartitions::new(drive.into());
             let partition1 = gpt.read_partition(1).await.expect("Error");

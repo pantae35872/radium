@@ -6,7 +6,6 @@ use core::f64;
 use core::fmt::Display;
 use core::future::Future;
 
-use crate::memory::AreaFrameAllocator;
 use crate::utils::floorf64;
 
 pub const MAX_SECTOR: f64 = 63.0;
@@ -190,6 +189,6 @@ pub trait Drive {
     fn lba_end(&mut self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
 }
 
-pub fn init(frame_allocator: &mut AreaFrameAllocator) {
-    ahci_driver::init(frame_allocator);
+pub fn init() {
+    ahci_driver::init();
 }

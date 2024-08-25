@@ -1,10 +1,10 @@
-use crate::memory::AreaFrameAllocator;
+use crate::MemoryController;
 
 pub mod display;
 pub mod pci;
 pub mod storage;
 
-pub fn init(are_frame_allocator: &mut AreaFrameAllocator) {
-    pci::init();
-    storage::init(are_frame_allocator);
+pub fn init(memory_controller: &mut MemoryController) {
+    storage::init();
+    pci::init(memory_controller);
 }

@@ -14,15 +14,15 @@ use spin::mutex::Mutex;
 use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
-use crate::driver::pci;
+use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
 use crate::memory::paging::Page;
-use crate::memory::{AreaFrameAllocator, Frame};
+use crate::memory::Frame;
 use crate::utils::VolatileCell;
-use crate::{get_physical, println, EntryFlags, ACTIVE_TABLE};
+use crate::{get_physical, println, EntryFlags, MemoryController};
 
 use super::Drive;
 
-pub static DRIVER: Once<Arc<Mutex<AhciController>>> = Once::new();
+pub static DRIVER: Once<Arc<AhciDriver>> = Once::new();
 
 pub const ABAR_START: u64 = 0xFFFFFFFF00000000;
 pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
@@ -419,7 +419,7 @@ impl AhciPort {
         }
     }
 
-    fn rebase(&mut self) {
+    fn rebase(&mut self, memory_controller: &mut MemoryController) {
         self.stop_cmd();
         let virt_clb: VirtAddr = unsafe {
             VirtAddr::new(alloc(
@@ -434,13 +434,17 @@ impl AhciPort {
                 size_of::<HbaCmdHeader>() * 32,
             );
         }
-        self.hba_port.clb.set(get_physical(virt_clb).unwrap());
+        self.hba_port
+            .clb
+            .set(memory_controller.get_physical(virt_clb).unwrap());
         let virt_fb: VirtAddr =
             unsafe { VirtAddr::new(alloc(Layout::from_size_align(0xFF, 256).unwrap()) as u64) };
         unsafe {
             write_bytes(virt_fb.as_mut_ptr::<u8>(), 0, 0xFF);
         }
-        self.hba_port.fb.set(get_physical(virt_fb).unwrap());
+        self.hba_port
+            .fb
+            .set(memory_controller.get_physical(virt_fb).unwrap());
         self.fb = virt_fb;
         self.clb = virt_clb;
 
@@ -453,7 +457,9 @@ impl AhciPort {
                 ptr::write_bytes(virt_ctba.as_mut_ptr::<u8>(), 0, 4096);
             }
             self.ctba[i] = virt_ctba;
-            cmdheader[i].ctba.set(get_physical(virt_ctba).unwrap());
+            cmdheader[i]
+                .ctba
+                .set(memory_controller.get_physical(virt_ctba).unwrap());
         }
         self.hba_port.ie.set(HbaPortIE::all());
         self.start_cmd();
@@ -656,6 +662,56 @@ pub struct AhciController {
     hba: &'static mut HbaMem,
 }
 
+pub struct AhciDriver {
+    inner: Mutex<AhciController>,
+}
+
+impl AhciDriver {
+    pub fn get_contoller(&self) -> &Mutex<AhciController> {
+        return &self.inner;
+    }
+}
+
+impl PciDeviceHandle for AhciDriver {
+    fn handles(&self, vendor_id: pci::Vendor, device_id: DeviceType) -> bool {
+        matches!(
+            (vendor_id, device_id),
+            (Vendor::Intel, DeviceType::SataController)
+        )
+    }
+
+    fn start(&self, header: &pci::PciHeader, memory_controller: &mut crate::MemoryController) {
+        let abar = header.get_bar(5).expect("Failed to get ABAR for ahci");
+
+        let (abar_address, _) = match abar {
+            Bar::Memory32 { address, size, .. } => (address as u64, size as u64),
+            Bar::Memory64 { address, size, .. } => (address, size),
+            Bar::IO { .. } => panic!("ABAR is in port space somehow"),
+        };
+
+        let abar_start_page = Page::containing_address(ABAR_START);
+        let abar_end_page = Page::containing_address(ABAR_START + ABAR_SIZE);
+        for (page, frame) in
+            Page::range_inclusive(abar_start_page, abar_end_page).zip(Frame::range_inclusive(
+                Frame::containing_address(abar_address),
+                Frame::containing_address(abar_address + ABAR_SIZE),
+            ))
+        {
+            memory_controller.active_table.map_to(
+                page,
+                frame,
+                EntryFlags::PRESENT
+                    | EntryFlags::NO_CACHE
+                    | EntryFlags::WRITABLE
+                    | EntryFlags::WRITE_THROUGH,
+                memory_controller.frame_allocator,
+            );
+        }
+
+        self.inner.lock().probe_port(memory_controller);
+    }
+}
+
 impl AhciController {
     pub fn new() -> Self {
         Self {
@@ -664,7 +720,7 @@ impl AhciController {
         }
     }
 
-    pub fn probe_port(&mut self) {
+    pub fn probe_port(&mut self, memory_controller: &mut MemoryController) {
         let pi = self.hba.pi.get();
         if self.hba.bohc.get() & 2 == 0 {
             self.hba.bohc.set(self.hba.bohc.get() | 0b10);
@@ -685,7 +741,7 @@ impl AhciController {
                 if let Some(dt) = dt {
                     match dt {
                         AhciDriveType::Sata => {
-                            drive.port.lock().rebase();
+                            drive.port.lock().rebase(memory_controller);
                             self.drives[i] = Some(drive);
                         }
                         dt => println!("Drive not support: {}", dt),
@@ -706,66 +762,17 @@ impl AhciController {
             return Err(SataDriveError::DriveNotFound(id));
         }
     }
-
-    pub fn get_ahci_address() -> Option<u64> {
-        let mut pci = pci::DRIVER
-            .get()
-            .expect("PCI driver is not initialize")
-            .lock();
-        let mut vendor: u32;
-        let mut device: u32;
-        for bus in 0..256 {
-            for slot in 0..32 {
-                vendor = pci.read_config(bus, slot, 0, 0x00 | 0x0);
-                device = pci.read_config(bus, slot, 0, 0x00 | 0x02);
-                if (vendor == 0x8086 && device == 0x2922)
-                    || (vendor == 0x8086 && device == 0x2829)
-                    || (vendor == 0x8086 && device == 0xa103)
-                {
-                    let command = pci.read(bus, slot, 0, 0x04);
-                    pci.write(bus, slot, 0, 0x4, command | 1 << 1 | 1 << 2);
-
-                    let mut interrupt = pci.read(bus, slot, 0, 0x3C);
-                    interrupt.set_bits(0..8, 10);
-                    pci.write(bus, slot, 0, 0x3C, interrupt);
-
-                    return Some(pci.read(bus, slot, 0, 0x24).into());
-                }
-            }
-        }
-        None
-    }
 }
 
-pub fn init(area_frame_allocator: &mut AreaFrameAllocator) {
-    let abar_start_page = Page::containing_address(ABAR_START);
-    let abar_end_page = Page::containing_address(ABAR_START + ABAR_SIZE);
-    let abar_address = AhciController::get_ahci_address();
-    if let Some(abar_address) = abar_address {
-        for (page, frame) in
-            Page::range_inclusive(abar_start_page, abar_end_page).zip(Frame::range_inclusive(
-                Frame::containing_address(abar_address),
-                Frame::containing_address(abar_address + ABAR_SIZE),
-            ))
-        {
-            ACTIVE_TABLE
-                .get()
-                .expect("incorrect order of initializeation from ahci")
-                .lock()
-                .map_to(
-                    page,
-                    frame,
-                    EntryFlags::PRESENT
-                        | EntryFlags::NO_CACHE
-                        | EntryFlags::WRITABLE
-                        | EntryFlags::WRITE_THROUGH,
-                    area_frame_allocator,
-                );
-        }
-        DRIVER.call_once(|| {
-            let mut controller = AhciController::new();
-            controller.probe_port();
-            Mutex::from(controller).into()
-        });
-    }
+pub fn get_ahci() -> &'static Arc<AhciDriver> {
+    return DRIVER.get().expect("AHCI driver not initialized");
+}
+
+pub fn init() {
+    DRIVER.call_once(|| {
+        Arc::new(AhciDriver {
+            inner: Mutex::new(AhciController::new()),
+        })
+    });
+    register_driver(get_ahci().clone());
 }

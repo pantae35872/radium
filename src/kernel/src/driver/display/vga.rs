@@ -115,14 +115,16 @@ impl Vga {
     }
 
     fn get_frame_buffer_segment(&self) -> usize {
-        self.graphic_controller_index_port.write(0x06);
-        let segment_number = self.graphic_controller_data_port.read() & (3 << 2);
-        match segment_number {
-            n if 0 << 2 == n => 0x00000,
-            n if 1 << 2 == n => self.backbuffer_address.as_u64() as usize,
-            n if 2 << 2 == n => 0xB0000,
-            n if 3 << 2 == n => 0xB8000,
-            _ => 0,
+        unsafe {
+            self.graphic_controller_index_port.write(0x06);
+            let segment_number = self.graphic_controller_data_port.read() & (3 << 2);
+            match segment_number {
+                n if 0 << 2 == n => 0x00000,
+                n if 1 << 2 == n => self.backbuffer_address.as_u64() as usize,
+                n if 2 << 2 == n => 0xB0000,
+                n if 3 << 2 == n => 0xB8000,
+                _ => 0,
+            }
         }
     }
 

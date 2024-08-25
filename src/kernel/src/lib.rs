@@ -181,11 +181,11 @@ pub fn init(information_address: *mut BootInformation) {
     print::init(boot_info, 0x00ff44);
     gdt::init_gdt(&mut memory_controller);
     interrupt::init(&mut memory_controller);
-    x86_64::instructions::interrupts::enable();
+    driver::init(&mut memory_controller);
     drop(memory_controller);
     ACTIVE_TABLE.init_once(|| Mutex::new(active_table));
-    driver::init(&mut frame_allocator);
     userland::init();
+    x86_64::instructions::interrupts::enable();
     /*println!(
             r#"nothingos Copyright (C) 2024  Pantae
     This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.

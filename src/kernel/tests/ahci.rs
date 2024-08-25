@@ -10,7 +10,10 @@ use core::usize;
 
 use common::boot::BootInformation;
 use nothingos::{
-    driver::storage::{ahci_driver, Drive},
+    driver::storage::{
+        ahci_driver::{self, get_ahci},
+        Drive,
+    },
     task::{executor::Executor, AwaitType, Task},
 };
 use x86_64::instructions::random;
@@ -29,10 +32,7 @@ fn simple_read_write() {
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
-            let mut controller = ahci_driver::DRIVER
-                .get()
-                .expect("AHCI Driver is not initialize")
-                .lock();
+            let mut controller = get_ahci().get_contoller().lock();
             let mut backup_data = [0u8; TEST_SIZE_IN_SECTOR * 512];
             let mut data = [0u8; TEST_SIZE_IN_SECTOR * 512];
             get_random(&mut data);
@@ -82,10 +82,7 @@ fn sector_read_write() {
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
-            let mut controller = ahci_driver::DRIVER
-                .get()
-                .expect("AHCI Driver is not initialize")
-                .lock();
+            let mut controller = get_ahci().get_contoller().lock();
             let mut backup_data = [0u8; TEST_SIZE_IN_SECTOR * 512];
             let mut data = [0u8; TEST_SIZE_IN_SECTOR * 512];
 

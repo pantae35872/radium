@@ -9,23 +9,19 @@ impl Port16Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: u16) {
-        unsafe {
-            asm!("outw %ax, %dx", 
+    pub unsafe fn write(&self, data: u16) {
+        asm!("outw %ax, %dx", 
                 in("ax") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
-        }
     }
 
-    pub fn read(&self) -> u16 {
+    pub unsafe fn read(&self) -> u16 {
         let mut result: u16;
-        unsafe {
-            asm!("inw %dx, %ax",
+        asm!("inw %dx, %ax",
                  out("ax") result,
                  in("dx") self.portnumber,
                  options(att_syntax));
-        }
         result
     }
 }
@@ -39,23 +35,19 @@ impl Port8Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: u8) {
-        unsafe {
-            asm!("outb %al, %dx", 
+    pub unsafe fn write(&self, data: u8) {
+        asm!("outb %al, %dx", 
                 in("al") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
-        }
     }
 
-    pub fn read(&self) -> u8 {
+    pub unsafe fn read(&self) -> u8 {
         let mut result: u8;
-        unsafe {
-            asm!("inb %dx, %al",
+        asm!("inb %dx, %al",
                 out("al") result,
                 in("dx") self.portnumber, 
                 options(att_syntax));
-        }
         return result;
     }
 }
@@ -69,23 +61,19 @@ impl Port32Bit {
         Self { portnumber }
     }
 
-    pub fn write(&self, data: u32) {
-        unsafe {
-            asm!("outl %eax, %dx",
+    pub unsafe fn write(&self, data: u32) {
+        asm!("outl %eax, %dx",
                 in("eax") data,
                 in("dx") self.portnumber,
                 options(att_syntax));
-        }
     }
 
-    pub fn read(&self) -> u32 {
+    pub unsafe fn read(&self) -> u32 {
         let mut result: u32;
-        unsafe {
-            asm!("inl %dx, %eax",
+        asm!("inl %dx, %eax",
                 out("eax") result,
                 in("dx") self.portnumber,
                 options(att_syntax));
-        }
         return result;
     }
 }
