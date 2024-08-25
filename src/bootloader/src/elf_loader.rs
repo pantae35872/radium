@@ -6,7 +6,6 @@ use uefi::table::{
     boot::{AllocateType, MemoryType},
     Boot, SystemTable,
 };
-use uefi_services::println;
 
 pub fn load_elf(
     system_table: &mut SystemTable<Boot>,
@@ -14,7 +13,6 @@ pub fn load_elf(
     boot_info: &mut BootInformation,
 ) -> u64 {
     let elf = Elf::from_bytes(buffer).unwrap_or_else(|_| panic!("could not create an elf file"));
-    elf.program_header_iter().for_each(|e| println!("{:?}", e));
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
     let mut mem_max: u64 = 0;
