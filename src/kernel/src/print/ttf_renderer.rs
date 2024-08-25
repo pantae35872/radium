@@ -1,8 +1,8 @@
 use core::usize;
 
 use alloc::vec::Vec;
-use common::hash_map::HashMap;
 use fontdue::{Font, FontSettings, Metrics};
+use hashbrown::HashMap;
 
 use crate::{graphics, BootInformation};
 
@@ -50,7 +50,7 @@ impl TtfRenderer {
     }
 
     pub fn cache(&mut self, charactor: &char) -> bool {
-        match self.cache.get_mut(&charactor) {
+        match self.cache.get_mut(charactor) {
             Some(_) => {
                 return true;
             }
@@ -86,7 +86,7 @@ impl TtfRenderer {
                 offset = 1;
                 continue;
             }
-            let (metrics, bitmap) = match self.cache.get_mut(&charactor) {
+            let (metrics, bitmap) = match self.cache.get_mut(charactor) {
                 Some(polygon) => polygon,
                 None => {
                     let font = self.font.rasterize(*charactor, PIXEL_SIZE as f32);

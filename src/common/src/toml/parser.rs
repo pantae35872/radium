@@ -4,8 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-
-use crate::hash_map::HashMap;
+use hashbrown::HashMap;
 
 use super::token::TomlToken;
 
@@ -52,7 +51,9 @@ impl TomlValue {
     fn insert_deep(&mut self, keys: Vec<String>, value: TomlValue) -> Result<(), TomlParserError> {
         let mut table = self.as_table_mut().ok_or(TomlParserError::NotATable)?;
         for key in &keys[..keys.len() - 1] {
-            let table_or_array = table.get_or_insert_mut(key, || TomlValue::Table(HashMap::new()));
+            let table_or_array = table
+                .entry(key.clone())
+                .or_insert(TomlValue::Table(HashMap::new()));
             if table_or_array.as_table_mut().is_some() {
                 table = table_or_array.as_table_mut().unwrap();
                 continue;
@@ -83,7 +84,8 @@ impl TomlValue {
         let mut array = self
             .as_table_mut()
             .ok_or(TomlParserError::NotATable)?
-            .get_or_insert_mut(&keys.first().unwrap(), || TomlValue::Array(Vec::new()))
+            .entry(keys.first().unwrap().clone())
+            .or_insert(TomlValue::Array(Vec::new()))
             .as_array_mut()
             .ok_or(TomlParserError::NotAArray)?;
 
@@ -98,7 +100,8 @@ impl TomlValue {
                 .unwrap()
                 .as_table_mut()
                 .ok_or(TomlParserError::NotATable)?
-                .get_or_insert_mut(name, || TomlValue::Array(Vec::new()))
+                .entry(name.clone())
+                .or_insert(TomlValue::Array(Vec::new()))
                 .as_array_mut()
                 .ok_or(TomlParserError::NotAArray)?;
         }

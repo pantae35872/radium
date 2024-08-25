@@ -1,23 +1,24 @@
 use core::task::{Context, Poll, Waker};
 
-use alloc::{collections::btree_map::BTreeMap, sync::Arc, task::Wake};
+use alloc::{sync::Arc, task::Wake};
 use crossbeam_queue::ArrayQueue;
+use hashbrown::HashMap;
 use x86_64::instructions::interrupts;
 
 use super::{AwaitType, Task, TaskId};
 
 pub struct Executor {
-    tasks: BTreeMap<TaskId, Task>,
+    tasks: HashMap<TaskId, Task>,
     task_queue: Arc<ArrayQueue<TaskId>>,
-    waker_cache: BTreeMap<TaskId, Waker>,
+    waker_cache: HashMap<TaskId, Waker>,
 }
 
 impl Executor {
     pub fn new() -> Self {
         Executor {
-            tasks: BTreeMap::new(),
+            tasks: HashMap::new(),
             task_queue: Arc::new(ArrayQueue::new(100)),
-            waker_cache: BTreeMap::new(),
+            waker_cache: HashMap::new(),
         }
     }
 
