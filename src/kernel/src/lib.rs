@@ -69,6 +69,7 @@ pub mod interrupt;
 pub mod memory;
 pub mod print;
 pub mod serial;
+pub mod task;
 pub mod userland;
 pub mod utils;
 
@@ -131,6 +132,7 @@ pub fn hlt_loop() -> ! {
 }
 
 static ACTIVE_TABLE: OnceCell<Mutex<ActivePageTable>> = OnceCell::uninit();
+
 pub fn get_physical(address: VirtAddr) -> Option<PhysAddr> {
     match ACTIVE_TABLE.get() {
         Some(memory_controller) => {

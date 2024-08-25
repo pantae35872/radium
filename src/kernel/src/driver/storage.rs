@@ -4,6 +4,7 @@ pub mod ata_driver;
 use core::error::Error;
 use core::f64;
 use core::fmt::Display;
+use core::future::Future;
 
 use crate::memory::AreaFrameAllocator;
 use crate::utils::floorf64;
@@ -113,11 +114,80 @@ impl CHS {
 pub trait Drive {
     type Error: Error;
 
-    fn write(&mut self, from_sector: u64, data: &[u8], count: usize) -> Result<(), Self::Error>;
+    /// Write data to the specified sector range on the drive.
+    ///
+    /// This function writes `count` sectors of data starting at `from_sector`. The underlying device uses a fixed sector size of 512 bytes.
+    /// The `data` slice must contain at least `count * 512` bytes. If the slice contains fewer bytes than required, the function will return an error.
+    ///
+    /// # Parameters
+    ///
+    /// - `from_sector`: The starting sector on the storage device where the write operation
+    /// begins.
+    /// - `data`: A slice of bytes containing the data to write. The length of this slice must be
+    /// at least `count * 512`
+    /// - `count`: The number of sectors to write. The total number of bytes written will be `count * 512`
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: If the write operaion succeeds.
+    /// - `Err(Self::Error)`: If an error occurs during the write operation, such as an I/O error or if `data` contains fewer bytes than required.
+    /// The error type is determined by the implementer of this trait.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let from_sector = 100;
+    /// let data = [0u8; 512 * 4];
+    /// let count = 4;
+    ///
+    /// match device.write(from_sector, &data, count) { // Write 4 sector from sector 100
+    ///     Ok(()) => println!("Write succeeded."),
+    ///     Err(e) => eprintln!("Write failed: {}", e),
+    /// }
+    ///
+    /// ```
+    fn write(
+        &mut self,
+        from_sector: u64,
+        data: &[u8],
+        count: usize,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    fn read(&mut self, from_sector: u64, data: &mut [u8], count: usize) -> Result<(), Self::Error>;
+    /// Reads data from the specified sector range on the storage device into the provided buffer.
+    ///
+    /// This function reads `count` sectors of data starting at `from_sector` into the `data` buffer. The underlying device uses a fixed sector size of 512 bytes.
+    /// The `data` buffer must be large enough to hold at least `count * 512` bytes. If the buffer contains fewer bytes than required, the function will return an error.
+    ///
+    /// # Parameters
+    ///
+    /// - `from_sector`: The starting sector on the storage device where the read operation begins.
+    /// - `data`: A mutable slice of bytes where the read data will be stored. The length of this slice must be at least `count * 512` bytes.
+    /// - `count`: The number of sectors to read. The total number of bytes read will be `count * 512`.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())`: If the read operation succeeds.
+    /// - `Err(Self::Error)`: If an error occurs during the read operation, such as an I/O error. The specific error type is determined by the implementer of this trait.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let from_sector = 100;
+    /// let mut data = [0u8; 512 * 4]; // Buffer for 4 sectors (512 bytes per sector).
+    /// let count = 4; // Number of sectors to read.
+    ///
+    /// match device.read(from_sector, &mut data, count) { // Read 4 sector from sector 100 to `data` buffer
+    ///     Ok(()) => println!("Read operation succeeded."),
+    ///     Err(e) => eprintln!("Read operation failed: {:?}", e),
+    /// }
+    fn read(
+        &mut self,
+        from_sector: u64,
+        data: &mut [u8],
+        count: usize,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send;
 
-    fn lba_end(&self) -> u64;
+    fn lba_end(&mut self) -> impl Future<Output = Result<u64, Self::Error>> + Send;
 }
 
 pub fn init(frame_allocator: &mut AreaFrameAllocator) {

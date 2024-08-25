@@ -1,15 +1,17 @@
 use core::alloc::Layout;
 use core::error::Error;
 use core::fmt::Display;
+use core::future::Future;
 use core::mem::size_of;
 use core::ptr::{self, write_bytes};
+use core::task::Poll;
 use core::{u32, usize};
 
 use alloc::alloc::alloc;
-use alloc::vec::Vec;
+use alloc::sync::Arc;
 use bit_field::BitField;
-use conquer_once::spin::OnceCell;
-use spin::Mutex;
+use spin::mutex::Mutex;
+use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci;
@@ -20,7 +22,7 @@ use crate::{get_physical, println, EntryFlags, ACTIVE_TABLE};
 
 use super::Drive;
 
-pub static DRIVER: OnceCell<Mutex<AhciController>> = OnceCell::uninit();
+pub static DRIVER: Once<Arc<Mutex<AhciController>>> = Once::new();
 
 pub const ABAR_START: u64 = 0xFFFFFFFF00000000;
 pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
@@ -478,8 +480,38 @@ impl HbaMem {
 }
 
 pub struct AhciDrive {
-    port: Mutex<AhciPort>,
+    port: Arc<Mutex<AhciPort>>,
     identifier: Option<[u8; 512]>,
+}
+
+struct DriveAsync {
+    port: Arc<Mutex<AhciPort>>,
+    slot: usize,
+}
+
+impl DriveAsync {
+    pub fn new(port: Arc<Mutex<AhciPort>>, slot: usize) -> Self {
+        Self { port, slot }
+    }
+}
+
+impl Future for DriveAsync {
+    type Output = Result<(), SataDriveError>;
+
+    fn poll(
+        self: core::pin::Pin<&mut Self>,
+        _cx: &mut core::task::Context<'_>,
+    ) -> core::task::Poll<Self::Output> {
+        let port = &self.port.lock().hba_port;
+        if port.is.get().contains(HbaPortIS::TFES) {
+            return Poll::Ready(Err(SataDriveError::TaskFileError(port.serr.get())));
+        }
+        if port.ci.get() & (1 << self.slot) == 1 {
+            return Poll::Pending;
+        } else {
+            return Poll::Ready(Ok(()));
+        }
+    }
 }
 
 impl AhciDrive {
@@ -492,13 +524,13 @@ impl AhciDrive {
             cap,
         });
         Self {
-            port,
+            port: Arc::new(port),
             identifier: None,
         }
     }
 
     // TODO: Ensure that buffer is word align (2 byte align)
-    fn run_command(
+    async fn run_command(
         &mut self,
         lba: u64,
         original_count: usize,
@@ -567,22 +599,15 @@ impl AhciDrive {
         while port.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
             core::hint::spin_loop();
         }
-        while port.hba_port.ci.get() & (1 << slot) == 1 {
-            if port.hba_port.is.get().contains(HbaPortIS::TFES) {
-                return Err(SataDriveError::TaskFileError(port.hba_port.serr.get()));
-            }
-        }
-
-        if port.hba_port.is.get().contains(HbaPortIS::TFES) {
-            return Err(SataDriveError::TaskFileError(port.hba_port.serr.get()));
-        }
+        drop(port);
+        DriveAsync::new(self.port.clone(), slot).await?;
 
         return Ok(());
     }
 
-    pub fn identify(&mut self) -> Result<(), SataDriveError> {
+    pub async fn identify(&mut self) -> Result<(), SataDriveError> {
         let buf = [0u8; 512];
-        self.run_command(0, 1, &buf, 0xEC, false)?;
+        self.run_command(0, 1, &buf, 0xEC, false).await?;
         self.identifier = Some(buf);
         Ok(())
     }
@@ -590,37 +615,51 @@ impl AhciDrive {
 
 impl Drive for AhciDrive {
     type Error = SataDriveError;
-    fn lba_end(&self) -> u64 {
+
+    async fn lba_end(&mut self) -> Result<u64, SataDriveError> {
         if let Some(identifier) = self.identifier {
-            return (u32::from_le_bytes(identifier[200..204].try_into().unwrap()) - 1).into();
+            return Ok((u32::from_le_bytes(identifier[200..204].try_into().unwrap()) - 1).into());
         } else {
-            panic!("Please identify the drive before accessing it");
+            self.identify().await?;
+            return Ok((u32::from_le_bytes(
+                self.identifier.unwrap()[200..204].try_into().unwrap(),
+            ) - 1)
+                .into());
         }
     }
 
-    fn read(
+    async fn read(
         &mut self,
         from_sector: u64,
         buffer: &mut [u8],
         count: usize,
     ) -> Result<(), Self::Error> {
-        return self.run_command(from_sector, count, buffer, 0x25, true);
+        return self
+            .run_command(from_sector, count, buffer, 0x25, true)
+            .await;
     }
 
-    fn write(&mut self, from_sector: u64, buffer: &[u8], count: usize) -> Result<(), Self::Error> {
-        return self.run_command(from_sector, count, buffer, 0x35, true);
+    async fn write(
+        &mut self,
+        from_sector: u64,
+        buffer: &[u8],
+        count: usize,
+    ) -> Result<(), Self::Error> {
+        return self
+            .run_command(from_sector, count, buffer, 0x35, true)
+            .await;
     }
 }
 
 pub struct AhciController {
-    drives: Vec<AhciDrive>,
+    drives: [Option<AhciDrive>; 32],
     hba: &'static mut HbaMem,
 }
 
 impl AhciController {
     pub fn new() -> Self {
         Self {
-            drives: Vec::new(),
+            drives: [const { None }; 32],
             hba: unsafe { &mut *((ABAR_START as *mut u8) as *mut HbaMem) },
         }
     }
@@ -641,14 +680,13 @@ impl AhciController {
 
         for i in 0..32 {
             if pi.get_bit(i) {
-                let mut drive = AhciDrive::new(self.hba.get_port(i), self.hba.cap.get() as usize);
+                let drive = AhciDrive::new(self.hba.get_port(i), self.hba.cap.get() as usize);
                 let dt = drive.port.lock().check_type();
                 if let Some(dt) = dt {
                     match dt {
                         AhciDriveType::Sata => {
                             drive.port.lock().rebase();
-                            drive.identify().expect("identify drive failed");
-                            self.drives.push(drive);
+                            self.drives[i] = Some(drive);
                         }
                         dt => println!("Drive not support: {}", dt),
                     }
@@ -659,7 +697,11 @@ impl AhciController {
 
     pub fn get_drive(&mut self, id: usize) -> Result<&mut AhciDrive, SataDriveError> {
         if let Some(drive) = self.drives.get_mut(id) {
-            return Ok(drive);
+            if let Some(value) = drive {
+                return Ok(value);
+            } else {
+                return Err(SataDriveError::DriveNotFound(id));
+            }
         } else {
             return Err(SataDriveError::DriveNotFound(id));
         }
@@ -720,10 +762,10 @@ pub fn init(area_frame_allocator: &mut AreaFrameAllocator) {
                     area_frame_allocator,
                 );
         }
-        DRIVER.init_once(|| {
+        DRIVER.call_once(|| {
             let mut controller = AhciController::new();
             controller.probe_port();
-            Mutex::from(controller)
+            Mutex::from(controller).into()
         });
     }
 }

@@ -144,7 +144,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
         }
     }
 
-    pub fn load_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
+    pub async fn load_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
         let mbr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
                 &mut self.master_boot_record as *mut _ as *mut u8,
@@ -154,6 +154,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
 
         self.drive
             .read(0, mbr_bytes, 1)
+            .await
             .map_err(MSDosPartitionError::DriveFailed)?;
 
         if self.master_boot_record.magicnumber != 0xAA55 {
@@ -163,7 +164,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
         Ok(())
     }
 
-    pub fn save_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
+    pub async fn save_mbr(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
         let mbr_bytes: &mut [u8] = unsafe {
             core::slice::from_raw_parts_mut(
                 &mut self.master_boot_record as *mut _ as *mut u8,
@@ -173,14 +174,15 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
 
         self.drive
             .write(0, mbr_bytes, 1)
+            .await
             .map_err(MSDosPartitionError::DriveFailed)?;
         Ok(())
     }
 
-    pub fn format(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
+    pub async fn format(&mut self) -> Result<(), MSDosPartitionError<T::Error>> {
         self.master_boot_record = MasterBootRecord::new();
         self.master_boot_record.magicnumber = 0xAA55;
-        self.save_mbr()?;
+        self.save_mbr().await?;
         return Ok(());
     }
 
@@ -197,7 +199,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
         Ok(self.master_boot_record.primary_partition[partition_number])
     }
 
-    pub fn set_partition(
+    pub async fn set_partition(
         &mut self,
         partition_id: u8,
         partition_number: usize,
@@ -205,7 +207,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
         end_lba: u32,
         bootable: bool,
     ) -> Result<(), MSDosPartitionError<T::Error>> {
-        self.load_mbr()?;
+        self.load_mbr().await?;
 
         let partition = &mut self.master_boot_record.primary_partition[partition_number];
         partition.set_bootable(bootable);
@@ -219,7 +221,7 @@ impl<'a, T: Drive> MSDosPartition<'a, T> {
             .map_err(MSDosPartitionError::SetPartitionChsError)?;
         partition.set_end_chs(end_chs);
 
-        self.save_mbr()?;
+        self.save_mbr().await?;
         return Ok(());
     }
 }
