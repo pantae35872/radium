@@ -4,7 +4,8 @@ use uefi::{proto::console::gop::Mode, table::boot::MemoryMap};
 #[repr(C)]
 #[derive(Debug)]
 pub struct BootInformation {
-    pub largest_addr: u64,
+    // Largest Page (1 GiB) that need to be mapped for the kernel to be able to boot
+    pub largest_page: u64,
     pub gop_mode: Mode,
     pub framebuffer: *mut u32,
     pub runtime_system_table: u64,

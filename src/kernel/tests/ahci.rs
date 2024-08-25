@@ -10,10 +10,7 @@ use core::usize;
 
 use common::boot::BootInformation;
 use nothingos::{
-    driver::storage::{
-        ahci_driver::{self, get_ahci},
-        Drive,
-    },
+    driver::storage::{ahci_driver::get_ahci, Drive},
     task::{executor::Executor, AwaitType, Task},
 };
 use x86_64::instructions::random;
