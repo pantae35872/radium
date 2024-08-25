@@ -74,6 +74,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     boot_info.font_start = kernel_font_buffer.as_ptr() as u64;
     boot_info.font_end = kernel_font_buffer.as_ptr() as u64 + kernel_font_buffer.len() as u64 - 1;
 
+    let entrypoint = load_elf(&mut system_table, kernel_buffer, boot_info);
     if config
         .get("any_key_boot")
         .expect("any_key_boot boot config not found")
@@ -83,7 +84,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         any_key_boot(&mut system_table);
     }
 
-    let entrypoint = load_elf(&mut system_table, kernel_buffer, boot_info);
     initialize_graphics_kernel(&mut system_table, boot_info);
 
     let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
