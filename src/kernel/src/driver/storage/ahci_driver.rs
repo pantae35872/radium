@@ -15,10 +15,10 @@ use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
-use crate::memory::paging::Page;
+use crate::memory::paging::{EntryFlags, Page};
 use crate::memory::Frame;
 use crate::utils::VolatileCell;
-use crate::{get_physical, println, EntryFlags, MemoryController};
+use crate::{get_memory_controller, println};
 
 use super::Drive;
 
@@ -419,7 +419,7 @@ impl AhciPort {
         }
     }
 
-    fn rebase(&mut self, memory_controller: &mut MemoryController) {
+    fn rebase(&mut self) {
         self.stop_cmd();
         let virt_clb: VirtAddr = unsafe {
             VirtAddr::new(alloc(
@@ -434,17 +434,23 @@ impl AhciPort {
                 size_of::<HbaCmdHeader>() * 32,
             );
         }
-        self.hba_port
-            .clb
-            .set(memory_controller.get_physical(virt_clb).unwrap());
+        self.hba_port.clb.set(
+            get_memory_controller()
+                .lock()
+                .get_physical(virt_clb)
+                .unwrap(),
+        );
         let virt_fb: VirtAddr =
             unsafe { VirtAddr::new(alloc(Layout::from_size_align(0xFF, 256).unwrap()) as u64) };
         unsafe {
             write_bytes(virt_fb.as_mut_ptr::<u8>(), 0, 0xFF);
         }
-        self.hba_port
-            .fb
-            .set(memory_controller.get_physical(virt_fb).unwrap());
+        self.hba_port.fb.set(
+            get_memory_controller()
+                .lock()
+                .get_physical(virt_fb)
+                .unwrap(),
+        );
         self.fb = virt_fb;
         self.clb = virt_clb;
 
@@ -457,9 +463,12 @@ impl AhciPort {
                 ptr::write_bytes(virt_ctba.as_mut_ptr::<u8>(), 0, 4096);
             }
             self.ctba[i] = virt_ctba;
-            cmdheader[i]
-                .ctba
-                .set(memory_controller.get_physical(virt_ctba).unwrap());
+            cmdheader[i].ctba.set(
+                get_memory_controller()
+                    .lock()
+                    .get_physical(virt_ctba)
+                    .unwrap(),
+            );
         }
         self.hba_port.ie.set(HbaPortIE::all());
         self.start_cmd();
@@ -562,7 +571,10 @@ impl AhciDrive {
 
         cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
         let cmdtbl = port.cmd_tbl()?;
-        let mut buf_address = get_physical(VirtAddr::new(buffer.as_ptr() as u64)).unwrap();
+        let mut buf_address = get_memory_controller()
+            .lock()
+            .get_physical(VirtAddr::new(buffer.as_ptr() as u64))
+            .unwrap();
         assert!(buf_address.is_aligned(2u64));
         let mut i: usize = 0;
         while i < cmd_header.prdtl.get() as usize - 1 {
@@ -680,7 +692,7 @@ impl PciDeviceHandle for AhciDriver {
         )
     }
 
-    fn start(&self, header: &pci::PciHeader, memory_controller: &mut crate::MemoryController) {
+    fn start(&self, header: &pci::PciHeader) {
         let abar = header.get_bar(5).expect("Failed to get ABAR for ahci");
 
         let (abar_address, _) = match abar {
@@ -697,18 +709,17 @@ impl PciDeviceHandle for AhciDriver {
                 Frame::containing_address(abar_address + ABAR_SIZE),
             ))
         {
-            memory_controller.active_table.map_to(
+            get_memory_controller().lock().map_to(
                 page,
                 frame,
                 EntryFlags::PRESENT
                     | EntryFlags::NO_CACHE
                     | EntryFlags::WRITABLE
                     | EntryFlags::WRITE_THROUGH,
-                memory_controller.frame_allocator,
             );
         }
 
-        self.inner.lock().probe_port(memory_controller);
+        self.inner.lock().probe_port();
     }
 }
 
@@ -720,7 +731,7 @@ impl AhciController {
         }
     }
 
-    pub fn probe_port(&mut self, memory_controller: &mut MemoryController) {
+    pub fn probe_port(&mut self) {
         let pi = self.hba.pi.get();
         if self.hba.bohc.get() & 2 == 0 {
             self.hba.bohc.set(self.hba.bohc.get() | 0b10);
@@ -741,7 +752,7 @@ impl AhciController {
                 if let Some(dt) = dt {
                     match dt {
                         AhciDriveType::Sata => {
-                            drive.port.lock().rebase(memory_controller);
+                            drive.port.lock().rebase();
                             self.drives[i] = Some(drive);
                         }
                         dt => println!("Drive not support: {}", dt),

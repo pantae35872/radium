@@ -1,14 +1,14 @@
 use core::arch::asm;
 
 use crate::gdt;
+use crate::get_memory_controller;
 use crate::hlt_loop;
+use crate::memory::paging::EntryFlags;
 use crate::memory::paging::Page;
 use crate::memory::Frame;
 use crate::print;
 use crate::println;
 use crate::userland::scheduler::SCHEDULER;
-use crate::EntryFlags;
-use crate::MemoryController;
 use alloc::ffi::CString;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
@@ -105,7 +105,7 @@ impl InterruptIndex {
     }
 }
 
-pub fn init(memory_controller: &mut MemoryController) {
+pub fn init() {
     let apic_physical_address: u64 = unsafe { xapic_base() };
     let apic_start_page = Page::containing_address(LAPIC_VADDR);
     let apic_end_page = Page::containing_address(LAPIC_VADDR + LAPIC_SIZE - 1);
@@ -115,14 +115,13 @@ pub fn init(memory_controller: &mut MemoryController) {
             Frame::containing_address(apic_physical_address + LAPIC_SIZE - 1),
         ))
     {
-        memory_controller.active_table.map_to(
+        get_memory_controller().lock().map_to(
             page,
             frame,
             EntryFlags::PRESENT
                 | EntryFlags::NO_CACHE
                 | EntryFlags::WRITABLE
                 | EntryFlags::WRITE_THROUGH,
-            memory_controller.frame_allocator,
         );
     }
     for (page, frame) in Page::range_inclusive(
@@ -133,14 +132,13 @@ pub fn init(memory_controller: &mut MemoryController) {
         Frame::containing_address(0xFEC00000),
         Frame::containing_address(0xFEC00000 + IO_APIC_MMIO_SIZE - 1),
     )) {
-        memory_controller.active_table.map_to(
+        get_memory_controller().lock().map_to(
             page,
             frame,
             EntryFlags::PRESENT
                 | EntryFlags::NO_CACHE
                 | EntryFlags::WRITABLE
                 | EntryFlags::WRITE_THROUGH,
-            memory_controller.frame_allocator,
         );
     }
     LAPICS.init_once(|| {

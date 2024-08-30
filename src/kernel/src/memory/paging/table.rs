@@ -1,9 +1,8 @@
 use crate::memory::FrameAllocator;
-use crate::EntryFlags;
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 
-use super::{Entry, ENTRY_COUNT};
+use super::{Entry, EntryFlags, ENTRY_COUNT};
 
 pub const P4: *mut Table<Level4> = 0xffffffff_fffff000 as *mut _;
 

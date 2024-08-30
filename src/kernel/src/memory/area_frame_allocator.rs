@@ -3,7 +3,7 @@ use uefi::table::boot::{MemoryDescriptor, MemoryMap, MemoryType};
 
 pub struct AreaFrameAllocator<'a> {
     next_free_frame: Frame,
-    current_area: Option<MemoryDescriptor>,
+    current_area: Option<&'a MemoryDescriptor>,
     areas: &'a MemoryMap<'static>,
 }
 
@@ -28,8 +28,7 @@ impl<'a> AreaFrameAllocator<'a> {
                 Frame::containing_address(address) >= self.next_free_frame
                     && area.ty == MemoryType::CONVENTIONAL
             })
-            .min_by_key(|area| area.phys_start)
-            .copied();
+            .min_by_key(|area| area.phys_start);
 
         if let Some(area) = self.current_area {
             let start_frame = Frame::containing_address(area.phys_start);

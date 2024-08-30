@@ -1,5 +1,6 @@
 use crate::memory::Frame;
-use crate::EntryFlags;
+
+use super::EntryFlags;
 
 pub struct Entry(u64);
 

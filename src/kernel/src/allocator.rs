@@ -3,7 +3,10 @@ use core::{ptr, u8};
 use alloc::alloc::*;
 pub mod linked_list;
 
-use crate::{memory::paging::Page, EntryFlags, MemoryController};
+use crate::{
+    get_memory_controller,
+    memory::paging::{EntryFlags, Page},
+};
 
 use self::linked_list::LinkedListAllocator;
 
@@ -56,18 +59,17 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
 #[global_allocator]
 static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAllocator::new());
 
-pub fn init(memory_controller: &mut MemoryController) {
+pub fn init() {
     let heap_start_page = Page::containing_address(HEAP_START);
     let heap_end_page = Page::containing_address(HEAP_START + HEAP_SIZE - 1);
 
     for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        memory_controller.active_table.map(
+        get_memory_controller().lock().map(
             page,
             EntryFlags::WRITABLE
                 | EntryFlags::PRESENT
                 | EntryFlags::WRITE_THROUGH
                 | EntryFlags::NO_CACHE,
-            memory_controller.frame_allocator,
         );
     }
     unsafe {

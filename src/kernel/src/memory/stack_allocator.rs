@@ -1,7 +1,5 @@
-use crate::EntryFlags;
-
 use super::{
-    paging::{ActivePageTable, Page, PageIter},
+    paging::{ActivePageTable, EntryFlags, Page, PageIter},
     FrameAllocator, PAGE_SIZE,
 };
 

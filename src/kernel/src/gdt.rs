@@ -4,7 +4,7 @@ use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::{PrivilegeLevel, VirtAddr};
 
-use crate::MemoryController;
+use crate::get_memory_controller;
 
 pub struct Gdt {
     table: [u64; 8],
@@ -57,9 +57,10 @@ impl Gdt {
     }
 }
 
-pub fn init_gdt(memory_controller: &mut MemoryController) {
+pub fn init_gdt() {
     use x86_64::instructions::tables::load_tss;
-    let double_fault = memory_controller
+    let double_fault = get_memory_controller()
+        .lock()
         .alloc_stack(1)
         .expect("Could not allocate stack for double fault handle");
     let tss = TSS.call_once(|| {

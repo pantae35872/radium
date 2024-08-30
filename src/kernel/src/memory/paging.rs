@@ -3,10 +3,11 @@ use self::mapper::Mapper;
 use self::table::{Level4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{inline_if, BootInformation, EntryFlags};
+use crate::{inline_if, BootInformation};
+use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
-use elf_rs::{ElfFile, SectionHeaderFlags};
+use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
 use uefi::proto::console::gop::PixelFormat;
 use uefi::table::boot::MemoryDescriptor;
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
@@ -19,6 +20,46 @@ mod table;
 mod temporary_page;
 
 const ENTRY_COUNT: u64 = 512;
+
+bitflags! {
+    #[derive(Clone, Copy)]
+    pub struct EntryFlags: u64 {
+        const PRESENT =         1 << 0;
+        const WRITABLE =        1 << 1;
+        const USER_ACCESSIBLE = 1 << 2;
+        const WRITE_THROUGH =   1 << 3;
+        const NO_CACHE =        1 << 4;
+        const ACCESSED =        1 << 5;
+        const DIRTY =           1 << 6;
+        const HUGE_PAGE =       1 << 7;
+        const GLOBAL =          1 << 8;
+        const NO_EXECUTE =      1 << 63;
+    }
+}
+
+impl EntryFlags {
+    pub fn from_elf_section_flags(section: &SectionHeaderEntry) -> EntryFlags {
+        let mut flags = EntryFlags::empty();
+
+        if section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
+            flags = flags | EntryFlags::PRESENT;
+        }
+        if section.flags().contains(SectionHeaderFlags::SHF_WRITE) {
+            flags = flags | EntryFlags::WRITABLE;
+        }
+        if !section.flags().contains(SectionHeaderFlags::SHF_EXECINSTR) {
+            flags = flags | EntryFlags::NO_EXECUTE;
+        }
+
+        flags
+    }
+}
+
+impl Display for EntryFlags {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "flag: {}", self.0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Page {

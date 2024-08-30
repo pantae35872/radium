@@ -11,49 +11,9 @@
 #![feature(naked_functions)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
+
 #[macro_use]
 extern crate bitflags;
-
-bitflags! {
-    #[derive(Clone, Copy)]
-    pub struct EntryFlags: u64 {
-        const PRESENT =         1 << 0;
-        const WRITABLE =        1 << 1;
-        const USER_ACCESSIBLE = 1 << 2;
-        const WRITE_THROUGH =   1 << 3;
-        const NO_CACHE =        1 << 4;
-        const ACCESSED =        1 << 5;
-        const DIRTY =           1 << 6;
-        const HUGE_PAGE =       1 << 7;
-        const GLOBAL =          1 << 8;
-        const NO_EXECUTE =      1 << 63;
-    }
-}
-
-impl EntryFlags {
-    pub fn from_elf_section_flags(section: &SectionHeaderEntry) -> EntryFlags {
-        let mut flags = EntryFlags::empty();
-
-        if section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
-            // section is loaded to memory
-            flags = flags | EntryFlags::PRESENT;
-        }
-        if section.flags().contains(SectionHeaderFlags::SHF_WRITE) {
-            flags = flags | EntryFlags::WRITABLE;
-        }
-        if !section.flags().contains(SectionHeaderFlags::SHF_EXECINSTR) {
-            flags = flags | EntryFlags::NO_EXECUTE;
-        }
-
-        flags
-    }
-}
-
-impl Display for EntryFlags {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "flag: {}", self.0)
-    }
-}
 
 extern crate alloc;
 extern crate core;
@@ -73,17 +33,15 @@ pub mod task;
 pub mod userland;
 pub mod utils;
 
-use core::fmt::Display;
 use core::panic::PanicInfo;
 use core::usize;
 
 use allocator::{HEAP_SIZE, HEAP_START};
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
-use elf_rs::{SectionHeaderEntry, SectionHeaderFlags};
-use memory::paging::{ActivePageTable, Page};
+use memory::paging::{ActivePageTable, EntryFlags, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
-use memory::AreaFrameAllocator;
+use memory::{AreaFrameAllocator, Frame};
 use spin::Mutex;
 use x86_64::registers::control::Cr0Flags;
 use x86_64::registers::model_specific::EferFlags;
@@ -131,27 +89,37 @@ pub fn hlt_loop() -> ! {
     }
 }
 
-static ACTIVE_TABLE: OnceCell<Mutex<ActivePageTable>> = OnceCell::uninit();
+static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController>> = OnceCell::uninit();
 
-pub fn get_physical(address: VirtAddr) -> Option<PhysAddr> {
-    match ACTIVE_TABLE.get() {
-        Some(memory_controller) => {
-            return memory_controller.lock().translate(address);
-        }
-        None => return None,
-    }
+pub fn get_memory_controller() -> &'static Mutex<MemoryController> {
+    return MEMORY_CONTROLLER
+        .get()
+        .expect("Memory controller not initialized");
 }
 
-pub struct MemoryController<'area_frame_allocator, 'active_table> {
-    active_table: &'active_table mut ActivePageTable,
-    frame_allocator: &'area_frame_allocator mut AreaFrameAllocator<'static>,
+pub struct MemoryController {
+    active_table: ActivePageTable,
+    frame_allocator: AreaFrameAllocator<'static>,
     stack_allocator: StackAllocator,
 }
 
-impl<'area_frame_allocator, 'active_table> MemoryController<'area_frame_allocator, 'active_table> {
+impl MemoryController {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.stack_allocator
-            .alloc_stack(self.active_table, self.frame_allocator, size_in_pages)
+        self.stack_allocator.alloc_stack(
+            &mut self.active_table,
+            &mut self.frame_allocator,
+            size_in_pages,
+        )
+    }
+
+    pub fn map(&mut self, page: Page, flags: EntryFlags) {
+        self.active_table
+            .map(page, flags, &mut self.frame_allocator);
+    }
+
+    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
+        self.active_table
+            .map_to(page, frame, flags, &mut self.frame_allocator);
     }
 
     pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
@@ -164,34 +132,35 @@ pub fn init(information_address: *mut BootInformation) {
         memory::area_frame_allocator::AreaFrameAllocator::new(&boot_info.memory_map);
     enable_nxe_bit();
     enable_write_protect_bit();
-    let mut active_table = memory::remap_the_kernel(&mut frame_allocator, &boot_info);
+    let active_table = memory::remap_the_kernel(&mut frame_allocator, &boot_info);
     let stack_allocator = {
         let stack_alloc_start = Page::containing_address(HEAP_START + HEAP_SIZE);
         let stack_alloc_end = stack_alloc_start + 100;
         let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
         StackAllocator::new(stack_alloc_range)
     };
-    let mut memory_controller = MemoryController {
-        active_table: &mut active_table,
-        frame_allocator: &mut frame_allocator,
-        stack_allocator,
-    };
-    allocator::init(&mut memory_controller);
+    MEMORY_CONTROLLER.init_once(|| {
+        MemoryController {
+            active_table,
+            frame_allocator,
+            stack_allocator,
+        }
+        .into()
+    });
+    allocator::init();
     graphics::init(boot_info);
     print::init(boot_info, 0x00ff44);
-    gdt::init_gdt(&mut memory_controller);
-    interrupt::init(&mut memory_controller);
-    driver::init(&mut memory_controller);
-    drop(memory_controller);
-    ACTIVE_TABLE.init_once(|| Mutex::new(active_table));
+    gdt::init_gdt();
+    interrupt::init();
+    driver::init();
     userland::init();
     x86_64::instructions::interrupts::enable();
-    /*println!(
-            r#"nothingos Copyright (C) 2024  Pantae
-    This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
-    This is free software, and you are welcome to redistribute it
-    under certain conditions; type `show c' for details."#
-        );*/
+    //    println!(
+    //        r#"nothingos Copyright (C) 2024  Pantae
+    //This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+    //This is free software, and you are welcome to redistribute it
+    //under certain conditions; type `show c' for details."#
+    //    );
 }
 
 fn enable_write_protect_bit() {

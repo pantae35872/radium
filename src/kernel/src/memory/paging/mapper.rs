@@ -1,9 +1,8 @@
 use x86_64::{PhysAddr, VirtAddr};
 
 use super::table::{self, Level4, Table};
-use super::{Page, ENTRY_COUNT};
+use super::{EntryFlags, Page, ENTRY_COUNT};
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::EntryFlags;
 use core::ptr::Unique;
 
 pub struct Mapper {

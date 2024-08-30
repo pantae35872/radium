@@ -2,7 +2,7 @@ use alloc::{sync::Arc, vec::Vec};
 use bit_field::BitField;
 use spin::Mutex;
 
-use crate::{inline_if, utils::port::Port32Bit, MemoryController};
+use crate::{inline_if, utils::port::Port32Bit};
 
 pub static DRIVER: Mutex<PCIControler> = Mutex::new(PCIControler::new());
 
@@ -494,7 +494,7 @@ impl PciHeader {
 pub trait PciDeviceHandle: Sync + Send {
     fn handles(&self, vendor_id: Vendor, device_id: DeviceType) -> bool;
 
-    fn start(&self, header: &PciHeader, memory_controller: &mut MemoryController);
+    fn start(&self, header: &PciHeader);
 }
 
 struct PciDevice {
@@ -517,7 +517,7 @@ pub fn register_driver(handle: Arc<dyn PciDeviceHandle>) {
     DRIVER.lock().drivers.push(PciDevice { handle });
 }
 
-pub fn init(memory_controller: &mut MemoryController) {
+pub fn init() {
     for bus in 0..255 {
         for device in 0..32 {
             let function_count = inline_if!(
@@ -537,7 +537,7 @@ pub fn init(memory_controller: &mut MemoryController) {
                         .handle
                         .handles(device.get_vendor(), device.get_device())
                     {
-                        driver.handle.start(&device, memory_controller);
+                        driver.handle.start(&device);
                     }
                 }
             }

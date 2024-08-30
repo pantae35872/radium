@@ -2,8 +2,8 @@ use x86_64::VirtAddr;
 
 use super::table::{Level1, Table};
 use super::{ActivePageTable, Page};
+use crate::memory::paging::EntryFlags;
 use crate::memory::{Frame, FrameAllocator};
-use crate::EntryFlags;
 
 pub struct TemporaryPage {
     page: Page,
