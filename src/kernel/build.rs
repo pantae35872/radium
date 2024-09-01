@@ -1,5 +1,4 @@
 #![feature(os_str_display)]
-
 use std::env;
 
 fn main() {
