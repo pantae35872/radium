@@ -5,7 +5,7 @@ build-std = ["core", "alloc", "compiler_builtins"]
 [build]
 target = "x86_64.json"
 rustflags = [
-    "-Zthreads=16",
+    "-Zthreads=8",
 ]
 
 [target.'cfg(target_os = "none")']
