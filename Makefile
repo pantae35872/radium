@@ -6,7 +6,7 @@ ifeq (release,$(firstword $(MAKECMDGOALS)))
 	RELEASE := 1
 endif
 
-.PHONY: debug release clean fat run make-test-kernel os-runner test-run test disk update
+.PHONY: debug release clean run make-test-kernel os-runner test-run test disk update font ovmf
 .DEFAULT_GOAL := debug
 
 NAME := nothingos
@@ -28,6 +28,13 @@ $(ISO_DIR):
 
 disk:
 	qemu-img create -f qcow2 disk.img 1G
+
+font:
+	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
+	mv open-sans.regular.ttf kernel-font.ttf
+
+ovmf:
+	wget https://github.com/clearlinux/common/raw/master/OVMF.fd
 
 run: 
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
