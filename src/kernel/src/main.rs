@@ -11,8 +11,10 @@ extern crate lazy_static;
 extern crate nothingos;
 extern crate spin;
 
+use core::alloc::Layout;
 use core::arch::asm;
 
+use alloc::alloc::alloc;
 use alloc::ffi::CString;
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
@@ -35,13 +37,13 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     nothingos::init(information_address);
     println!("Hello world!");
 
-    let mut buf = [0u8; 256];
-    let mut heap = unsafe { BuddyAllocator::<8>::new(buf.as_mut_ptr() as usize, buf.len()) };
+    let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
+    let mut heap = unsafe { BuddyAllocator::<64>::new(buf as usize, 256) };
 
-    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
-    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
-    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
-    println!("{:?}, {:?}", heap.allocate(16), buf.as_ptr());
+    println!("{:?}, {:?}", heap.allocate(8), buf);
+    println!("{:?}, {:?}", heap.allocate(8), buf);
+    println!("{:?}, {:?}", heap.allocate(8), buf);
+    println!("{:?}, {:?}", heap.allocate(16), buf);
     /*instructions::interrupts::without_interrupts(|| {
         SCHEDULER
             .get()

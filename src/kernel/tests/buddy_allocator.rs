@@ -42,6 +42,14 @@ fn simple_alloc() {
         allocations.push((ptr, size));
     }
 
+    let large_size = 512;
+    let ptr = heap.allocate(large_size);
+    assert!(
+        ptr.is_none(),
+        "Allocation should fail for size: {}",
+        large_size
+    );
+
     for i in 0..allocation_ranges.len() {
         for j in i + 1..allocation_ranges.len() {
             let (start_i, end_i) = allocation_ranges[i];
