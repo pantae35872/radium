@@ -1,6 +1,8 @@
 use core::{ptr, u8};
 
 use alloc::alloc::*;
+pub mod area_frame_allocator;
+pub mod buddy_allocator;
 pub mod linked_list;
 
 use crate::{

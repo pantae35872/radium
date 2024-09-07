@@ -20,7 +20,6 @@ extern crate core;
 extern crate lazy_static;
 extern crate spin;
 
-pub mod allocator;
 pub mod driver;
 pub mod filesystem;
 pub mod gdt;
@@ -36,9 +35,9 @@ pub mod utils;
 use core::panic::PanicInfo;
 use core::usize;
 
-use allocator::{HEAP_SIZE, HEAP_START};
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
+use memory::allocator::{self, HEAP_SIZE, HEAP_START};
 use memory::paging::{ActivePageTable, EntryFlags, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
 use memory::{AreaFrameAllocator, Frame};
@@ -128,8 +127,7 @@ impl MemoryController {
 }
 pub fn init(information_address: *mut BootInformation) {
     let boot_info = unsafe { &mut *information_address };
-    let mut frame_allocator =
-        memory::area_frame_allocator::AreaFrameAllocator::new(&boot_info.memory_map);
+    let mut frame_allocator = AreaFrameAllocator::new(&boot_info.memory_map);
     enable_nxe_bit();
     enable_write_protect_bit();
     let active_table = memory::remap_the_kernel(&mut frame_allocator, &boot_info);

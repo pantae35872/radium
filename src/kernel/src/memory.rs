@@ -1,9 +1,9 @@
 use x86_64::PhysAddr;
 
-pub use self::area_frame_allocator::AreaFrameAllocator;
+pub use self::allocator::area_frame_allocator::AreaFrameAllocator;
 pub use self::paging::remap_the_kernel;
 
-pub mod area_frame_allocator;
+pub mod allocator;
 pub mod paging;
 pub mod stack_allocator;
 

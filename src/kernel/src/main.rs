@@ -17,6 +17,7 @@ use alloc::ffi::CString;
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
+use nothingos::memory::allocator::buddy_allocator::BuddyAllocator;
 use nothingos::println;
 use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
@@ -33,6 +34,14 @@ fn sys_print(value: &str) {
 pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     nothingos::init(information_address);
     println!("Hello world!");
+
+    let mut buf = [0u8; 256];
+    let mut heap = unsafe { BuddyAllocator::<8>::new(buf.as_mut_ptr() as usize, buf.len()) };
+
+    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
+    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
+    println!("{:?}, {:?}", heap.allocate(8), buf.as_ptr());
+    println!("{:?}, {:?}", heap.allocate(16), buf.as_ptr());
     /*instructions::interrupts::without_interrupts(|| {
         SCHEDULER
             .get()
