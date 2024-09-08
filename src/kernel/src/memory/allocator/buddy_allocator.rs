@@ -1,15 +1,35 @@
 use core::ptr::NonNull;
 
-use crate::println;
+use crate::utils::NumberUtils;
 
 #[derive(Debug)]
 struct FreeNode(Option<&'static mut FreeNode>);
+
+struct FreeNoteIterMut<'a> {
+    curr: &'a mut FreeNode,
+}
 
 #[derive(Debug)]
 pub struct BuddyAllocator<const ORDER: usize> {
     free_lists: [FreeNode; ORDER],
     max_mem: usize,
     allocated: usize,
+}
+
+impl<'a> Iterator for FreeNoteIterMut<'a> {
+    type Item = &'static mut FreeNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.curr.0.is_none() {
+            return None;
+        } else {
+            unsafe {
+                let curr = &mut *(self.curr as *mut FreeNode);
+                self.curr = &mut *self.curr.as_ptr()?.as_ptr();
+                return Some(curr);
+            }
+        }
+    }
 }
 
 impl FreeNode {
@@ -40,18 +60,30 @@ impl FreeNode {
         }
     }
 
+    fn as_ptr(&mut self) -> Option<NonNull<FreeNode>> {
+        match &mut self.0 {
+            Some(next) => NonNull::new(*next as *mut FreeNode),
+            None => None,
+        }
+    }
+
     fn as_next_ptr(&mut self) -> Option<NonNull<u8>> {
         match &mut self.0 {
             Some(next) => NonNull::new(*next as *mut FreeNode as *mut u8),
             None => None,
         }
     }
+
+    pub fn iter_mut(&mut self) -> FreeNoteIterMut {
+        FreeNoteIterMut { curr: self }
+    }
 }
 
 impl<const ORDER: usize> BuddyAllocator<ORDER> {
-    pub unsafe fn new(start_addr: usize, max_mem: usize) -> Self {
-        println!("{}", size_of::<FreeNode>());
-        assert!(max_mem.is_power_of_two());
+    pub unsafe fn new(start_addr: usize, mut max_mem: usize) -> Self {
+        if !max_mem.is_power_of_two() {
+            max_mem = max_mem.prev_power_of_two();
+        }
 
         let mut init = Self {
             free_lists: [const { FreeNode(None) }; ORDER],
@@ -113,7 +145,34 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
         return self.allocate(size);
     }
 
-    pub fn dealloc(&mut self, _ptr: NonNull<u8>, _size: usize) {
-        todo!()
+    pub fn dealloc(&mut self, ptr: NonNull<u8>, size: usize) {
+        let mut order = size.trailing_zeros() as usize;
+        let mut ptr = ptr.as_ptr() as usize;
+
+        self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+
+        while order <= ORDER {
+            let buddy = ptr ^ (1 << order);
+            let mut found_buddy = false;
+
+            for block in self.free_lists[order - 1].iter_mut() {
+                if block.as_ptr().is_some_and(|e| e.as_ptr() as usize == buddy) {
+                    block.pop();
+                    found_buddy = true;
+                    break;
+                }
+            }
+
+            if found_buddy {
+                self.free_lists[order - 1].pop();
+                ptr = ptr.min(buddy);
+                order += 1;
+                self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+            } else {
+                break;
+            }
+        }
+
+        self.allocated -= size;
     }
 }

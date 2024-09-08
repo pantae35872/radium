@@ -9,6 +9,7 @@
 #![feature(core_intrinsics)]
 #![feature(str_from_utf16_endian)]
 #![feature(naked_functions)]
+#![feature(pointer_is_aligned_to)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
 

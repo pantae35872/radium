@@ -14,6 +14,16 @@ macro_rules! inline_if {
     };
 }
 
+pub trait NumberUtils<T> {
+    fn prev_power_of_two(self) -> T;
+}
+
+impl NumberUtils<usize> for usize {
+    fn prev_power_of_two(self) -> usize {
+        1 << (usize::BITS as usize - self.leading_zeros() as usize - 1)
+    }
+}
+
 pub fn floorf64(x: f64) -> f64 {
     let integer_part = x as i64;
 

@@ -24,13 +24,13 @@ pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> 
 #[test_case]
 fn simple_alloc() {
     let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
-    let mut heap = unsafe { BuddyAllocator::<64>::new(buf as usize, 256) };
+    let mut allocator = unsafe { BuddyAllocator::<64>::new(buf as usize, 256) };
     let sizes = [16, 32, 16, 32, 8, 8, 16, 128];
     let mut allocations = Vec::new();
     let mut allocation_ranges = Vec::new();
 
     for &size in sizes.iter() {
-        let ptr = heap.allocate(size);
+        let ptr = allocator.allocate(size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
         let ptr = ptr.unwrap();
         assert!(ptr.is_aligned_to(size));
@@ -43,7 +43,7 @@ fn simple_alloc() {
     }
 
     let large_size = 512;
-    let ptr = heap.allocate(large_size);
+    let ptr = allocator.allocate(large_size);
     assert!(
         ptr.is_none(),
         "Allocation should fail for size: {}",
@@ -64,5 +64,34 @@ fn simple_alloc() {
                 end_j
             );
         }
+    }
+}
+
+#[test_case]
+fn alloc_free() {
+    let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
+    let mut allocator = unsafe { BuddyAllocator::<8>::new(buf as usize, 256) };
+
+    let sizes = [8, 16, 32, 64, 128];
+    let mut allocations = Vec::new();
+
+    for &size in sizes.iter() {
+        let ptr = allocator.allocate(size);
+        assert!(ptr.is_some(), "Allocation failed for size: {}", size);
+        allocations.push((ptr.unwrap(), size));
+    }
+
+    for &(ptr, size) in &allocations {
+        allocator.dealloc(ptr, size);
+    }
+
+    for (i, &size) in sizes.iter().enumerate() {
+        let ptr = allocator.allocate(size);
+        assert!(ptr.is_some(), "Reallocation failed for size: {}", size);
+        assert_eq!(
+            ptr.unwrap(),
+            allocations[i].0,
+            "Reallocated pointer does not match original"
+        );
     }
 }

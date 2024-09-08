@@ -38,12 +38,8 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
     println!("Hello world!");
 
     let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
-    let mut heap = unsafe { BuddyAllocator::<64>::new(buf as usize, 256) };
-
-    println!("{:?}, {:?}", heap.allocate(8), buf);
-    println!("{:?}, {:?}", heap.allocate(8), buf);
-    println!("{:?}, {:?}", heap.allocate(8), buf);
-    println!("{:?}, {:?}", heap.allocate(16), buf);
+    let mut heap = unsafe { BuddyAllocator::<8>::new(buf as usize, 256) };
+    heap.allocate(8).expect("Cannot allocate");
     /*instructions::interrupts::without_interrupts(|| {
         SCHEDULER
             .get()
