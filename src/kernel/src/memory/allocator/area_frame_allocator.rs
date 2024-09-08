@@ -4,11 +4,11 @@ use uefi::table::boot::{MemoryDescriptor, MemoryMap, MemoryType};
 pub struct AreaFrameAllocator<'a> {
     next_free_frame: Frame,
     current_area: Option<&'a MemoryDescriptor>,
-    areas: &'a MemoryMap<'static>,
+    areas: &'a MemoryMap<'a>,
 }
 
 impl<'a> AreaFrameAllocator<'a> {
-    pub fn new(memory_areas: &'a MemoryMap<'static>) -> AreaFrameAllocator<'a> {
+    pub fn new(memory_areas: &'a MemoryMap<'a>) -> AreaFrameAllocator<'a> {
         let mut allocator = AreaFrameAllocator {
             next_free_frame: Frame::containing_address(0),
             current_area: None,

@@ -56,3 +56,29 @@ impl<T: Copy + Debug> Debug for VolatileCell<T> {
         write!(f, "{:?}", self.get())
     }
 }
+
+#[macro_export]
+macro_rules! defer {
+    ($body:expr) => {
+        use crate::utils::Defer;
+        let _defer = Defer::new(|| $body);
+    };
+}
+
+pub struct Defer<F: FnOnce()> {
+    func: Option<F>,
+}
+
+impl<F: FnOnce()> Defer<F> {
+    pub fn new(func: F) -> Self {
+        Defer { func: Some(func) }
+    }
+}
+
+impl<F: FnOnce()> Drop for Defer<F> {
+    fn drop(&mut self) {
+        if let Some(func) = self.func.take() {
+            func();
+        }
+    }
+}

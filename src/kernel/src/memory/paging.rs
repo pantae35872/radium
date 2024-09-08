@@ -9,7 +9,7 @@ use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
 use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
 use uefi::proto::console::gop::PixelFormat;
-use uefi::table::boot::MemoryDescriptor;
+use uefi::table::boot::{MemoryDescriptor, MemoryType};
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
@@ -144,7 +144,7 @@ impl DerefMut for ActivePageTable {
 }
 
 impl ActivePageTable {
-    unsafe fn new() -> ActivePageTable {
+    pub unsafe fn new() -> ActivePageTable {
         ActivePageTable {
             p4: Unique::new_unchecked(table::P4),
             mapper: Mapper::new(),
@@ -288,6 +288,10 @@ impl InactivePageTable {
 
         InactivePageTable { p4_frame: frame }
     }
+
+    pub unsafe fn from_raw_frame(frame: Frame) -> InactivePageTable {
+        return InactivePageTable { p4_frame: frame };
+    }
 }
 
 pub fn remap_the_kernel<A>(allocator: &mut A, boot_info: &BootInformation) -> ActivePageTable
@@ -379,8 +383,8 @@ where
     });
 
     let old_table = active_table.switch(new_table);
-    let old_p4_page = Page::containing_address(old_table.p4_frame.start_address().as_u64());
-    active_table.unmap(old_p4_page, allocator);
+    //let old_p4_page = Page::containing_address(old_table.p4_frame.start_address().as_u64());
+    //active_table.unmap(old_p4_page, allocator);
 
     active_table
 }

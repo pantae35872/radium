@@ -1,4 +1,5 @@
 global boot_start
+global p4_table
 extern start
 
 section .text

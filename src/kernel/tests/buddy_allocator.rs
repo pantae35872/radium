@@ -23,9 +23,9 @@ pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> 
 
 #[test_case]
 fn simple_alloc() {
-    let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
-    let mut allocator = unsafe { BuddyAllocator::<64>::new(buf as usize, 256) };
-    let sizes = [16, 32, 16, 32, 8, 8, 16, 128];
+    let buf = unsafe { alloc(Layout::from_size_align(2048, 512).unwrap()) };
+    let mut allocator = unsafe { BuddyAllocator::<64>::addr_new(buf as usize, 2048) };
+    let sizes = [16, 32, 16, 32, 8, 8, 16, 128, 1024];
     let mut allocations = Vec::new();
     let mut allocation_ranges = Vec::new();
 
@@ -42,7 +42,7 @@ fn simple_alloc() {
         allocations.push((ptr, size));
     }
 
-    let large_size = 512;
+    let large_size = 4096;
     let ptr = allocator.allocate(large_size);
     assert!(
         ptr.is_none(),
@@ -69,8 +69,8 @@ fn simple_alloc() {
 
 #[test_case]
 fn alloc_free() {
-    let buf = unsafe { alloc(Layout::from_size_align(256, 256).unwrap()) };
-    let mut allocator = unsafe { BuddyAllocator::<8>::new(buf as usize, 256) };
+    let buf = unsafe { alloc(Layout::from_size_align(256, 8).unwrap()) };
+    let mut allocator = unsafe { BuddyAllocator::<64>::addr_new(buf as usize, 256) };
 
     let sizes = [8, 16, 32, 64, 128];
     let mut allocations = Vec::new();

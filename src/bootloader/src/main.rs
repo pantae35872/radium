@@ -13,11 +13,12 @@ use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use uefi::{
     entry,
     table::{
-        boot::{MemoryDescriptor, MemoryType},
+        boot::{MemoryDescriptor, MemoryType, PAGE_SIZE},
         Boot, SystemTable,
     },
     Handle, Status,
 };
+
 use uefi_services::println;
 extern crate alloc;
 pub mod boot_services;
@@ -89,7 +90,15 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
     boot_info.memory_map = memory_map;
     boot_info.runtime_system_table = system_table.get_current_system_table_addr();
-    boot_info.largest_page = [
+    boot_info.largest_page = boot_info
+        .memory_map
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+        .map(|e| e.page_count * PAGE_SIZE as u64)
+        .sum::<u64>()
+        .next_power_of_two()
+        >> 30;
+    /*boot_info.largest_page = [
         boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64
             + size_of::<MemoryDescriptor>() as u64
             - 1,
@@ -100,7 +109,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     .max()
     .unwrap()
         / 0x40000000
-        + 1;
+        + 1;*/
     unsafe {
         asm!(
             r#"

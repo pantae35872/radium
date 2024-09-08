@@ -7,6 +7,66 @@ pub mod allocator;
 pub mod paging;
 pub mod stack_allocator;
 
+/// Switch the current scope to use a page table that is identity-mapped (1:1) with physical memory.
+///
+/// This macro temporarily switches the page table in the current scope to one where virtual addresses
+/// directly map to the corresponding physical addresses. The identity mapping bypasses the standard virtual
+/// memory translation, giving direct access to physical memory for the duration of the current scope.
+///
+/// ## Important Notes:
+/// - **Heap allocation causes *undefined behavior*:** While the heap allocator is technically still accessible,
+///   any attempt to allocate memory or deallocating memory in this mode will lead to *undefined behavior*. Avoid any operations that
+///   require dynamic memory allocation.
+/// - **No printing:** Functions that rely on virtual memory, such as printing to the console, will not work in this mode.
+/// - **Limited OS features:** Many OS features that depend on virtual memory translation will be unavailable
+///   while this macro is active.
+///
+/// ## Usage:
+/// When invoked, this macro alters the memory mapping of the current scope. Upon exiting the scope, the page table
+/// is restored to its previous state. All code within the scope will operate with the identity-mapped memory.
+///
+/// ### Safety:
+/// This macro should only be used when you fully understand the implications of bypassing
+/// the memory protection mechanisms provided by virtual memory.
+///
+/// Example:
+/// ```rust
+/// {
+///     direct_mapping!();
+///     // All code in this block will operate with direct physical memory access.
+///     // Heap allocation and certain OS features are unusable.
+/// }
+/// // After direct mapping goes out of the scope, the previous page table is restored.
+/// ```
+///
+/// **Warning:** Ensure that code in this scope does not rely on heap allocation or other
+/// features that depend on virtual memory.
+#[macro_export]
+macro_rules! direct_mapping {
+    () => {
+        use crate::defer;
+        use crate::memory::paging::ActivePageTable;
+        use crate::memory::paging::InactivePageTable;
+
+        extern "C" {
+            static p4_table: u8;
+        }
+
+        let current_table;
+        unsafe {
+            let mut active_table = ActivePageTable::new();
+            let old_table = InactivePageTable::from_raw_frame(Frame::containing_address(
+                &p4_table as *const u8 as u64,
+            ));
+            current_table = active_table.switch(old_table);
+        }
+        defer!(unsafe {
+            let mut active_table = ActivePageTable::new();
+            active_table.switch(current_table);
+        });
+    };
+}
+
 #[derive(PartialEq, PartialOrd, Clone)]
 pub struct Frame {
     number: u64,

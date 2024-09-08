@@ -38,6 +38,7 @@ use core::usize;
 
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
+use memory::allocator::buddy_allocator::BuddyAllocator;
 use memory::allocator::{self, HEAP_SIZE, HEAP_START};
 use memory::paging::{ActivePageTable, EntryFlags, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
@@ -89,37 +90,41 @@ pub fn hlt_loop() -> ! {
     }
 }
 
-static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController>> = OnceCell::uninit();
+static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController<64>>> = OnceCell::uninit();
 
-pub fn get_memory_controller() -> &'static Mutex<MemoryController> {
+pub fn get_memory_controller() -> &'static Mutex<MemoryController<64>> {
     return MEMORY_CONTROLLER
         .get()
         .expect("Memory controller not initialized");
 }
 
-pub struct MemoryController {
+pub struct MemoryController<const ORDER: usize> {
     active_table: ActivePageTable,
-    frame_allocator: AreaFrameAllocator<'static>,
+    allocator: BuddyAllocator<'static, ORDER>,
     stack_allocator: StackAllocator,
 }
 
-impl MemoryController {
+impl<const ORDER: usize> MemoryController<ORDER> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.stack_allocator.alloc_stack(
-            &mut self.active_table,
-            &mut self.frame_allocator,
-            size_in_pages,
-        )
+        self.stack_allocator
+            .alloc_stack(&mut self.active_table, &mut self.allocator, size_in_pages)
     }
 
     pub fn map(&mut self, page: Page, flags: EntryFlags) {
-        self.active_table
-            .map(page, flags, &mut self.frame_allocator);
+        self.active_table.map(page, flags, &mut self.allocator);
     }
 
     pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
         self.active_table
-            .map_to(page, frame, flags, &mut self.frame_allocator);
+            .map_to(page, frame, flags, &mut self.allocator);
+    }
+
+    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
+        return self.allocator.allocate(size);
+    }
+
+    pub fn deallocate(&mut self, ptr: *mut u8, size: usize) {
+        self.allocator.dealloc(ptr, size);
     }
 
     pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
@@ -128,10 +133,10 @@ impl MemoryController {
 }
 pub fn init(information_address: *mut BootInformation) {
     let boot_info = unsafe { &mut *information_address };
-    let mut frame_allocator = AreaFrameAllocator::new(&boot_info.memory_map);
+    let mut allocator = unsafe { BuddyAllocator::new(&boot_info.memory_map) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    let active_table = memory::remap_the_kernel(&mut frame_allocator, &boot_info);
+    let active_table = memory::remap_the_kernel(&mut allocator, &boot_info);
     let stack_allocator = {
         let stack_alloc_start = Page::containing_address(HEAP_START + HEAP_SIZE);
         let stack_alloc_end = stack_alloc_start + 100;
@@ -141,7 +146,7 @@ pub fn init(information_address: *mut BootInformation) {
     MEMORY_CONTROLLER.init_once(|| {
         MemoryController {
             active_table,
-            frame_allocator,
+            allocator,
             stack_allocator,
         }
         .into()
