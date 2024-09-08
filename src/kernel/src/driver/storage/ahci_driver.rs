@@ -419,6 +419,7 @@ impl AhciPort {
         }
     }
 
+    // TODO: Use buddy allocation
     fn rebase(&mut self) {
         self.stop_cmd();
         let virt_clb: VirtAddr = unsafe {

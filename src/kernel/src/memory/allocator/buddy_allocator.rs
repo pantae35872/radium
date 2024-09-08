@@ -88,6 +88,7 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
         }
     }
 
+    //TODO: Add dynamic sizeing
     unsafe fn add_area(&mut self, start_addr: usize, mut size: usize) {
         if !size.is_power_of_two() {
             size = size.prev_power_of_two();

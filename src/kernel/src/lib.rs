@@ -42,7 +42,7 @@ use memory::allocator::buddy_allocator::BuddyAllocator;
 use memory::allocator::{self, HEAP_SIZE, HEAP_START};
 use memory::paging::{ActivePageTable, EntryFlags, Page};
 use memory::stack_allocator::{Stack, StackAllocator};
-use memory::{AreaFrameAllocator, Frame};
+use memory::Frame;
 use spin::Mutex;
 use x86_64::registers::control::Cr0Flags;
 use x86_64::registers::model_specific::EferFlags;

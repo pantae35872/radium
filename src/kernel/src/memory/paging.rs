@@ -9,7 +9,7 @@ use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
 use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
 use uefi::proto::console::gop::PixelFormat;
-use uefi::table::boot::{MemoryDescriptor, MemoryType};
+use uefi::table::boot::MemoryDescriptor;
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
@@ -382,9 +382,7 @@ where
         }
     });
 
-    let old_table = active_table.switch(new_table);
-    //let old_p4_page = Page::containing_address(old_table.p4_frame.start_address().as_u64());
-    //active_table.unmap(old_p4_page, allocator);
+    active_table.switch(new_table);
 
     active_table
 }

@@ -21,6 +21,7 @@ pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> 
     loop {}
 }
 
+//TODO: FIX THIS
 #[test_case]
 fn simple_alloc() {
     let buf = unsafe { alloc(Layout::from_size_align(2048, 512).unwrap()) };
