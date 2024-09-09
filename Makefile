@@ -6,7 +6,7 @@ ifeq (release,$(firstword $(MAKECMDGOALS)))
 	RELEASE := 1
 endif
 
-.PHONY: debug release clean run make-test-kernel os-runner test-run test disk update font ovmf
+.PHONY: debug release clean run make-test-kernel test-run test disk update font ovmf dbg-run
 .DEFAULT_GOAL := debug
 
 NAME := nothingos
@@ -42,7 +42,7 @@ run:
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-no-reboot -enable-kvm -cpu host,+rdrand -serial stdio -display gtk
 
-debug-run:
+dbg-run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
 	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
@@ -91,6 +91,7 @@ debug: $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
+# TODO: make this recompile even if no file changes and if the last compilation was on a different mode
 release: $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BOOTLOADER_BIN) ::/efi/boot

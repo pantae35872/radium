@@ -13,7 +13,7 @@ use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use uefi::{
     entry,
     table::{
-        boot::{MemoryDescriptor, MemoryType, PAGE_SIZE},
+        boot::{MemoryType, PAGE_SIZE},
         Boot, SystemTable,
     },
     Handle, Status,

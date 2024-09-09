@@ -60,8 +60,10 @@ impl<T: Copy + Debug> Debug for VolatileCell<T> {
 #[macro_export]
 macro_rules! defer {
     ($body:expr) => {
-        use crate::utils::Defer;
-        let _defer = Defer::new(|| $body);
+        let _defer = {
+            use $crate::utils::Defer;
+            Defer::new(|| $body)
+        };
     };
 }
 

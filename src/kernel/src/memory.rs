@@ -44,9 +44,7 @@ pub mod stack_allocator;
 #[macro_export]
 macro_rules! direct_mapping {
     () => {
-        use crate::defer;
-        use crate::memory::paging::ActivePageTable;
-        use crate::memory::paging::InactivePageTable;
+        use $crate::defer;
 
         extern "C" {
             static p4_table: u8;
@@ -54,14 +52,26 @@ macro_rules! direct_mapping {
 
         let current_table;
         unsafe {
-            let mut active_table = ActivePageTable::new();
-            let old_table = InactivePageTable::from_raw_frame(Frame::containing_address(
-                &p4_table as *const u8 as u64,
-            ));
+            let mut active_table = {
+                use $crate::memory::paging::ActivePageTable;
+
+                ActivePageTable::new()
+            };
+            let old_table = {
+                use $crate::memory::paging::InactivePageTable;
+
+                InactivePageTable::from_raw_frame(Frame::containing_address(
+                    &p4_table as *const u8 as u64,
+                ))
+            };
             current_table = active_table.switch(old_table);
         }
         defer!(unsafe {
-            let mut active_table = ActivePageTable::new();
+            let mut active_table = {
+                use $crate::memory::paging::ActivePageTable;
+
+                ActivePageTable::new()
+            };
             active_table.switch(current_table);
         });
     };
