@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
-#![feature(abi_x86_interrupt)]
 #![feature(custom_test_frameworks)]
+#![deny(warnings)]
 #![test_runner(nothingos::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -11,23 +11,12 @@ extern crate lazy_static;
 extern crate nothingos;
 extern crate spin;
 
-use core::arch::asm;
-
-use alloc::ffi::CString;
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
 use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
 use nothingos::println;
 use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
-
-#[no_mangle]
-fn sys_print(value: &str) {
-    let string = CString::new(value).unwrap();
-    unsafe {
-        asm!("int 0x80", in("rax") 1, in("rcx") string.into_raw());
-    }
-}
 
 #[no_mangle]
 pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
@@ -38,7 +27,7 @@ pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
         async {
             let mut controller = get_ahci().get_contoller().lock();
             let drive = controller.get_drive(0).expect("Cannot get drive");
-            let mut gpt = GPTPartitions::new(drive.into());
+            let mut gpt = GPTPartitions::new(drive);
 
             /*gpt.format().await.unwrap();
             gpt.set_partiton(
