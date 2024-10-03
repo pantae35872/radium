@@ -4,6 +4,9 @@ ifeq (test,$(firstword $(MAKECMDGOALS)))
 endif
 ifeq (release,$(firstword $(MAKECMDGOALS))) 
 	RELEASE := 1
+  BUILD_MODE := release
+else 
+  BUILD_MODE := debug
 endif
 
 .PHONY: debug release clean run make-test-kernel test-run test disk update font ovmf dbg-run
@@ -19,6 +22,22 @@ KERNEL_SOURCES := $(shell find src/kernel/src -name '*.rs') $(shell find src/com
 BOOTLOADER_SOURCES := $(shell find src/bootloader/src -name '*.rs') $(shell find src/common/src -name '*.rs')
 OSRUNNER_BIN := $(BUILD_DIR)/os-runner
 BOOTLOADER_BIN := $(BUILD_DIR)/bootx64.efi
+BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
+
+ifeq ($(BUILD_MODE), $(shell cat $(BUILD_MODE_FILE) 2>/dev/null))
+    BUILD_MODE_CHANGED := 0
+else
+    BUILD_MODE_CHANGED := 1
+endif
+
+ifeq ($(BUILD_MODE_CHANGED), 1)
+    force_rebuild:
+			@echo "Build mode have change rebuilding the entire os"
+			@$(MAKE) clean
+else
+    force_rebuild:
+			@echo "Build mode unchanged"
+endif
 
 $(BUILD_DIR):
 	mkdir $(BUILD_DIR)
@@ -85,14 +104,15 @@ $(BOOTLOADER_BIN): $(BOOTLOADER_SOURCES) $(BUILD_DIR)
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) --target x86_64-unknown-uefi 
 	cp src/bootloader/target/x86_64-unknown-uefi/$(if $(RELEASE),release,debug)/$(NAME)-bootloader.efi $(BOOTLOADER_BIN)
 
-debug: $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
+debug: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
+	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BOOTLOADER_BIN) ::/efi/boot
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
-# TODO: make this recompile even if no file changes and if the last compilation was on a different mode
-release: $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
+release: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
+	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BOOTLOADER_BIN) ::/efi/boot
 	cp $(FAT_IMG) $(ISO_DIR)
