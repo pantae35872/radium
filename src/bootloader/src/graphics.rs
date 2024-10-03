@@ -11,7 +11,6 @@ use uefi::{
         Boot, SystemTable,
     },
 };
-use uefi_services::println;
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     let mut largest_mode: Option<OutputMode> = None;
@@ -72,12 +71,6 @@ pub fn initialize_graphics_kernel(
     for mode in gop.modes(system_table.boot_services()) {
         if mode.info().resolution() == (1920, 1080) {
             gop.set_mode(&mode).expect("Could not set mode");
-            println!(
-                "{}, {:?}, {:?}",
-                mode.info().stride(),
-                mode.info().pixel_format(),
-                mode.info().resolution()
-            );
             boot_info.gop_mode = mode;
             break;
         }
