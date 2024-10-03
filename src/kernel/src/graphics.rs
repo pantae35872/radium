@@ -1,5 +1,3 @@
-use core::slice::from_raw_parts_mut;
-
 use conquer_once::spin::OnceCell;
 use spin::mutex::Mutex;
 use uefi::proto::console::gop::{ModeInfo, PixelFormat};
@@ -45,11 +43,8 @@ impl Graphic {
 pub fn init(bootinfo: &BootInformation) {
     DRIVER.init_once(|| unsafe {
         Mutex::new(Graphic::new(
-            bootinfo.gop_mode.info().clone(),
-            from_raw_parts_mut(
-                bootinfo.framebuffer.as_ptr() as *mut u32,
-                bootinfo.framebuffer.len(),
-            ),
+            bootinfo.gop_mode_info().clone(),
+            bootinfo.framebuffer(),
         ))
     });
 }

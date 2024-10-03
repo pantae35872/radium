@@ -1,5 +1,3 @@
-use core::slice::from_raw_parts_mut;
-
 use common::boot::BootInformation;
 use uefi::{
     proto::console::{
@@ -60,18 +58,13 @@ pub fn initialize_graphics_kernel(
             )
     };
     let mut gop = gop.unwrap();
-    let mut framebuffer = gop.frame_buffer();
-    boot_info.framebuffer = unsafe {
-        from_raw_parts_mut(
-            framebuffer.as_mut_ptr() as *mut u32,
-            framebuffer.size() >> size_of::<u32>(),
-        )
-    };
+    let framebuffer = gop.frame_buffer().as_mut_ptr() as u64;
+    let framebuffer_size = gop.frame_buffer().size();
 
     for mode in gop.modes(system_table.boot_services()) {
         if mode.info().resolution() == (1920, 1080) {
+            boot_info.init_graphics(mode.info().clone(), framebuffer, framebuffer_size);
             gop.set_mode(&mode).expect("Could not set mode");
-            boot_info.gop_mode = mode;
             break;
         }
     }

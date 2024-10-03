@@ -1,6 +1,5 @@
 use core::ptr::write_bytes;
 
-use common::boot::BootInformation;
 use elf_rs::{Elf, ElfFile, ProgramType};
 use uefi::table::{
     boot::{AllocateType, MemoryType},
@@ -10,8 +9,7 @@ use uefi::table::{
 pub fn load_elf(
     system_table: &mut SystemTable<Boot>,
     buffer: &'static [u8],
-    boot_info: &mut BootInformation,
-) -> u64 {
+) -> (u64, u64, u64, Elf<'static>) {
     let elf = Elf::from_bytes(buffer).unwrap_or_else(|_| panic!("could not create an elf file"));
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
@@ -78,8 +76,7 @@ pub fn load_elf(
         }
     }
 
-    boot_info.kernel_start = mem_min;
-    boot_info.kernel_end = mem_max;
-    boot_info.elf_section = elf;
-    return program_ptr as u64 + (boot_info.elf_section.elf_header().entry_point() - mem_min);
+    let entry_point = program_ptr as u64 + (elf.elf_header().entry_point() - mem_min);
+
+    return (entry_point, mem_min, mem_max, elf);
 }

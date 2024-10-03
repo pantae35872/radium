@@ -3,12 +3,11 @@ use self::mapper::Mapper;
 use self::table::{Level4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{inline_if, BootInformation};
+use crate::BootInformation;
 use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
 use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
-use uefi::proto::console::gop::PixelFormat;
 use uefi::table::boot::MemoryDescriptor;
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
@@ -306,7 +305,7 @@ where
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        for section in boot_info.elf_section.section_header_iter() {
+        for section in boot_info.elf_section().section_header_iter() {
             if !section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
                 continue;
             }
@@ -323,21 +322,17 @@ where
                 mapper.identity_map(frame, flags, allocator);
             }
         }
-        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start);
-        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end);
-
-        for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
-            mapper.identity_map(frame, EntryFlags::PRESENT, allocator)
-        }
+        let bootinfo_start = Frame::containing_address(boot_info as *const BootInformation as u64);
+        let bootinfo_end = Frame::containing_address(
+            boot_info as *const BootInformation as u64 + size_of::<BootInformation>() as u64,
+        );
 
         let memory_map_start = Frame::containing_address(
-            boot_info.memory_map.entries().next().unwrap() as *const MemoryDescriptor as u64,
+            boot_info.memory_map().entries().next().unwrap() as *const MemoryDescriptor as u64,
         );
         let memory_map_end = Frame::containing_address(
-            boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64,
+            boot_info.memory_map().entries().last().unwrap() as *const MemoryDescriptor as u64,
         );
-        let bootinfo_start = Frame::containing_address(boot_info.boot_info_start);
-        let bootinfo_end = Frame::containing_address(boot_info.boot_info_end);
         for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {
             if frame >= bootinfo_start && frame <= bootinfo_end {
                 continue;
@@ -349,17 +344,13 @@ where
             );
         }
 
-        let (width, height) = boot_info.gop_mode.info().resolution();
-        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer.as_ptr() as u64);
+        for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
+            mapper.identity_map(frame, EntryFlags::PRESENT, allocator)
+        }
+
+        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer_addr());
         let frame_buffer_end = Frame::containing_address(
-            boot_info.framebuffer.as_ptr() as u64
-                + inline_if!(
-                    boot_info.gop_mode.info().pixel_format() == PixelFormat::Rgb
-                        || boot_info.gop_mode.info().pixel_format() == PixelFormat::Bgr,
-                    4,
-                    0
-                ) * width as u64
-                    * height as u64,
+            boot_info.framebuffer_addr() + boot_info.framebuffer_size() as u64 - 1,
         );
 
         for frame in Frame::range_inclusive(frame_buffer_start, frame_buffer_end) {
@@ -370,8 +361,9 @@ where
             );
         }
 
-        let font_start = Frame::containing_address(boot_info.font_start);
-        let font_end = Frame::containing_address(boot_info.font_end);
+        let font_start = Frame::containing_address(boot_info.font_addr());
+        let font_end =
+            Frame::containing_address(boot_info.font_addr() + boot_info.font_size() as u64 - 1);
 
         for frame in Frame::range_inclusive(font_start, font_end) {
             mapper.identity_map(

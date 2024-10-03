@@ -16,16 +16,7 @@ pub struct TtfRenderer {
 
 impl TtfRenderer {
     pub fn new(boot_info: &BootInformation, foreground_color: u32) -> Self {
-        let font = unsafe {
-            Font::from_bytes(
-                core::slice::from_raw_parts(
-                    boot_info.font_start as *mut u8,
-                    (boot_info.font_end - boot_info.font_start) as usize,
-                ),
-                FontSettings::default(),
-            )
-            .unwrap()
-        };
+        let font = unsafe { Font::from_bytes(boot_info.font(), FontSettings::default()).unwrap() };
         Self {
             data: Vec::with_capacity(5000),
             foreground_color,

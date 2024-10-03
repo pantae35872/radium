@@ -133,7 +133,7 @@ impl<const ORDER: usize> MemoryController<ORDER> {
 }
 pub fn init(information_address: *mut BootInformation) {
     let boot_info = unsafe { &mut *information_address };
-    let mut allocator = unsafe { BuddyAllocator::new(&boot_info.memory_map) };
+    let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
     enable_nxe_bit();
     enable_write_protect_bit();
     let active_table = memory::remap_the_kernel(&mut allocator, &boot_info);
