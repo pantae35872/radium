@@ -3,8 +3,6 @@ name = "nothingos"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [profile.dev]
 opt-level = 0
 debug-assertions = false
@@ -17,10 +15,8 @@ version = "1.4.0"
 features = ["spin_no_std"]
 
 [dependencies]
-fmt = "0.1.0"
 spin = "0.9.8"
 x86_64 = "0.14.11"
-pc-keyboard = "0.5.0"
 uart_16550 = "0.2.0"
 bitflags = "2.4.1"
 uguid = "2.2.0"
@@ -52,11 +48,6 @@ features = ["alloc"]
 version = "1.6.1"
 features = ["v4"]
 default-features = false
-
-[dependencies.futures-util]
-version = "0.3.4"
-default-features = false
-features = ["alloc", "async-await"]
 
 [dependencies.conquer-once]
 version = "0.4.0"
