@@ -98,18 +98,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         .sum::<u64>()
         .next_power_of_two()
         >> 30;
-    /*boot_info.largest_page = [
-        boot_info.memory_map.entries().last().unwrap() as *const MemoryDescriptor as u64
-            + size_of::<MemoryDescriptor>() as u64
-            - 1,
-        boot_info as *mut BootInformation as u64 + size_of::<BootInformation>() as u64 - 1,
-        kernel_buffer.as_ptr() as u64 + kernel_buffer.len() as u64 - 1,
-    ]
-    .iter()
-    .max()
-    .unwrap()
-        / 0x40000000
-        + 1;*/
     unsafe {
         asm!(
             r#"

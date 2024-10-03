@@ -41,6 +41,7 @@ endif
 
 $(BUILD_DIR):
 	mkdir $(BUILD_DIR)
+	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
 
 $(ISO_DIR):
 	mkdir $(ISO_DIR)
@@ -105,14 +106,12 @@ $(BOOTLOADER_BIN): $(BOOTLOADER_SOURCES) $(BUILD_DIR)
 	cp src/bootloader/target/x86_64-unknown-uefi/$(if $(RELEASE),release,debug)/$(NAME)-bootloader.efi $(BOOTLOADER_BIN)
 
 debug: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
-	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BOOTLOADER_BIN) ::/efi/boot
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
 release: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
-	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BOOTLOADER_BIN) ::/efi/boot
 	cp $(FAT_IMG) $(ISO_DIR)

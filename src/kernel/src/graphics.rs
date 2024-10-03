@@ -23,13 +23,14 @@ impl Graphic {
         if x > width || y > height {
             return;
         }
+        let stride = self.mode.stride();
 
         match self.mode.pixel_format() {
             PixelFormat::Rgb => {
-                self.frame_buffer[y * width + x] = color << 8;
+                self.frame_buffer[y * stride + x] = color << 8;
             }
             PixelFormat::Bgr => {
-                self.frame_buffer[y * width + x] = color;
+                self.frame_buffer[y * stride + x] = color;
             }
             PixelFormat::Bitmask => {}
             PixelFormat::BltOnly => {}
@@ -43,8 +44,12 @@ impl Graphic {
 
 pub fn init(bootinfo: &BootInformation) {
     DRIVER.init_once(|| unsafe {
-        let (width, height) = bootinfo.gop_mode.info().resolution();
-        let buffer = from_raw_parts_mut(bootinfo.framebuffer, width * height * 4);
-        Mutex::new(Graphic::new(bootinfo.gop_mode.info().clone(), buffer))
+        Mutex::new(Graphic::new(
+            bootinfo.gop_mode.info().clone(),
+            from_raw_parts_mut(
+                bootinfo.framebuffer.as_ptr() as *mut u32,
+                bootinfo.framebuffer.len(),
+            ),
+        ))
     });
 }

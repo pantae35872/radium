@@ -7,7 +7,7 @@ pub struct BootInformation {
     // Largest Page (1 GiB) that need to be mapped for the kernel to be able to boot
     pub largest_page: u64,
     pub gop_mode: Mode,
-    pub framebuffer: *mut u32,
+    pub framebuffer: &'static mut [u32],
     pub runtime_system_table: u64,
     pub memory_map: MemoryMap<'static>,
     pub kernel_start: u64,

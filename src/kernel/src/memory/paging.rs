@@ -350,9 +350,9 @@ where
         }
 
         let (width, height) = boot_info.gop_mode.info().resolution();
-        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer as u64);
+        let frame_buffer_start = Frame::containing_address(boot_info.framebuffer.as_ptr() as u64);
         let frame_buffer_end = Frame::containing_address(
-            boot_info.framebuffer as u64
+            boot_info.framebuffer.as_ptr() as u64
                 + inline_if!(
                     boot_info.gop_mode.info().pixel_format() == PixelFormat::Rgb
                         || boot_info.gop_mode.info().pixel_format() == PixelFormat::Bgr,
