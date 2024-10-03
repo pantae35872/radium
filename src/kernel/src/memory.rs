@@ -56,6 +56,7 @@ macro_rules! direct_mapping {
                 };
                 let old_table = {
                     use $crate::memory::paging::InactivePageTable;
+                    use $crate::memory::Frame;
 
                     InactivePageTable::from_raw_frame(Frame::containing_address(
                         &p4_table as *const u8 as u64,
@@ -63,7 +64,7 @@ macro_rules! direct_mapping {
                 };
                 current_table = active_table.switch(old_table);
             }
-            crate::defer!(unsafe {
+            $crate::defer!(unsafe {
                 let mut active_table = {
                     use $crate::memory::paging::ActivePageTable;
 
