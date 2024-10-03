@@ -101,7 +101,7 @@ $(KERNEL_BIN): $(KERNEL_SOURCES) $(BUILD_DIR)
 	cp src/kernel/target/x86_64/$(if $(RELEASE),release,debug)/$(NAME) $(KERNEL_BIN)
 
 $(BOOTLOADER_BIN): $(BOOTLOADER_SOURCES) $(BUILD_DIR)
-	cd src/bootloader && cargo build $(if $(RELEASE),--release,) --target x86_64-unknown-uefi 
+	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
 	cp src/bootloader/target/x86_64-unknown-uefi/$(if $(RELEASE),release,debug)/$(NAME)-bootloader.efi $(BOOTLOADER_BIN)
 
 debug: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
