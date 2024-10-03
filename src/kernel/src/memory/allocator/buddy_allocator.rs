@@ -105,89 +105,89 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
     }
 
     pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
-        direct_mapping!();
+        direct_mapping!({
+            let order = size.trailing_zeros() as usize;
 
-        let order = size.trailing_zeros() as usize;
+            let mut current_order = order;
 
-        let mut current_order = order;
+            let mut some_mem = false;
 
-        let mut some_mem = false;
-
-        for (i, node) in self.free_lists[order - 1..].iter_mut().enumerate() {
-            current_order = i + order;
-            match node.0 {
-                Some(_) => {
-                    if current_order == order {
-                        self.allocated += size;
-                        return node.pop()?.as_next_ptr();
-                    } else {
-                        some_mem = true;
-                        break;
-                    }
-                }
-                None => continue,
-            }
-        }
-
-        if some_mem {
-            for i in (order..current_order).rev() {
-                let (next_node, current_node) = {
-                    let (left, right) = self.free_lists.split_at_mut(i);
-                    (&mut left[i - 1], &mut right[0])
-                };
-                match current_node.pop() {
-                    Some(mut o_node) => {
-                        let ptr = o_node.as_next_ptr().unwrap();
-
-                        unsafe {
-                            next_node.push(&mut *(ptr as *mut FreeNode));
-                            next_node.push(&mut *((ptr as usize + (1 << i)) as *mut FreeNode));
+            for (i, node) in self.free_lists[order - 1..].iter_mut().enumerate() {
+                current_order = i + order;
+                match node.0 {
+                    Some(_) => {
+                        if current_order == order {
+                            self.allocated += size;
+                            return node.pop()?.as_next_ptr();
+                        } else {
+                            some_mem = true;
+                            break;
                         }
                     }
                     None => continue,
                 }
             }
-            return self.allocate(size);
-        } else {
-            self.select_next_area();
-            if self.allocated + size >= self.max_mem {
-                return None;
+
+            if some_mem {
+                for i in (order..current_order).rev() {
+                    let (next_node, current_node) = {
+                        let (left, right) = self.free_lists.split_at_mut(i);
+                        (&mut left[i - 1], &mut right[0])
+                    };
+                    match current_node.pop() {
+                        Some(mut o_node) => {
+                            let ptr = o_node.as_next_ptr().unwrap();
+
+                            unsafe {
+                                next_node.push(&mut *(ptr as *mut FreeNode));
+                                next_node.push(&mut *((ptr as usize + (1 << i)) as *mut FreeNode));
+                            }
+                        }
+                        None => continue,
+                    }
+                }
+                return self.allocate(size);
+            } else {
+                self.select_next_area();
+                if self.allocated + size >= self.max_mem {
+                    return None;
+                }
+                return self.allocate(size);
             }
-            return self.allocate(size);
-        }
+        });
     }
 
     pub fn dealloc(&mut self, ptr: *mut u8, size: usize) {
-        direct_mapping!();
+        direct_mapping!({
+            let mut order = size.trailing_zeros() as usize;
+            let mut ptr = ptr as usize;
 
-        let mut order = size.trailing_zeros() as usize;
-        let mut ptr = ptr as usize;
+            self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
 
-        self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+            while order <= ORDER {
+                let buddy = ptr ^ (1 << order);
+                let mut found_buddy = false;
 
-        while order <= ORDER {
-            let buddy = ptr ^ (1 << order);
-            let mut found_buddy = false;
+                for block in self.free_lists[order - 1].iter_mut() {
+                    if block.as_ptr().is_some_and(|e| e as usize == buddy) {
+                        block.pop();
+                        found_buddy = true;
+                        break;
+                    }
+                }
 
-            for block in self.free_lists[order - 1].iter_mut() {
-                if block.as_ptr().is_some_and(|e| e as usize == buddy) {
-                    block.pop();
-                    found_buddy = true;
+                if found_buddy {
+                    self.free_lists[order - 1].pop();
+                    ptr = ptr.min(buddy);
+                    order += 1;
+                    self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+                } else {
                     break;
                 }
             }
 
-            if found_buddy {
-                self.free_lists[order - 1].pop();
-                ptr = ptr.min(buddy);
-                order += 1;
-                self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
-            } else {
-                break;
-            }
-        }
-
-        self.allocated -= size;
+            self.allocated -= size;
+        });
     }
 }
 

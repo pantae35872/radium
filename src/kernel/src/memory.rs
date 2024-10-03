@@ -31,49 +31,48 @@ pub mod stack_allocator;
 ///
 /// Example:
 /// ```rust
-/// {
-///     direct_mapping!();
-///     // All code in this block will operate with direct physical memory access.
-///     // Heap allocation and certain OS features are unusable.
-/// }
-/// // After direct mapping goes out of the scope, the previous page table is restored.
+/// direct_mapping!({
+///     // All memory access in this block is identity-mapped
+/// });
 /// ```
 ///
 /// **Warning:** Ensure that code in this scope does not rely on heap allocation or other
 /// features that depend on virtual memory.
 #[macro_export]
 macro_rules! direct_mapping {
-    () => {
-        use $crate::defer;
-
+    ($body:block) => {
         extern "C" {
             static p4_table: u8;
         }
 
-        let current_table;
-        unsafe {
-            let mut active_table = {
-                use $crate::memory::paging::ActivePageTable;
+        {
+            let current_table;
 
-                ActivePageTable::new()
-            };
-            let old_table = {
-                use $crate::memory::paging::InactivePageTable;
+            unsafe {
+                let mut active_table = {
+                    use $crate::memory::paging::ActivePageTable;
 
-                InactivePageTable::from_raw_frame(Frame::containing_address(
-                    &p4_table as *const u8 as u64,
-                ))
-            };
-            current_table = active_table.switch(old_table);
+                    ActivePageTable::new()
+                };
+                let old_table = {
+                    use $crate::memory::paging::InactivePageTable;
+
+                    InactivePageTable::from_raw_frame(Frame::containing_address(
+                        &p4_table as *const u8 as u64,
+                    ))
+                };
+                current_table = active_table.switch(old_table);
+            }
+            crate::defer!(unsafe {
+                let mut active_table = {
+                    use $crate::memory::paging::ActivePageTable;
+
+                    ActivePageTable::new()
+                };
+                active_table.switch(current_table);
+            });
+            $body
         }
-        defer!(unsafe {
-            let mut active_table = {
-                use $crate::memory::paging::ActivePageTable;
-
-                ActivePageTable::new()
-            };
-            active_table.switch(current_table);
-        });
     };
 }
 
