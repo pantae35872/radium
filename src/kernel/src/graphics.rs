@@ -41,10 +41,12 @@ impl Graphic {
 }
 
 pub fn init(bootinfo: &BootInformation) {
-    DRIVER.init_once(|| unsafe {
+    DRIVER.init_once(|| {
         Mutex::new(Graphic::new(
             bootinfo.gop_mode_info().clone(),
-            bootinfo.framebuffer(),
+            bootinfo
+                .framebuffer()
+                .expect("Failed to aquire framebuffer from bootinfo it already been taken"),
         ))
     });
 }

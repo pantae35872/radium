@@ -131,8 +131,8 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         return self.active_table.translate(addr);
     }
 }
-pub fn init(information_address: *mut BootInformation) {
-    let boot_info = unsafe { &mut *information_address };
+pub fn init(information_address: *const BootInformation) {
+    let boot_info = unsafe { BootInformation::from_ptr(information_address) };
     let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
     enable_nxe_bit();
     enable_write_protect_bit();

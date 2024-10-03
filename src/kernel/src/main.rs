@@ -18,7 +18,7 @@ use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
 
 #[no_mangle]
-pub extern "C" fn start(information_address: *mut BootInformation) -> ! {
+pub extern "C" fn start(information_address: *const BootInformation) -> ! {
     nothingos::init(information_address);
     println!("Hello world!");
     let mut executor = Executor::new();

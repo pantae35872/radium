@@ -60,7 +60,7 @@ run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
 	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -enable-kvm -cpu host,+rdrand -serial stdio -display gtk
+	-no-reboot -enable-kvm -cpu host,+rdrand -serial stdio -display gtk 
 
 dbg-run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \

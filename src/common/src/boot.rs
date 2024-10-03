@@ -1,4 +1,7 @@
-use core::slice;
+use core::{
+    slice,
+    sync::atomic::{AtomicPtr, Ordering},
+};
 
 use elf_rs::Elf;
 use uefi::{
@@ -12,14 +15,14 @@ pub struct BootInformation {
     // Max memory (in GiB) need to be all identity mapped for the kernel to be able to boot
     max_memory: u64,
     gop_mode_info: ModeInfo,
-    framebuffer: *mut u32, /* &'static mut [u32]*/
+    framebuffer: AtomicPtr<u32>, /* &'static mut [u32]*/
     framebuffer_len: usize,
     runtime_system_table: u64,
     memory_map: MemoryMap<'static>,
     kernel_start: u64,
     kernel_size: usize,
     elf_section: Elf<'static>,
-    font_start: u64,
+    font_start: AtomicPtr<u8>,
     font_size: usize,
 }
 
@@ -56,7 +59,9 @@ impl BootInformation {
         self.kernel_start = kernel_start;
         self.kernel_size = kernel_size;
         self.elf_section = elf;
-        self.font_start = font_start;
+        assert!(font_start != 0, "Font can't be null");
+        self.font_start
+            .store(font_start as *mut u8, Ordering::Relaxed);
         self.font_size = font_size;
     }
 
@@ -67,7 +72,9 @@ impl BootInformation {
         framebuffer_size: usize,
     ) {
         self.gop_mode_info = mode_info;
-        self.framebuffer = framebuffer_start as *mut u32;
+        assert!(framebuffer_start != 0, "Framebuffer can't be null");
+        self.framebuffer
+            .store(framebuffer_start as *mut u32, Ordering::Relaxed);
         self.framebuffer_len = framebuffer_size * size_of::<u32>();
     }
 
@@ -79,12 +86,24 @@ impl BootInformation {
         return &self.gop_mode_info;
     }
 
-    pub unsafe fn framebuffer(&self) -> &'static mut [u32] {
-        slice::from_raw_parts_mut(self.framebuffer, self.framebuffer_len)
+    pub fn framebuffer(&self) -> Option<&'static mut [u32]> {
+        let ptr = self
+            .framebuffer
+            .swap(core::ptr::null_mut(), Ordering::Acquire);
+        if !ptr.is_null() {
+            unsafe { Some(slice::from_raw_parts_mut(ptr, self.framebuffer_len)) }
+        } else {
+            None
+        }
     }
 
-    pub fn framebuffer_addr(&self) -> u64 {
-        self.framebuffer as u64
+    pub fn framebuffer_addr(&self) -> Option<u64> {
+        let ptr = self.framebuffer.load(Ordering::Relaxed);
+        if !ptr.is_null() {
+            Some(ptr as u64)
+        } else {
+            None
+        }
     }
 
     pub fn framebuffer_size(&self) -> usize {
@@ -103,15 +122,32 @@ impl BootInformation {
         &self.elf_section
     }
 
-    pub fn font_addr(&self) -> u64 {
-        self.font_start
+    pub fn font_addr(&self) -> Option<u64> {
+        let font_start = self.font_start.load(Ordering::Relaxed);
+        if !font_start.is_null() {
+            Some(font_start as u64)
+        } else {
+            None
+        }
     }
 
     pub fn font_size(&self) -> usize {
         self.font_size
     }
 
-    pub unsafe fn font(&self) -> &'static mut [u8] {
-        slice::from_raw_parts_mut(self.font_start as *mut u8, self.font_size)
+    pub fn font(&self) -> Option<&'static mut [u8]> {
+        let font_start = self
+            .font_start
+            .swap(core::ptr::null_mut(), Ordering::Acquire);
+        if !font_start.is_null() {
+            unsafe {
+                Some(slice::from_raw_parts_mut(
+                    font_start as *mut u8,
+                    self.font_size,
+                ))
+            }
+        } else {
+            None
+        }
     }
 }

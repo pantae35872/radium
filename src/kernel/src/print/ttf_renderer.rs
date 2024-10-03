@@ -16,7 +16,11 @@ pub struct TtfRenderer {
 
 impl TtfRenderer {
     pub fn new(boot_info: &BootInformation, foreground_color: u32) -> Self {
-        let font = unsafe { Font::from_bytes(boot_info.font(), FontSettings::default()).unwrap() };
+        let font = Font::from_bytes(
+            boot_info.font().expect("Failed to get font ownership"),
+            FontSettings::default(),
+        )
+        .unwrap();
         Self {
             data: Vec::with_capacity(5000),
             foreground_color,
