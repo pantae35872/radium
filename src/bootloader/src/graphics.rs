@@ -58,14 +58,16 @@ pub fn initialize_graphics_kernel(
             )
     };
     let mut gop = gop.unwrap();
-    let framebuffer = gop.frame_buffer().as_mut_ptr() as u64;
-    let framebuffer_size = gop.frame_buffer().size();
 
-    for mode in gop.modes(system_table.boot_services()) {
-        if mode.info().resolution() == (1920, 1080) {
-            boot_info.init_graphics(mode.info().clone(), framebuffer, framebuffer_size);
-            gop.set_mode(&mode).expect("Could not set mode");
-            break;
-        }
+    if let Some(mode) = gop
+        .modes(system_table.boot_services())
+        .find(|mode| mode.info().resolution() == (1920, 1080))
+    {
+        gop.set_mode(&mode).expect("Could not set mode");
+        let framebuffer = gop.frame_buffer().as_mut_ptr() as u64;
+        let (horizontal, vertical) = mode.info().resolution();
+        let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
+
+        boot_info.init_graphics(mode.info().clone(), framebuffer, framebuffer_len);
     }
 }

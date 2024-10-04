@@ -38,6 +38,8 @@ use core::usize;
 
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
+use graphics::color::Color;
+use graphics::BACKGROUND_COLOR;
 use memory::allocator::buddy_allocator::BuddyAllocator;
 use memory::allocator::{self, HEAP_SIZE, HEAP_START};
 use memory::paging::{ActivePageTable, EntryFlags, Page};
@@ -153,7 +155,7 @@ pub fn init(information_address: *const BootInformation) {
     });
     allocator::init();
     graphics::init(boot_info);
-    print::init(boot_info, 0x00ff44);
+    print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();
     interrupt::init();
     driver::init();

@@ -4,18 +4,26 @@ use alloc::vec::Vec;
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 
-use crate::{graphics, BootInformation};
+use crate::{
+    graphics::{self, color::Color},
+    BootInformation,
+};
 
 const PIXEL_SIZE: usize = 18;
 pub struct TtfRenderer {
     data: Vec<char>,
     cache: HashMap<char, (Metrics, Vec<u8>)>,
-    foreground_color: u32,
+    foreground_color: Color,
+    background_color: Color,
     font: Font,
 }
 
 impl TtfRenderer {
-    pub fn new(boot_info: &BootInformation, foreground_color: u32) -> Self {
+    pub fn new(
+        boot_info: &BootInformation,
+        foreground_color: Color,
+        background_color: Color,
+    ) -> Self {
         let font = Font::from_bytes(
             boot_info.font().expect("Failed to get font ownership"),
             FontSettings::default(),
@@ -24,13 +32,14 @@ impl TtfRenderer {
         Self {
             data: Vec::with_capacity(5000),
             foreground_color,
+            background_color,
             font,
             cache: HashMap::with_capacity(255),
         }
     }
 
-    pub fn set_color(&mut self, color: &u32) {
-        self.foreground_color = *color;
+    pub fn set_color(&mut self, color: Color) {
+        self.foreground_color = color;
     }
 
     pub fn put_char(&mut self, charactor: &char) {
@@ -55,19 +64,6 @@ impl TtfRenderer {
                 return false;
             }
         };
-    }
-
-    fn adjust_brightness(color: u32, alpha: u8) -> u32 {
-        let alpha = alpha as f32 / 255.0;
-
-        let red = (color >> 16) & 0xFF;
-        let green = (color >> 8) & 0xFF;
-        let blue = color & 0xFF;
-        let new_red = (red as f32 * alpha) as u32;
-        let new_green = (green as f32 * alpha) as u32;
-        let new_blue = (blue as f32 * alpha) as u32;
-
-        (new_red << 16) | (new_green << 8) | new_blue
     }
 
     pub fn update(&mut self) {
@@ -95,7 +91,8 @@ impl TtfRenderer {
                 graphics.plot(
                     x + offset,
                     ((y + y_offset * PIXEL_SIZE) as i32 - metrics.ymin) as usize,
-                    Self::adjust_brightness(self.foreground_color, *pixel),
+                    self.foreground_color
+                        .blend(self.background_color, *pixel as f32 / 255.0),
                 );
                 x -= 1;
                 if x <= 0 {

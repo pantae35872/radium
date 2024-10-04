@@ -69,13 +69,13 @@ impl BootInformation {
         &mut self,
         mode_info: ModeInfo,
         framebuffer_start: u64,
-        framebuffer_size: usize,
+        framebuffer_len: usize,
     ) {
         self.gop_mode_info = mode_info;
         assert!(framebuffer_start != 0, "Framebuffer can't be null");
         self.framebuffer
             .store(framebuffer_start as *mut u32, Ordering::Relaxed);
-        self.framebuffer_len = framebuffer_size * size_of::<u32>();
+        self.framebuffer_len = framebuffer_len;
     }
 
     pub fn max_memory(&self) -> u64 {
@@ -106,8 +106,9 @@ impl BootInformation {
         }
     }
 
+    /// Frame buffer size in BYTES!!!
     pub fn framebuffer_size(&self) -> usize {
-        self.framebuffer_len / size_of::<u32>()
+        self.framebuffer_len * size_of::<u32>()
     }
 
     pub fn runtime_system_table(&self) -> u64 {

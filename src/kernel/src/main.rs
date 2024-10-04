@@ -20,7 +20,7 @@ use nothingos::task::{AwaitType, Task};
 #[no_mangle]
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
     nothingos::init(information_address);
-    println!("Hello world!");
+    println!("Hello, world!");
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
