@@ -26,7 +26,7 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
         async {
             let mut controller = get_ahci().get_contoller().lock();
             let _drive = controller.get_drive(0).expect("Cannot get drive");
-            /*let mut gpt = GPTPartitions::new(drive);
+            //let mut gpt = GPTPartitions::new(drive);
 
             /*gpt.format().await.unwrap();
             gpt.set_partiton(
@@ -47,8 +47,8 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
             )
             .await
             .expect("Error");*/
-            let partition1 = gpt.read_partition(1).await.expect("Error");
-            println!("{}", partition1.get_partition_name());*/
+            //let partition1 = gpt.read_partition(1).await.expect("Error");
+            //println!("{}", partition1.get_partition_name());
         },
         AwaitType::Poll,
     ));

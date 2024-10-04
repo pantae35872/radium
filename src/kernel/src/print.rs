@@ -2,6 +2,7 @@ use core::fmt;
 use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
+use crate::logger::LOGGER;
 use crate::BootInformation;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
@@ -39,6 +40,9 @@ macro_rules! println {
 
 pub fn init(bootinfo: &BootInformation, foreground_color: Color, background: Color) {
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color, background)));
+    LOGGER.lock().add_target(|msg| {
+        println!("{msg}");
+    });
 }
 
 pub struct Print {
@@ -47,11 +51,9 @@ pub struct Print {
 
 impl Print {
     pub fn new(bootinfo: &BootInformation, foreground: Color, background: Color) -> Self {
-        let mut renderer = TtfRenderer::new(bootinfo, foreground, background);
-        for charactor in "Out of heap memory".chars() {
-            renderer.cache(&charactor);
-        }
-        return Self { renderer };
+        return Self {
+            renderer: TtfRenderer::new(bootinfo, foreground, background),
+        };
     }
 
     pub fn set_color(&mut self, foreground: Color) {

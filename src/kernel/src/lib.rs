@@ -26,6 +26,7 @@ pub mod filesystem;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupt;
+pub mod logger;
 pub mod memory;
 pub mod print;
 pub mod serial;
@@ -40,6 +41,7 @@ use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
+use logger::LOGGER;
 use memory::allocator::buddy_allocator::BuddyAllocator;
 use memory::allocator::{self, HEAP_SIZE, HEAP_START};
 use memory::paging::{ActivePageTable, EntryFlags, Page};
@@ -56,7 +58,7 @@ pub trait Testable {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    println!("{}", info);
+    log!(Critical, "{}", info);
     test_panic_handler(info);
     hlt_loop();
 }
@@ -133,8 +135,14 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         return self.active_table.translate(addr);
     }
 }
+
 pub fn init(information_address: *const BootInformation) {
     let boot_info = unsafe { BootInformation::from_ptr(information_address) };
+
+    LOGGER.lock().add_target(|msg| {
+        serial_println!("{}", msg);
+    }); // Add serial to the logger
+
     let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
     enable_nxe_bit();
     enable_write_protect_bit();

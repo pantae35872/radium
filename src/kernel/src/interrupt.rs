@@ -389,8 +389,6 @@ extern "C" fn inner_syscall(stack_frame: &mut FullInterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn primary_ata_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    print!("a");
-
     unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
     }

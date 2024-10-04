@@ -2,7 +2,7 @@ use alloc::{sync::Arc, vec::Vec};
 use bit_field::BitField;
 use spin::Mutex;
 
-use crate::{inline_if, utils::port::Port32Bit};
+use crate::{inline_if, log, utils::port::Port32Bit};
 
 pub static DRIVER: Mutex<PCIControler> = Mutex::new(PCIControler::new());
 
@@ -531,6 +531,13 @@ pub fn init() {
                 if !device.get_vendor().is_valid() {
                     continue;
                 }
+
+                log!(
+                    Info,
+                    "Found PCI Device. Vendor: {:?}, Device: {:?}",
+                    device.get_vendor(),
+                    device.get_device()
+                );
 
                 for driver in &DRIVER.lock().drivers {
                     if driver

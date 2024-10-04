@@ -18,7 +18,7 @@ use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle
 use crate::memory::paging::{EntryFlags, Page};
 use crate::memory::Frame;
 use crate::utils::VolatileCell;
-use crate::{get_memory_controller, println};
+use crate::{get_memory_controller, log};
 
 use super::Drive;
 
@@ -689,7 +689,7 @@ impl PciDeviceHandle for AhciDriver {
     fn handles(&self, vendor_id: pci::Vendor, device_id: DeviceType) -> bool {
         matches!(
             (vendor_id, device_id),
-            (Vendor::Intel, DeviceType::SataController)
+            (Vendor::Intel | Vendor::Amd, DeviceType::SataController)
         )
     }
 
@@ -754,9 +754,15 @@ impl AhciController {
                     match dt {
                         AhciDriveType::Sata => {
                             drive.port.lock().rebase();
+                            log!(Info, "Found sata drive on port {}", i);
                             self.drives[i] = Some(drive);
                         }
-                        dt => println!("Drive not support: {}", dt),
+                        dt => log!(
+                            Warning,
+                            "AHCI drive detected. but not support on port: {}, drive type: {}",
+                            i,
+                            dt
+                        ),
                     }
                 }
             }
@@ -781,6 +787,7 @@ pub fn get_ahci() -> &'static Arc<AhciDriver> {
 }
 
 pub fn init() {
+    log!(Info, "Initializing ahci driver");
     DRIVER.call_once(|| {
         Arc::new(AhciDriver {
             inner: Mutex::new(AhciController::new()),

@@ -9,7 +9,7 @@ use uguid::Guid;
 use uuid::Uuid;
 
 use crate::driver::storage::{Drive, CHS};
-use crate::println;
+use crate::log;
 use crate::utils::floorf64;
 
 use super::msdos_partition::{MSDosPartition, MSDosPartitionError};
@@ -411,7 +411,7 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
     }
 
     async fn recover_entries(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
-        println!("Warning trying to recover entries");
+        log!(Warning, "trying to recover gpt partition entries");
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
         let entries_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -439,7 +439,10 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
         crc32.write(&entries_bytes);
 
         if self.partition_table_header.partition_entry_array_checksum == crc32.sum32() {
-            println!("Entries backup is valid, restoring from backup");
+            log!(
+                Info,
+                "GPT Partition Entries backup is valid, restoring from the backup"
+            );
             let start_lba = self.partition_table_header.start_partition_entry_lba;
             self.drive
                 .write(start_lba, entries_bytes, self.sector_number_entries)
@@ -453,7 +456,7 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
     }
 
     async fn recover_header(&mut self) -> Result<(), GPTPartitionError<T::Error>> {
-        println!("Warning trying to recover header");
+        log!(Warning, "trying to recover gpt partition header");
         let mut crc32 = crc32::Digest::new(crc32::IEEE);
         let header_bytes: &mut [u8] = unsafe {
             slice::from_raw_parts_mut(
@@ -482,7 +485,10 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
             || self.partition_table_header.signature
                 == [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54]
         {
-            println!("Header backup is valid, restoring from backup");
+            log!(
+                Info,
+                "GPT Partition Header backup is valid, restoring from backup"
+            );
             self.drive
                 .write(1, header_bytes, size_of::<PartitionTableHeader>() / 512)
                 .await
@@ -517,13 +523,19 @@ impl<'a, T: Drive> GPTPartitions<'a, T> {
             || self.partition_table_header.signature
                 != [0x45, 0x46, 0x49, 0x20, 0x50, 0x41, 0x52, 0x54]
         {
-            println!("drive header is corrupt trying to recover from backup");
+            log!(
+                Info,
+                "GPT Partition Header is corrupt trying to recover from backup"
+            );
             self.recover_header().await?;
         }
         crc32.reset();
         crc32.write(&entries_bytes);
         if self.partition_table_header.partition_entry_array_checksum != crc32.sum32() {
-            println!("drive entries is corrupt trying to recover from backup");
+            log!(
+                Info,
+                "GPT Partition Entries is corrupt trying to recover from backup"
+            );
             self.recover_entries().await?;
         }
         Ok(())
