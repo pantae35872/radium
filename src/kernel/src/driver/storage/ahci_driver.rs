@@ -2,7 +2,7 @@ use core::alloc::Layout;
 use core::error::Error;
 use core::fmt::Display;
 use core::future::Future;
-use core::mem::size_of;
+use core::intrinsics::size_of;
 use core::ptr::{self, write_bytes};
 use core::task::Poll;
 use core::{u32, usize};
@@ -10,13 +10,12 @@ use core::{u32, usize};
 use alloc::alloc::alloc;
 use alloc::sync::Arc;
 use bit_field::BitField;
+use proc::comptime_alloc;
 use spin::mutex::Mutex;
 use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
-use crate::memory::paging::{EntryFlags, Page};
-use crate::memory::Frame;
 use crate::utils::VolatileCell;
 use crate::{get_memory_controller, log};
 
@@ -24,7 +23,7 @@ use super::Drive;
 
 pub static DRIVER: Once<Arc<AhciDriver>> = Once::new();
 
-pub const ABAR_START: u64 = 0xFFFFFFFF00000000;
+pub const ABAR_START: u64 = comptime_alloc!(0xFF);
 pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
 
 #[derive(Debug)]
@@ -419,7 +418,6 @@ impl AhciPort {
         }
     }
 
-    // TODO: Use buddy allocation
     fn rebase(&mut self) {
         self.stop_cmd();
         let virt_clb: VirtAddr = unsafe {
@@ -694,6 +692,7 @@ impl PciDeviceHandle for AhciDriver {
     }
 
     fn start(&self, header: &pci::PciHeader) {
+        log!(Info, "Starting ahci driver");
         let abar = header.get_bar(5).expect("Failed to get ABAR for ahci");
 
         let (abar_address, _) = match abar {
@@ -702,23 +701,9 @@ impl PciDeviceHandle for AhciDriver {
             Bar::IO { .. } => panic!("ABAR is in port space somehow"),
         };
 
-        let abar_start_page = Page::containing_address(ABAR_START);
-        let abar_end_page = Page::containing_address(ABAR_START + ABAR_SIZE);
-        for (page, frame) in
-            Page::range_inclusive(abar_start_page, abar_end_page).zip(Frame::range_inclusive(
-                Frame::containing_address(abar_address),
-                Frame::containing_address(abar_address + ABAR_SIZE),
-            ))
-        {
-            get_memory_controller().lock().map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT
-                    | EntryFlags::NO_CACHE
-                    | EntryFlags::WRITABLE
-                    | EntryFlags::WRITE_THROUGH,
-            );
-        }
+        get_memory_controller()
+            .lock()
+            .phy_map(ABAR_SIZE, abar_address, ABAR_START);
 
         self.inner.lock().probe_port();
     }
@@ -734,6 +719,7 @@ impl AhciController {
 
     pub fn probe_port(&mut self) {
         let pi = self.hba.pi.get();
+
         if self.hba.bohc.get() & 2 == 0 {
             self.hba.bohc.set(self.hba.bohc.get() | 0b10);
             let mut spin = 0;
@@ -787,11 +773,11 @@ pub fn get_ahci() -> &'static Arc<AhciDriver> {
 }
 
 pub fn init() {
-    log!(Info, "Initializing ahci driver");
     DRIVER.call_once(|| {
         Arc::new(AhciDriver {
             inner: Mutex::new(AhciController::new()),
         })
     });
+    log!(Info, "Registering ahci driver");
     register_driver(get_ahci().clone());
 }

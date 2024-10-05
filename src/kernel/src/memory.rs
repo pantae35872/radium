@@ -1,11 +1,13 @@
 use x86_64::PhysAddr;
 
-pub use self::allocator::area_frame_allocator::AreaFrameAllocator;
 pub use self::paging::remap_the_kernel;
 
 pub mod allocator;
 pub mod paging;
 pub mod stack_allocator;
+
+pub const PAGE_SIZE: u64 = 4096;
+pub const MAX_ALIGN: usize = 8192;
 
 /// Switch the current scope to use a page table that is identity-mapped (1:1) with physical memory.
 ///
@@ -81,8 +83,6 @@ macro_rules! direct_mapping {
 pub struct Frame {
     number: u64,
 }
-
-pub const PAGE_SIZE: u64 = 4096;
 
 impl Frame {
     pub fn containing_address(address: u64) -> Frame {

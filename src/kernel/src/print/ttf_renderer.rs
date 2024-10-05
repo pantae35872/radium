@@ -5,6 +5,7 @@ use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 
 use crate::{
+    get_memory_controller,
     graphics::{self, color::Color},
     BootInformation,
 };
@@ -26,6 +27,12 @@ impl TtfRenderer {
         foreground_color: Color,
         background_color: Color,
     ) -> Self {
+        get_memory_controller().lock().ident_map(
+            boot_info.font_size() as u64,
+            boot_info
+                .font_addr()
+                .expect("Failed to get font for mapping"),
+        );
         let font = Font::from_bytes(
             boot_info.font().expect("Failed to get font ownership"),
             FontSettings::default(),

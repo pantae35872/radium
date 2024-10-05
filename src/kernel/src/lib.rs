@@ -114,11 +114,57 @@ impl<const ORDER: usize> MemoryController<ORDER> {
             .alloc_stack(&mut self.active_table, &mut self.allocator, size_in_pages)
     }
 
-    pub fn map(&mut self, page: Page, flags: EntryFlags) {
+    fn map(&mut self, page: Page, flags: EntryFlags) {
         self.active_table.map(page, flags, &mut self.allocator);
     }
 
-    pub fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
+    pub fn alloc_map(&mut self, size: u64, start: u64) {
+        let start_page = Page::containing_address(start);
+        let end_page = Page::containing_address(start + size - 1);
+
+        for page in Page::range_inclusive(start_page, end_page) {
+            self.map(
+                page,
+                EntryFlags::WRITABLE
+                    | EntryFlags::PRESENT
+                    | EntryFlags::WRITE_THROUGH
+                    | EntryFlags::NO_CACHE,
+            );
+        }
+    }
+
+    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64) {
+        let start_page = Page::containing_address(virt_start);
+        let start_frame = Frame::containing_address(phy_start);
+        let end_page = Page::containing_address(virt_start + size - 1);
+        let end_frame = Frame::containing_address(phy_start + size - 1);
+        for (page, frame) in Page::range_inclusive(start_page, end_page)
+            .zip(Frame::range_inclusive(start_frame, end_frame))
+        {
+            self.map_to(
+                page,
+                frame,
+                EntryFlags::PRESENT
+                    | EntryFlags::NO_CACHE
+                    | EntryFlags::WRITABLE
+                    | EntryFlags::WRITE_THROUGH,
+            );
+        }
+    }
+
+    pub fn ident_map(&mut self, size: u64, phy_start: u64) {
+        let start = Frame::containing_address(phy_start);
+        let end = Frame::containing_address(phy_start + size - 1);
+        Frame::range_inclusive(start, end).for_each(|frame| {
+            self.active_table.identity_map(
+                frame,
+                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
+                &mut self.allocator,
+            )
+        });
+    }
+
+    fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
         self.active_table
             .map_to(page, frame, flags, &mut self.allocator);
     }
@@ -134,15 +180,21 @@ impl<const ORDER: usize> MemoryController<ORDER> {
     pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
         return self.active_table.translate(addr);
     }
+
+    pub fn max_mem(&self) -> usize {
+        self.allocator.max_mem()
+    }
+
+    pub fn allocated(&self) -> usize {
+        self.allocator.allocated()
+    }
 }
 
 pub fn init(information_address: *const BootInformation) {
     let boot_info = unsafe { BootInformation::from_ptr(information_address) };
-
     LOGGER.lock().add_target(|msg| {
         serial_println!("{}", msg);
-    }); // Add serial to the logger
-
+    });
     let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
     enable_nxe_bit();
     enable_write_protect_bit();
@@ -162,6 +214,11 @@ pub fn init(information_address: *const BootInformation) {
         .into()
     });
     allocator::init();
+    log!(
+        Info,
+        "Usable memory: {:.2} GB",
+        get_memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
+    );
     graphics::init(boot_info);
     print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();

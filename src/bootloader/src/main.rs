@@ -50,8 +50,10 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     initialize_graphics_kernel(&mut system_table, boot_info);
 
-    let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
+    let (system_table, mut memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
+    memory_map.sort();
     boot_info.init_memory(memory_map, system_table.get_current_system_table_addr());
+
     unsafe {
         asm!(
             r#"

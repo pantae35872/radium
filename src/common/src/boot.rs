@@ -37,14 +37,22 @@ impl BootInformation {
 
     pub fn init_memory(&mut self, memory_map: MemoryMap<'static>, runtime_system_table: u64) {
         self.memory_map = memory_map;
-        self.max_memory = self
+        self.max_memory = (self
             .memory_map
             .entries()
-            .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-            .map(|e| e.page_count * PAGE_SIZE as u64)
-            .sum::<u64>()
-            .next_power_of_two()
-            >> 30;
+            .filter(|e| {
+                matches!(
+                    e.ty,
+                    MemoryType::CONVENTIONAL
+                        | MemoryType::BOOT_SERVICES_CODE
+                        | MemoryType::BOOT_SERVICES_DATA
+                )
+            })
+            .map(|e| e.phys_start + (e.page_count * PAGE_SIZE as u64))
+            .max()
+            .expect("Cannot get max mem")
+            >> 30)
+            + 1;
         self.runtime_system_table = runtime_system_table;
     }
 

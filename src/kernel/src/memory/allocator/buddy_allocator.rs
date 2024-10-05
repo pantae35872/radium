@@ -2,7 +2,7 @@ use uefi::table::boot::{MemoryMap, MemoryType};
 
 use crate::{
     direct_mapping,
-    memory::{Frame, FrameAllocator, PAGE_SIZE},
+    memory::{Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE},
     utils::NumberUtils,
 };
 
@@ -18,7 +18,6 @@ pub struct BuddyAllocator<'a, const ORDER: usize> {
     max_mem: usize,
     allocated: usize,
     areas: Option<&'a MemoryMap<'a>>,
-    current_range: usize,
 }
 
 impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
@@ -47,7 +46,6 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             max_mem,
             allocated: 0,
             areas: None,
-            current_range: 0,
         };
 
         core::ptr::write_bytes(start_addr as *mut u8, 0, max_mem);
@@ -61,50 +59,68 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             free_lists: [const { FreeNode(None) }; ORDER],
             max_mem: 0,
             allocated: 0,
-            current_range: 0,
             areas: Some(areas),
         };
 
-        init.current_range += 1;
-        init.select_next_area();
+        init.add_memory_map_to_area();
 
         return init;
     }
 
-    fn select_next_area(&mut self) {
-        if let Some(areas) = self.areas {
-            let area = areas
-                .entries()
-                .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-                .nth(self.current_range)
-                .expect("Out of memory");
-            self.current_range += 1;
-            unsafe {
-                self.add_area(
-                    area.phys_start as usize,
-                    area.page_count as usize * PAGE_SIZE as usize,
-                );
+    unsafe fn add_memory_map_to_area(&mut self) {
+        let areas = match self.areas {
+            Some(areas) => areas,
+            None => return,
+        };
+        for area in areas.entries().filter(|e| {
+            matches!(
+                e.ty,
+                MemoryType::CONVENTIONAL
+                    | MemoryType::BOOT_SERVICES_DATA
+                    | MemoryType::BOOT_SERVICES_CODE
+            )
+        }) {
+            if area.phys_start == 0 {
+                continue;
             }
+            self.add_area(
+                area.phys_start as usize,
+                area.page_count as usize * PAGE_SIZE as usize,
+            );
         }
     }
 
-    //TODO: Add dynamic sizeing
-    unsafe fn add_area(&mut self, start_addr: usize, mut size: usize) {
+    pub fn allocated(&self) -> usize {
+        self.allocated
+    }
+
+    unsafe fn add_area(&mut self, mut start_addr: usize, mut size: usize) {
+        let unaligned_addr = start_addr;
+        if !(start_addr as *const u8).is_aligned_to(MAX_ALIGN) {
+            start_addr += (start_addr as *const u8).align_offset(MAX_ALIGN);
+        }
+        size -= start_addr - unaligned_addr;
+
+        let mut offset = 0;
+        while size != 0 {
+            let order = size.prev_power_of_two();
+
+            if order < 8 {
+                break;
+            }
+
+            let node = &mut *((start_addr + offset) as *mut FreeNode);
+            self.free_lists[order.trailing_zeros() as usize - 1].push(node);
+            offset += order;
+            self.max_mem += order;
+            size -= order;
+        }
+    }
+
+    pub fn allocate(&mut self, mut size: usize) -> Option<*mut u8> {
         if !size.is_power_of_two() {
-            size = size.prev_power_of_two();
+            size = size.next_power_of_two();
         }
-        //if !(start_addr as *mut u8).is_aligned_to(size) {
-        //    let prev_addr = start_addr;
-        //    start_addr = (start_addr as *mut u8).align_offset(align);
-        //    size -= start_addr - prev_addr;
-        //}
-
-        let node = &mut *(start_addr as *mut FreeNode);
-        self.free_lists[size.trailing_zeros() as usize - 1].push(node);
-        self.max_mem += size;
-    }
-
-    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
         direct_mapping!({
             let order = size.trailing_zeros() as usize;
 
@@ -128,33 +144,33 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 }
             }
 
-            if some_mem {
-                for i in (order..current_order).rev() {
-                    let (next_node, current_node) = {
-                        let (left, right) = self.free_lists.split_at_mut(i);
-                        (&mut left[i - 1], &mut right[0])
-                    };
-                    match current_node.pop() {
-                        Some(mut o_node) => {
-                            let ptr = o_node.as_next_ptr().unwrap();
-
-                            unsafe {
-                                next_node.push(&mut *(ptr as *mut FreeNode));
-                                next_node.push(&mut *((ptr as usize + (1 << i)) as *mut FreeNode));
-                            }
-                        }
-                        None => continue,
-                    }
-                }
-                return self.allocate(size);
-            } else {
-                self.select_next_area();
-                if self.allocated + size >= self.max_mem {
-                    return None;
-                }
-                return self.allocate(size);
+            if !some_mem {
+                return None;
             }
+
+            for i in (order..current_order).rev() {
+                let (next_node, current_node) = {
+                    let (left, right) = self.free_lists.split_at_mut(i);
+                    (&mut left[i - 1], &mut right[0])
+                };
+                match current_node.pop() {
+                    Some(mut o_node) => {
+                        let ptr = o_node.as_next_ptr().unwrap();
+
+                        unsafe {
+                            next_node.push(&mut *(ptr as *mut FreeNode));
+                            next_node.push(&mut *((ptr as usize + (1 << i)) as *mut FreeNode));
+                        }
+                    }
+                    None => continue,
+                }
+            }
+            return self.allocate(size);
         });
+    }
+
+    pub fn max_mem(&self) -> usize {
+        self.max_mem
     }
 
     pub fn dealloc(&mut self, ptr: *mut u8, size: usize) {

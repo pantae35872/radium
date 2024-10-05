@@ -347,36 +347,6 @@ where
         for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
             mapper.identity_map(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE, allocator)
         }
-
-        let frame_buffer_addr = boot_info
-            .framebuffer_addr()
-            .expect("Framebuffer has been taken can't get address");
-        let frame_buffer_start = Frame::containing_address(frame_buffer_addr);
-        let frame_buffer_end =
-            Frame::containing_address(frame_buffer_addr + boot_info.framebuffer_size() as u64 - 1);
-
-        for frame in Frame::range_inclusive(frame_buffer_start, frame_buffer_end) {
-            mapper.identity_map(
-                frame,
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
-                allocator,
-            );
-        }
-
-        let font_addr = boot_info
-            .font_addr()
-            .expect("Font is already been taken can't get the address to be mapped");
-
-        let font_start = Frame::containing_address(font_addr);
-        let font_end = Frame::containing_address(font_addr + boot_info.font_size() as u64 - 1);
-
-        for frame in Frame::range_inclusive(font_start, font_end) {
-            mapper.identity_map(
-                frame,
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
-                allocator,
-            );
-        }
     });
 
     active_table.switch(new_table);

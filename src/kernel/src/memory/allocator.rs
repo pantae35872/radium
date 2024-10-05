@@ -1,19 +1,16 @@
 use core::{ptr, u8};
 
 use alloc::alloc::*;
-pub mod area_frame_allocator;
+use proc::comptime_alloc;
 pub mod buddy_allocator;
 pub mod linked_list;
 
-use crate::{
-    get_memory_controller,
-    memory::paging::{EntryFlags, Page},
-};
+use crate::get_memory_controller;
 
 use self::linked_list::LinkedListAllocator;
 
-pub const HEAP_START: u64 = 0xFFFFFFFFF0000000;
-pub const HEAP_SIZE: u64 = 1024 * 1024 * 16; // 32 Mib
+pub const HEAP_START: u64 = comptime_alloc!(0x2000000);
+pub const HEAP_SIZE: u64 = 0x2000000; // 32 Mib
 
 fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
@@ -62,18 +59,10 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
 static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAllocator::new());
 
 pub fn init() {
-    let heap_start_page = Page::containing_address(HEAP_START);
-    let heap_end_page = Page::containing_address(HEAP_START + HEAP_SIZE - 1);
+    get_memory_controller()
+        .lock()
+        .alloc_map(HEAP_SIZE, HEAP_START);
 
-    for page in Page::range_inclusive(heap_start_page, heap_end_page) {
-        get_memory_controller().lock().map(
-            page,
-            EntryFlags::WRITABLE
-                | EntryFlags::PRESENT
-                | EntryFlags::WRITE_THROUGH
-                | EntryFlags::NO_CACHE,
-        );
-    }
     unsafe {
         GLOBAL_ALLOCATOR
             .lock()
