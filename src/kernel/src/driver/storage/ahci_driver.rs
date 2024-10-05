@@ -16,8 +16,9 @@ use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
+use crate::log;
+use crate::memory::memory_controller;
 use crate::utils::VolatileCell;
-use crate::{get_memory_controller, log};
 
 use super::Drive;
 
@@ -433,23 +434,17 @@ impl AhciPort {
                 size_of::<HbaCmdHeader>() * 32,
             );
         }
-        self.hba_port.clb.set(
-            get_memory_controller()
-                .lock()
-                .get_physical(virt_clb)
-                .unwrap(),
-        );
+        self.hba_port
+            .clb
+            .set(memory_controller().lock().get_physical(virt_clb).unwrap());
         let virt_fb: VirtAddr =
             unsafe { VirtAddr::new(alloc(Layout::from_size_align(0xFF, 256).unwrap()) as u64) };
         unsafe {
             write_bytes(virt_fb.as_mut_ptr::<u8>(), 0, 0xFF);
         }
-        self.hba_port.fb.set(
-            get_memory_controller()
-                .lock()
-                .get_physical(virt_fb)
-                .unwrap(),
-        );
+        self.hba_port
+            .fb
+            .set(memory_controller().lock().get_physical(virt_fb).unwrap());
         self.fb = virt_fb;
         self.clb = virt_clb;
 
@@ -462,12 +457,9 @@ impl AhciPort {
                 ptr::write_bytes(virt_ctba.as_mut_ptr::<u8>(), 0, 4096);
             }
             self.ctba[i] = virt_ctba;
-            cmdheader[i].ctba.set(
-                get_memory_controller()
-                    .lock()
-                    .get_physical(virt_ctba)
-                    .unwrap(),
-            );
+            cmdheader[i]
+                .ctba
+                .set(memory_controller().lock().get_physical(virt_ctba).unwrap());
         }
         self.hba_port.ie.set(HbaPortIE::all());
         self.start_cmd();
@@ -570,7 +562,7 @@ impl AhciDrive {
 
         cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
         let cmdtbl = port.cmd_tbl()?;
-        let mut buf_address = get_memory_controller()
+        let mut buf_address = memory_controller()
             .lock()
             .get_physical(VirtAddr::new(buffer.as_ptr() as u64))
             .unwrap();
@@ -701,7 +693,7 @@ impl PciDeviceHandle for AhciDriver {
             Bar::IO { .. } => panic!("ABAR is in port space somehow"),
         };
 
-        get_memory_controller()
+        memory_controller()
             .lock()
             .phy_map(ABAR_SIZE, abar_address, ABAR_START);
 

@@ -1,7 +1,7 @@
 use core::alloc::Layout;
 use core::mem::{align_of, size_of};
 
-use crate::allocator::align_up;
+use crate::memory::allocator::align_up;
 
 pub struct ListNode {
     size: usize,

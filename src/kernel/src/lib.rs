@@ -35,22 +35,40 @@ pub mod userland;
 pub mod utils;
 
 use core::panic::PanicInfo;
-use core::usize;
 
 use common::boot::BootInformation;
-use conquer_once::spin::OnceCell;
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
-use memory::allocator::buddy_allocator::BuddyAllocator;
-use memory::allocator::{self, HEAP_SIZE, HEAP_START};
-use memory::paging::{ActivePageTable, EntryFlags, Page};
-use memory::stack_allocator::{Stack, StackAllocator};
-use memory::Frame;
-use spin::Mutex;
-use x86_64::registers::control::Cr0Flags;
-use x86_64::registers::model_specific::EferFlags;
-use x86_64::{PhysAddr, VirtAddr};
+
+pub fn init(information_address: *const BootInformation) {
+    let boot_info = unsafe { BootInformation::from_ptr(information_address) };
+    memory::init(boot_info);
+    LOGGER.lock().add_target(|msg| {
+        serial_println!("{}", msg);
+    });
+    graphics::init(boot_info);
+    print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
+    gdt::init_gdt();
+    interrupt::init();
+    driver::init();
+    userland::init();
+    x86_64::instructions::interrupts::enable();
+}
+
+#[cfg(test)]
+#[no_mangle]
+pub extern "C" fn start(boot_info: *mut BootInformation) -> ! {
+    init(boot_info);
+    test_main();
+    hlt_loop();
+}
+
+pub fn hlt_loop() -> ! {
+    loop {
+        x86_64::instructions::hlt();
+    }
+}
 
 pub trait Testable {
     fn run(&self) -> ();
@@ -86,180 +104,6 @@ pub fn test_panic_handler(info: &PanicInfo) {
     serial_println!("[failed]\n");
     serial_println!("Error: {}\n", info);
     exit_qemu(QemuExitCode::Failed);
-}
-
-pub fn hlt_loop() -> ! {
-    loop {
-        x86_64::instructions::hlt();
-    }
-}
-
-static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController<64>>> = OnceCell::uninit();
-
-pub fn get_memory_controller() -> &'static Mutex<MemoryController<64>> {
-    return MEMORY_CONTROLLER
-        .get()
-        .expect("Memory controller not initialized");
-}
-
-pub struct MemoryController<const ORDER: usize> {
-    active_table: ActivePageTable,
-    allocator: BuddyAllocator<'static, ORDER>,
-    stack_allocator: StackAllocator,
-}
-
-impl<const ORDER: usize> MemoryController<ORDER> {
-    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.stack_allocator
-            .alloc_stack(&mut self.active_table, &mut self.allocator, size_in_pages)
-    }
-
-    fn map(&mut self, page: Page, flags: EntryFlags) {
-        self.active_table.map(page, flags, &mut self.allocator);
-    }
-
-    pub fn alloc_map(&mut self, size: u64, start: u64) {
-        let start_page = Page::containing_address(start);
-        let end_page = Page::containing_address(start + size - 1);
-
-        for page in Page::range_inclusive(start_page, end_page) {
-            self.map(
-                page,
-                EntryFlags::WRITABLE
-                    | EntryFlags::PRESENT
-                    | EntryFlags::WRITE_THROUGH
-                    | EntryFlags::NO_CACHE,
-            );
-        }
-    }
-
-    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64) {
-        let start_page = Page::containing_address(virt_start);
-        let start_frame = Frame::containing_address(phy_start);
-        let end_page = Page::containing_address(virt_start + size - 1);
-        let end_frame = Frame::containing_address(phy_start + size - 1);
-        for (page, frame) in Page::range_inclusive(start_page, end_page)
-            .zip(Frame::range_inclusive(start_frame, end_frame))
-        {
-            self.map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT
-                    | EntryFlags::NO_CACHE
-                    | EntryFlags::WRITABLE
-                    | EntryFlags::WRITE_THROUGH,
-            );
-        }
-    }
-
-    pub fn ident_map(&mut self, size: u64, phy_start: u64) {
-        let start = Frame::containing_address(phy_start);
-        let end = Frame::containing_address(phy_start + size - 1);
-        Frame::range_inclusive(start, end).for_each(|frame| {
-            self.active_table.identity_map(
-                frame,
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
-                &mut self.allocator,
-            )
-        });
-    }
-
-    fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
-        self.active_table
-            .map_to(page, frame, flags, &mut self.allocator);
-    }
-
-    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
-        return self.allocator.allocate(size);
-    }
-
-    pub fn deallocate(&mut self, ptr: *mut u8, size: usize) {
-        self.allocator.dealloc(ptr, size);
-    }
-
-    pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
-        return self.active_table.translate(addr);
-    }
-
-    pub fn max_mem(&self) -> usize {
-        self.allocator.max_mem()
-    }
-
-    pub fn allocated(&self) -> usize {
-        self.allocator.allocated()
-    }
-}
-
-pub fn init(information_address: *const BootInformation) {
-    let boot_info = unsafe { BootInformation::from_ptr(information_address) };
-    LOGGER.lock().add_target(|msg| {
-        serial_println!("{}", msg);
-    });
-    let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
-    enable_nxe_bit();
-    enable_write_protect_bit();
-    let active_table = memory::remap_the_kernel(&mut allocator, &boot_info);
-    let stack_allocator = {
-        let stack_alloc_start = Page::containing_address(HEAP_START + HEAP_SIZE);
-        let stack_alloc_end = stack_alloc_start + 100;
-        let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
-        StackAllocator::new(stack_alloc_range)
-    };
-    MEMORY_CONTROLLER.init_once(|| {
-        MemoryController {
-            active_table,
-            allocator,
-            stack_allocator,
-        }
-        .into()
-    });
-    allocator::init();
-    log!(
-        Info,
-        "Usable memory: {:.2} GB",
-        get_memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
-    );
-    graphics::init(boot_info);
-    print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
-    gdt::init_gdt();
-    interrupt::init();
-    driver::init();
-    userland::init();
-    x86_64::instructions::interrupts::enable();
-    //    println!(
-    //        r#"nothingos Copyright (C) 2024  Pantae
-    //This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
-    //This is free software, and you are welcome to redistribute it
-    //under certain conditions; type `show c' for details."#
-    //    );
-}
-
-fn enable_write_protect_bit() {
-    use x86_64::registers::control::Cr0;
-
-    unsafe {
-        let mut cr0 = Cr0::read();
-        cr0.insert(Cr0Flags::WRITE_PROTECT);
-        Cr0::write(cr0);
-    }
-}
-
-fn enable_nxe_bit() {
-    use x86_64::registers::model_specific::Efer;
-
-    unsafe {
-        let mut efer = Efer::read();
-        efer.insert(EferFlags::NO_EXECUTE_ENABLE);
-        Efer::write(efer);
-    }
-}
-
-#[cfg(test)]
-#[no_mangle]
-pub extern "C" fn start(boot_info: *mut BootInformation) -> ! {
-    init(boot_info);
-    test_main();
-    hlt_loop();
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

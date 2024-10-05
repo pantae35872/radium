@@ -6,7 +6,7 @@ use uefi::proto::console::gop::{ModeInfo, PixelFormat};
 
 use common::boot::BootInformation;
 
-use crate::{get_memory_controller, log};
+use crate::{log, memory::memory_controller};
 
 pub mod color;
 
@@ -144,7 +144,7 @@ impl Graphic {
 pub fn init(bootinfo: &BootInformation) {
     log!(Info, "Initializing graphic");
     DRIVER.init_once(|| {
-        get_memory_controller().lock().ident_map(
+        memory_controller().lock().ident_map(
             bootinfo.framebuffer_size() as u64,
             bootinfo
                 .framebuffer_addr()

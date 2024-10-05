@@ -5,14 +5,14 @@ use proc::comptime_alloc;
 pub mod buddy_allocator;
 pub mod linked_list;
 
-use crate::get_memory_controller;
-
 use self::linked_list::LinkedListAllocator;
+
+use super::memory_controller;
 
 pub const HEAP_START: u64 = comptime_alloc!(0x2000000);
 pub const HEAP_SIZE: u64 = 0x2000000; // 32 Mib
 
-fn align_up(addr: usize, align: usize) -> usize {
+pub fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)
 }
 
@@ -59,9 +59,7 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
 static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAllocator::new());
 
 pub fn init() {
-    get_memory_controller()
-        .lock()
-        .alloc_map(HEAP_SIZE, HEAP_START);
+    memory_controller().lock().alloc_map(HEAP_SIZE, HEAP_START);
 
     unsafe {
         GLOBAL_ALLOCATOR

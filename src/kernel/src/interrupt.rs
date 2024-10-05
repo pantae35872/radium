@@ -1,8 +1,8 @@
 use core::arch::asm;
 
 use crate::gdt;
-use crate::get_memory_controller;
 use crate::hlt_loop;
+use crate::memory::memory_controller;
 use crate::print;
 use crate::println;
 use crate::userland::scheduler::SCHEDULER;
@@ -105,10 +105,10 @@ impl InterruptIndex {
 
 pub fn init() {
     let apic_physical_address: u64 = unsafe { xapic_base() };
-    get_memory_controller()
+    memory_controller()
         .lock()
         .phy_map(LAPIC_SIZE, apic_physical_address, LAPIC_VADDR);
-    get_memory_controller()
+    memory_controller()
         .lock()
         .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
     LAPICS.init_once(|| {

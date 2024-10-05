@@ -1,4 +1,16 @@
-use x86_64::PhysAddr;
+use allocator::buddy_allocator::BuddyAllocator;
+use common::boot::BootInformation;
+use conquer_once::spin::OnceCell;
+use paging::{ActivePageTable, EntryFlags, Page};
+use proc::comptime_alloc;
+use spin::Mutex;
+use stack_allocator::{Stack, StackAllocator};
+use x86_64::{
+    registers::control::{Cr0Flags, EferFlags},
+    PhysAddr, VirtAddr,
+};
+
+use crate::log;
 
 pub use self::paging::remap_the_kernel;
 
@@ -8,6 +20,53 @@ pub mod stack_allocator;
 
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ALIGN: usize = 8192;
+
+pub fn init(boot_info: &'static BootInformation) {
+    let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
+    enable_nxe_bit();
+    enable_write_protect_bit();
+    let active_table = remap_the_kernel(&mut allocator, &boot_info);
+    let stack_allocator = {
+        let stack_alloc_start = Page::containing_address(comptime_alloc!(409600));
+        let stack_alloc_end = stack_alloc_start + 100;
+        let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
+        StackAllocator::new(stack_alloc_range)
+    };
+    MEMORY_CONTROLLER.init_once(|| {
+        MemoryController {
+            active_table,
+            allocator,
+            stack_allocator,
+        }
+        .into()
+    });
+    allocator::init();
+    log!(
+        Info,
+        "Usable memory: {:.2} GB",
+        memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
+    );
+}
+
+fn enable_write_protect_bit() {
+    use x86_64::registers::control::Cr0;
+
+    unsafe {
+        let mut cr0 = Cr0::read();
+        cr0.insert(Cr0Flags::WRITE_PROTECT);
+        Cr0::write(cr0);
+    }
+}
+
+fn enable_nxe_bit() {
+    use x86_64::registers::model_specific::Efer;
+
+    unsafe {
+        let mut efer = Efer::read();
+        efer.insert(EferFlags::NO_EXECUTE_ENABLE);
+        Efer::write(efer);
+    }
+}
 
 /// Switch the current scope to use a page table that is identity-mapped (1:1) with physical memory.
 ///
@@ -77,6 +136,102 @@ macro_rules! direct_mapping {
             $body
         }
     };
+}
+
+static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController<64>>> = OnceCell::uninit();
+
+pub fn memory_controller() -> &'static Mutex<MemoryController<64>> {
+    return MEMORY_CONTROLLER
+        .get()
+        .expect("Memory controller not initialized");
+}
+
+pub struct MemoryController<const ORDER: usize> {
+    active_table: ActivePageTable,
+    allocator: BuddyAllocator<'static, ORDER>,
+    stack_allocator: StackAllocator,
+}
+
+impl<const ORDER: usize> MemoryController<ORDER> {
+    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
+        self.stack_allocator
+            .alloc_stack(&mut self.active_table, &mut self.allocator, size_in_pages)
+    }
+
+    fn map(&mut self, page: Page, flags: EntryFlags) {
+        self.active_table.map(page, flags, &mut self.allocator);
+    }
+
+    pub fn alloc_map(&mut self, size: u64, start: u64) {
+        let start_page = Page::containing_address(start);
+        let end_page = Page::containing_address(start + size - 1);
+
+        for page in Page::range_inclusive(start_page, end_page) {
+            self.map(
+                page,
+                EntryFlags::WRITABLE
+                    | EntryFlags::PRESENT
+                    | EntryFlags::WRITE_THROUGH
+                    | EntryFlags::NO_CACHE,
+            );
+        }
+    }
+
+    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64) {
+        let start_page = Page::containing_address(virt_start);
+        let start_frame = Frame::containing_address(phy_start);
+        let end_page = Page::containing_address(virt_start + size - 1);
+        let end_frame = Frame::containing_address(phy_start + size - 1);
+        for (page, frame) in Page::range_inclusive(start_page, end_page)
+            .zip(Frame::range_inclusive(start_frame, end_frame))
+        {
+            self.map_to(
+                page,
+                frame,
+                EntryFlags::PRESENT
+                    | EntryFlags::NO_CACHE
+                    | EntryFlags::WRITABLE
+                    | EntryFlags::WRITE_THROUGH,
+            );
+        }
+    }
+
+    pub fn ident_map(&mut self, size: u64, phy_start: u64) {
+        let start = Frame::containing_address(phy_start);
+        let end = Frame::containing_address(phy_start + size - 1);
+        Frame::range_inclusive(start, end).for_each(|frame| {
+            self.active_table.identity_map(
+                frame,
+                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
+                &mut self.allocator,
+            )
+        });
+    }
+
+    fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
+        self.active_table
+            .map_to(page, frame, flags, &mut self.allocator);
+    }
+
+    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
+        return self.allocator.allocate(size);
+    }
+
+    pub fn deallocate(&mut self, ptr: *mut u8, size: usize) {
+        self.allocator.dealloc(ptr, size);
+    }
+
+    pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
+        return self.active_table.translate(addr);
+    }
+
+    pub fn max_mem(&self) -> usize {
+        self.allocator.max_mem()
+    }
+
+    pub fn allocated(&self) -> usize {
+        self.allocator.allocated()
+    }
 }
 
 #[derive(PartialEq, PartialOrd, Clone)]
