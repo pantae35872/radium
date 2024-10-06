@@ -1,9 +1,15 @@
-use core::fmt::{Display, Formatter, Result};
+use core::{
+    fmt::{Display, Formatter, Result},
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
 use alloc::{format, string::String};
-use spin::mutex::Mutex;
 
-pub static LOGGER: Mutex<Logger> = Mutex::new(Logger::new());
+use crate::utils::circular_ring_buffer::CircularRingBuffer;
+
+pub static LOGGER: Logger = Logger::new();
 const LOG_BUFFER_SIZE: usize = 1024;
 const LOG_TARGET_SIZE: usize = 16;
 
@@ -12,8 +18,7 @@ macro_rules! log {
     ($level:ident, $fmt:expr $(, $args:expr)*) => {
         {
             let message = alloc::format!($fmt, $($args),*);
-            $crate::logger::LOGGER.lock().write($crate::logger::Log::new($crate::logger::LogLevel::$level, message));
-            $crate::logger::LOGGER.lock().update();
+            $crate::logger::LOGGER.write($crate::logger::Log::new($crate::logger::LogLevel::$level, message));
         }
     };
 }
@@ -32,17 +37,14 @@ pub struct Log {
     message: String,
 }
 
-struct LoggerTarget {
+struct LoggerSubscriber {
     display: fn(msg: &str),
-    current: usize,
 }
 
 pub struct Logger {
-    buffer: [Option<Log>; LOG_BUFFER_SIZE],
-    targets: [Option<LoggerTarget>; LOG_TARGET_SIZE],
-    head: usize,
-    tail: usize,
-    logger_index: usize,
+    main_buffer: CircularRingBuffer<Log, LOG_BUFFER_SIZE>,
+    subscribers: CircularRingBuffer<LoggerSubscriber, LOG_TARGET_SIZE>,
+    subscribers_swap: CircularRingBuffer<LoggerSubscriber, LOG_TARGET_SIZE>,
 }
 
 impl Log {
@@ -70,46 +72,57 @@ impl Display for LogLevel {
     }
 }
 
+struct LoggerAsync<'a> {
+    buffer: &'a CircularRingBuffer<Log, LOG_BUFFER_SIZE>,
+}
+
+impl<'a> LoggerAsync<'a> {
+    fn new(buffer: &'a CircularRingBuffer<Log, LOG_BUFFER_SIZE>) -> Self {
+        Self { buffer }
+    }
+}
+
+impl<'a> Future for LoggerAsync<'a> {
+    type Output = Log;
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.buffer.read() {
+            Some(log) => Poll::Ready(log),
+            None => Poll::Pending,
+        }
+    }
+}
+
 impl Logger {
     pub const fn new() -> Self {
         Self {
-            targets: [const { None }; LOG_TARGET_SIZE],
-            buffer: [const { None }; LOG_BUFFER_SIZE],
-            head: 0,
-            tail: 0,
-            logger_index: 0,
+            subscribers: CircularRingBuffer::new(),
+            main_buffer: CircularRingBuffer::new(),
+            subscribers_swap: CircularRingBuffer::new(),
         }
     }
 
-    pub fn write(&mut self, log: Log) {
-        self.buffer[self.head] = Some(log);
-        self.head = (self.head + 1) % LOG_BUFFER_SIZE;
-
-        if self.head == self.tail {
-            self.tail = (self.tail + 1) % LOG_BUFFER_SIZE;
-        }
+    pub fn write(&self, log: Log) {
+        self.main_buffer.write(log);
     }
 
-    pub fn add_target(&mut self, display: fn(&str)) {
-        self.targets[self.logger_index] = Some(LoggerTarget {
-            display,
-            current: 0,
-        });
-        self.logger_index = (self.logger_index + 1) % LOG_TARGET_SIZE;
-        self.update();
+    pub fn add_target(&self, display: fn(&str)) {
+        self.subscribers.write(LoggerSubscriber { display });
     }
 
-    pub fn update(&mut self) {
-        for target in self.targets.iter_mut() {
-            let target = match target {
-                Some(target) => target,
-                None => continue,
-            };
-            while target.current != self.head {
-                if let Some(ref message) = self.buffer[target.current] {
-                    (target.display)(&format!("{message}"));
+    pub async fn log_async(&self) {
+        loop {
+            let msg = LoggerAsync::new(&self.main_buffer).await;
+            let mut is_some = false;
+            while let Some(subscriber) = self.subscribers_swap.read() {
+                (subscriber.display)(&format!("{}", msg));
+                self.subscribers.write(subscriber);
+                is_some = true;
+            }
+            if !is_some {
+                while let Some(subscriber) = self.subscribers.read() {
+                    (subscriber.display)(&format!("{}", msg));
+                    self.subscribers_swap.write(subscriber);
                 }
-                target.current = (target.current + 1) % LOG_BUFFER_SIZE;
             }
         }
     }

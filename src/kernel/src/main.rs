@@ -13,6 +13,7 @@ extern crate spin;
 
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
+use nothingos::logger::LOGGER;
 use nothingos::println;
 use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
@@ -52,7 +53,12 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
         },
         AwaitType::Poll,
     ));
-    executor.spawn(Task::new(async {}, AwaitType::Poll));
+    executor.spawn(Task::new(
+        async {
+            LOGGER.log_async().await;
+        },
+        AwaitType::Poll,
+    ));
 
     #[cfg(test)]
     test_main();

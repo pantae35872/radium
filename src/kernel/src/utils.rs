@@ -1,6 +1,7 @@
 use core::{cell::UnsafeCell, fmt::Debug};
 
 pub mod buffer_reader;
+pub mod circular_ring_buffer;
 pub mod port;
 
 #[macro_export]

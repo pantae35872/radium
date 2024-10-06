@@ -40,7 +40,7 @@ macro_rules! println {
 
 pub fn init(bootinfo: &BootInformation, foreground_color: Color, background: Color) {
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color, background)));
-    LOGGER.lock().add_target(|msg| {
+    LOGGER.add_target(|msg| {
         println!("{msg}");
     });
 }

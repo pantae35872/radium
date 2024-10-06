@@ -44,7 +44,7 @@ use logger::LOGGER;
 pub fn init(information_address: *const BootInformation) {
     let boot_info = unsafe { BootInformation::from_ptr(information_address) };
     memory::init(boot_info);
-    LOGGER.lock().add_target(|msg| {
+    LOGGER.add_target(|msg| {
         serial_println!("{}", msg);
     });
     graphics::init(boot_info);
