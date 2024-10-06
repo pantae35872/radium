@@ -33,7 +33,7 @@ endif
 ifeq ($(BUILD_MODE_CHANGED), 1)
     force_rebuild:
 			@echo "Build mode have change rebuilding the entire os"
-			@$(MAKE) clean
+			rm -rf $(BUILD_DIR) 
 else
     force_rebuild:
 			@echo "Build mode unchanged"

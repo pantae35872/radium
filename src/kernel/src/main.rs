@@ -52,12 +52,7 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
         },
         AwaitType::Poll,
     ));
-    executor.spawn(Task::new(
-        async {
-            println!("Task 2");
-        },
-        AwaitType::Poll,
-    ));
+    executor.spawn(Task::new(async {}, AwaitType::Poll));
 
     #[cfg(test)]
     test_main();

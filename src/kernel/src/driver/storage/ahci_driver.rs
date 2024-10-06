@@ -364,7 +364,7 @@ pub struct HbaPort {
     vendor: [VolatileCell<u32>; 4],      // 0x70 ~ 0x7F, vendor specific
 }
 
-pub struct AhciPort {
+pub struct SataPort {
     hba_port: &'static mut HbaPort,
     clb: VirtAddr,
     fb: VirtAddr,
@@ -372,7 +372,7 @@ pub struct AhciPort {
     cap: usize,
 }
 
-impl AhciPort {
+impl SataPort {
     fn cmd_header(&self, slot: usize) -> &mut HbaCmdHeader {
         unsafe { &mut *(self.clb.as_mut_ptr::<HbaCmdHeader>().byte_add(slot)) }
     }
@@ -486,17 +486,17 @@ impl HbaMem {
 }
 
 pub struct AhciDrive {
-    port: Arc<Mutex<AhciPort>>,
+    port: Arc<Mutex<SataPort>>,
     identifier: Option<[u8; 512]>,
 }
 
 struct DriveAsync {
-    port: Arc<Mutex<AhciPort>>,
+    port: Arc<Mutex<SataPort>>,
     slot: usize,
 }
 
 impl DriveAsync {
-    pub fn new(port: Arc<Mutex<AhciPort>>, slot: usize) -> Self {
+    pub fn new(port: Arc<Mutex<SataPort>>, slot: usize) -> Self {
         Self { port, slot }
     }
 }
@@ -522,7 +522,7 @@ impl Future for DriveAsync {
 
 impl AhciDrive {
     pub fn new(hba_port: &'static mut HbaPort, cap: usize) -> Self {
-        let port = Mutex::new(AhciPort {
+        let port = Mutex::new(SataPort {
             hba_port,
             clb: VirtAddr::new(0),
             fb: VirtAddr::new(0),
