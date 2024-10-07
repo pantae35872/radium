@@ -1,12 +1,12 @@
 use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
 };
 
 pub struct CircularRingBuffer<T, const N: usize> {
     buffer: [Slot<T>; N],
     head: AtomicUsize,
-    tail: AtomicUsize,
+    tail: AtomicIsize,
 }
 
 unsafe impl<T, const N: usize> Sync for CircularRingBuffer<T, N> {}
@@ -16,7 +16,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
         Self {
             buffer: [const { Slot::new() }; N],
             head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
+            tail: AtomicIsize::new(-1),
         }
     }
 
@@ -35,7 +35,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
                         let mut tail = self.tail.load(Ordering::Acquire);
                         let mut new_tail;
                         loop {
-                            new_tail = (tail + 1) % N;
+                            new_tail = (tail + 1) % N as isize;
                             match self.tail.compare_exchange(
                                 tail,
                                 new_tail,
@@ -59,17 +59,13 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
         let mut tail = self.tail.load(Ordering::Acquire);
         let mut new_tail;
         loop {
-            new_tail = if self.buffer[match tail.checked_sub(1) {
-                Some(tail) => tail,
-                None => return None,
+            new_tail = if self.buffer[match TryInto::<usize>::try_into(tail) {
+                Ok(res) => res,
+                Err(_) => return None,
             }]
             .is_some()
             {
-                let mut result = (tail + 1) % (N + 1);
-                if result == 0 {
-                    result = 1;
-                }
-                result
+                (tail + 1) % N as isize
             } else {
                 tail
             };
@@ -81,15 +77,11 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
             ) {
                 Ok(tail) => {
                     if tail != new_tail {
-                        return unsafe {
-                            (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[match tail
-                                .checked_sub(1)
-                            {
-                                Some(tail) => tail,
-                                None => return None,
-                            }]
-                            .take()
-                        };
+                        return self.buffer[match TryInto::<usize>::try_into(tail) {
+                            Ok(res) => res,
+                            Err(_) => return None,
+                        }]
+                        .take();
                     }
                     return None;
                 }
