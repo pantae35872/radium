@@ -31,43 +31,23 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
             overflowed = new_head == 0;
         }
 
-        if self.overflowed.load(Ordering::Acquire) {
-            let mut tail = self.tail.load(Ordering::Acquire);
-            let mut new_tail = (tail + 1) % N;
-            while let Err(_) =
-                self.tail
-                    .compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed)
-            {
-                tail = self.tail.load(Ordering::Acquire);
-                new_tail = (tail + 1) % N;
-            }
-            // Another rare edge case if the another thread executes in this area. then it will increase the tail
-            // and setting the overflowed to false we need to decrement the tail by 1 because we already increase it
-            // above
-            //
-            // FIXME: IF the read operation occurs after the write in this area the readed data will be missed offset by 1
-            match self.overflowed.compare_exchange(
-                true,
-                false,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(..) => {}
-                Err(..) => {
-                    let mut tail = self.tail.load(Ordering::Acquire);
-                    let mut new_tail = (tail.wrapping_sub(1).wrapping_add(N)) % N;
-                    while let Err(_) = self.tail.compare_exchange(
-                        tail,
-                        new_tail,
-                        Ordering::Acquire,
-                        Ordering::Relaxed,
-                    ) {
-                        tail = self.tail.load(Ordering::Acquire);
-                        new_tail = (tail.wrapping_sub(1).wrapping_add(N)) % N;
-                    }
+        match self
+            .overflowed
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
+        {
+            Ok(..) => {
+                let mut tail = self.tail.load(Ordering::Acquire);
+                let mut new_tail = (tail + 1) % N;
+                while let Err(_) =
+                    self.tail
+                        .compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed)
+                {
+                    tail = self.tail.load(Ordering::Acquire);
+                    new_tail = (tail + 1) % N;
                 }
-            };
-        }
+            }
+            Err(..) => {}
+        };
 
         // Rare edge case if other threads some how over flow the buffer in this area of code and not increasing the tail
         // and the state get pass to this function we need to increase the tail now and set the
