@@ -14,9 +14,9 @@ extern crate spin;
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
 use nothingos::logger::LOGGER;
+use nothingos::println;
 use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
-use nothingos::{log, println};
 
 #[no_mangle]
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
@@ -27,9 +27,9 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
         async {
             let mut controller = get_ahci().get_contoller().lock();
             let _drive = controller.get_drive(0).expect("Cannot get drive");
-            //let mut gpt = GPTPartitions::new(drive);
+            /*let mut gpt = GPTPartitions::new(drive);
 
-            /*gpt.format().await.unwrap();
+            gpt.format().await.unwrap();
             gpt.set_partiton(
                 1,
                 &guid!("0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
@@ -50,7 +50,6 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
             .expect("Error");*/
             //let partition1 = gpt.read_partition(1).await.expect("Error");
             //println!("{}", partition1.get_partition_name());
-            log!(Debug, "Log test");
         },
         AwaitType::Poll,
     ));

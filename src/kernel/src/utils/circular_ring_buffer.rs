@@ -99,7 +99,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
         let mut tail = self.tail.load(Ordering::Acquire);
         let mut new_tail = (tail + 1) % N;
 
-        let value =
+        let mut value =
             unsafe { (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[tail].take() };
 
         if value.is_some() {
@@ -109,6 +109,9 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
             {
                 tail = self.tail.load(Ordering::Acquire);
                 new_tail = (tail + 1) % N;
+                value = unsafe {
+                    (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[tail].take()
+                };
             }
         }
 
