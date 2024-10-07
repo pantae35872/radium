@@ -13,10 +13,11 @@ extern crate spin;
 
 use common::boot::BootInformation;
 use nothingos::driver::storage::ahci_driver::get_ahci;
+use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
 use nothingos::logger::LOGGER;
-use nothingos::println;
 use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
+use nothingos::{log, println};
 
 #[no_mangle]
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
@@ -26,30 +27,30 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
     executor.spawn(Task::new(
         async {
             let mut controller = get_ahci().get_contoller().lock();
-            let _drive = controller.get_drive(0).expect("Cannot get drive");
-            /*let mut gpt = GPTPartitions::new(drive);
+            let drive = controller.get_drive(0).expect("Cannot get drive");
+            let mut gpt = GPTPartitions::new(drive);
 
-            gpt.format().await.unwrap();
-            gpt.set_partiton(
-                1,
-                &guid!("0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
-                34,
-                2048,
-                0,
-                &{
-                    let mut array = [0; 72];
-                    let string: Vec<u8> = "My partition"
-                        .encode_utf16()
-                        .flat_map(|c| vec![(c & 0xFF) as u8, (c >> 8) as u8])
-                        .collect();
-                    array[..string.len()].copy_from_slice(string.as_slice());
-                    array
-                },
-            )
-            .await
-            .expect("Error");*/
-            //let partition1 = gpt.read_partition(1).await.expect("Error");
-            //println!("{}", partition1.get_partition_name());
+            //gpt.format().await.unwrap();
+            //gpt.set_partiton(
+            //    1,
+            //    &guid!("0FC63DAF-8483-4772-8E79-3D69D8477DE4"),
+            //    34,
+            //    2048,
+            //    0,
+            //    &{
+            //        let mut array = [0; 72];
+            //        let string: Vec<u8> = "My partition"
+            //            .encode_utf16()
+            //            .flat_map(|c| vec![(c & 0xFF) as u8, (c >> 8) as u8])
+            //            .collect();
+            //        array[..string.len()].copy_from_slice(string.as_slice());
+            //        array
+            //    },
+            //)
+            //.await
+            //.expect("Error");
+            let partition1 = gpt.read_partition(1).await.expect("Error");
+            log!(Debug, "{}", partition1.get_partition_name())
         },
         AwaitType::Poll,
     ));

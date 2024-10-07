@@ -3,7 +3,6 @@ use core::arch::asm;
 use crate::defer;
 use crate::gdt;
 use crate::hlt_loop;
-use crate::log;
 use crate::memory::memory_controller;
 use crate::print;
 use crate::println;
@@ -260,7 +259,7 @@ fn timer() {
 
 #[no_mangle]
 extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
-    log!(Info, "It works");
+    //log!(Info, "It works");
     defer!(unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
     });

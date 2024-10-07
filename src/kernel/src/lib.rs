@@ -77,6 +77,7 @@ pub trait Testable {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     log!(Critical, "{}", info);
+    LOGGER.flush_all();
     test_panic_handler(info);
     hlt_loop();
 }

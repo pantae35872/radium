@@ -113,17 +113,27 @@ impl Logger {
         self.subscribers_index.fetch_add(1, Ordering::Release);
     }
 
+    fn log_msg(&self, msg: Log) {
+        let msg = format!("{}", msg);
+        for subscriber in self.subscribers.read().iter() {
+            let subscriber = match subscriber {
+                Some(subscriber) => subscriber,
+                None => break,
+            };
+            (subscriber.display)(&msg);
+        }
+    }
+
     pub async fn log_async(&self) {
         loop {
             let msg = LoggerAsync::new(&self.main_buffer).await;
-            let msg = format!("{}", msg);
-            for subscriber in self.subscribers.read().iter() {
-                let subscriber = match subscriber {
-                    Some(subscriber) => subscriber,
-                    None => break,
-                };
-                (subscriber.display)(&msg);
-            }
+            self.log_msg(msg);
+        }
+    }
+
+    pub fn flush_all(&self) {
+        while let Some(msg) = self.main_buffer.read() {
+            self.log_msg(msg);
         }
     }
 }
