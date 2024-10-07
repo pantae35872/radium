@@ -50,7 +50,7 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
             //.await
             //.expect("Error");
             let partition1 = gpt.read_partition(1).await.expect("Error");
-            log!(Debug, "{}", partition1.get_partition_name())
+            log!(Debug, "{}", partition1.get_partition_name());
         },
         AwaitType::Poll,
     ));

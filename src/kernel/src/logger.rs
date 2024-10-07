@@ -12,7 +12,7 @@ use spin::RwLock;
 use crate::utils::circular_ring_buffer::CircularRingBuffer;
 
 pub static LOGGER: Logger = Logger::new();
-const LOG_BUFFER_SIZE: usize = 1024;
+const LOG_BUFFER_SIZE: usize = 32;
 const LOG_SUBSCRIBERS_SIZE: usize = 16;
 
 #[macro_export]
@@ -86,8 +86,7 @@ impl<'a> LoggerAsync<'a> {
 
 impl<'a> Future for LoggerAsync<'a> {
     type Output = Log;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        cx.waker().clone().wake();
+    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.buffer.read() {
             Some(log) => Poll::Ready(log),
             None => Poll::Pending,

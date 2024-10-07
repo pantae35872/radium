@@ -19,104 +19,98 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
     }
 
     pub fn write(&self, value: T) {
-        let mut head = self.head.load(Ordering::Acquire);
-        let mut new_head = (head + 1) % N;
-        let mut overflowed = new_head == 0;
-        while let Err(_) =
-            self.head
-                .compare_exchange(head, new_head, Ordering::Acquire, Ordering::Relaxed)
+        let mut increased_tail = false;
+        match self
+            .overflowed
+            .compare_exchange(true, false, Ordering::Acquire, Ordering::Relaxed)
         {
-            head = self.head.load(Ordering::Acquire);
-            new_head = (head + 1) % N;
-            overflowed = new_head == 0;
-        }
-
-        if self.overflowed.load(Ordering::Acquire) {
-            let mut tail = self.tail.load(Ordering::Acquire);
-            let mut new_tail = (tail + 1) % N;
-            while let Err(_) =
-                self.tail
-                    .compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed)
-            {
-                tail = self.tail.load(Ordering::Acquire);
-                new_tail = (tail + 1) % N;
-            }
-            // Another rare edge case if the another thread executes in this area. then it will increase the tail
-            // and setting the overflowed to false we need to decrement the tail by 1 because we already increase it
-            // above
-            //
-            // FIXME: IF the read operation occurs after the write in this area the readed data will be missed offset by 1
-            match self.overflowed.compare_exchange(
-                true,
-                false,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(..) => {}
-                Err(..) => {
-                    let mut tail = self.tail.load(Ordering::Acquire);
-                    let mut new_tail = (tail.wrapping_sub(1).wrapping_add(N)) % N;
-                    while let Err(_) = self.tail.compare_exchange(
+            Ok(..) => {
+                let mut tail = self.tail.load(Ordering::Acquire);
+                let mut new_tail;
+                loop {
+                    new_tail = (tail + 1) % N;
+                    match self.tail.compare_exchange(
                         tail,
                         new_tail,
                         Ordering::Acquire,
                         Ordering::Relaxed,
                     ) {
-                        tail = self.tail.load(Ordering::Acquire);
-                        new_tail = (tail.wrapping_sub(1).wrapping_add(N)) % N;
+                        Ok(_) => break,
+                        Err(updated) => tail = updated,
                     }
                 }
-            };
-        }
-
-        // Rare edge case if other threads some how over flow the buffer in this area of code and not increasing the tail
-        // and the state get pass to this function we need to increase the tail now and set the
-        // overflowed to be true
-        match self.overflowed.compare_exchange(
-            false,
-            overflowed,
-            Ordering::Acquire,
-            Ordering::Relaxed,
-        ) {
-            Ok(..) => {}
-            Err(..) => {
-                let mut tail = self.tail.load(Ordering::Acquire);
-                let mut new_tail = (tail + 1) % N;
-                while let Err(_) =
-                    self.tail
-                        .compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed)
-                {
-                    tail = self.tail.load(Ordering::Acquire);
-                    new_tail = (tail + 1) % N;
-                }
+                increased_tail = true;
             }
+            Err(..) => {}
         };
 
-        unsafe {
-            (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[head] = Some(value);
+        let mut head = self.head.load(Ordering::Acquire);
+        let mut new_head;
+        let mut overflowed;
+        loop {
+            new_head = (head + 1) % N;
+            overflowed = new_head == 0;
+
+            // If the overflow is set and increase_tail is also set it will be invalid state
+            // because you cannot overflow in two write
+            if !(overflowed && increased_tail) {
+                match self.overflowed.compare_exchange(
+                    false,
+                    overflowed,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(..) => {}
+                    Err(..) => {
+                        if overflowed {
+                            head = self.head.load(Ordering::Acquire);
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            match self
+                .head
+                .compare_exchange(head, new_head, Ordering::Acquire, Ordering::Relaxed)
+            {
+                Ok(head) => {
+                    return unsafe {
+                        (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[head] =
+                            Some(value);
+                    };
+                }
+                Err(updated) => head = updated,
+            };
         }
     }
 
     pub fn read(&self) -> Option<T> {
         let mut tail = self.tail.load(Ordering::Acquire);
-        let mut new_tail = (tail + 1) % N;
-
-        let mut value =
-            unsafe { (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[tail].take() };
-
-        if value.is_some() {
-            while let Err(_) =
-                self.tail
-                    .compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed)
-            {
-                tail = self.tail.load(Ordering::Acquire);
-                new_tail = (tail + 1) % N;
-                value = unsafe {
-                    (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[tail].take()
-                };
+        let mut new_tail;
+        loop {
+            new_tail = if self.buffer[tail].is_some() {
+                (tail + 1) % N
+            } else {
+                tail
+            };
+            match self.tail.compare_exchange_weak(
+                tail,
+                new_tail,
+                Ordering::Release,
+                Ordering::Acquire,
+            ) {
+                Ok(tail) => {
+                    if tail != new_tail {
+                        return unsafe {
+                            (*(self as *const _ as *mut CircularRingBuffer<T, N>)).buffer[tail]
+                                .take()
+                        };
+                    }
+                    return None;
+                }
+                Err(updated) => tail = updated,
             }
         }
-
-        return value;
     }
 }

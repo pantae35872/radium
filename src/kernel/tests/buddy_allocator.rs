@@ -36,7 +36,7 @@ fn simple_alloc() {
         let ptr = ptr.unwrap();
         assert!(ptr.is_aligned_to(size));
 
-        let start = ptr.as_ptr() as usize;
+        let start = ptr as usize;
         let end = start + size - 1;
 
         allocation_ranges.push((start, end));

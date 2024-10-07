@@ -259,7 +259,6 @@ fn timer() {
 
 #[no_mangle]
 extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
-    //log!(Info, "It works");
     defer!(unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
     });
