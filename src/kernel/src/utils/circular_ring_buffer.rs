@@ -41,9 +41,11 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
                 tail = self.tail.load(Ordering::Acquire);
                 new_tail = (tail + 1) % N;
             }
-            // Another rare edge case if the another thread executes in this and increase the value
-            // and setting the overflowed we need to decrement it because we already increase it
+            // Another rare edge case if the another thread executes in this area. then it will increase the tail
+            // and setting the overflowed to false we need to decrement the tail by 1 because we already increase it
             // above
+            //
+            // FIXME: IF the read operation occurs after the write in this area the readed data will be missed offset by 1
             match self.overflowed.compare_exchange(
                 true,
                 false,
