@@ -2,16 +2,18 @@ use core::{
     fmt::{Display, Formatter, Result},
     future::Future,
     pin::Pin,
+    sync::atomic::{AtomicUsize, Ordering},
     task::{Context, Poll},
 };
 
 use alloc::{format, string::String};
+use spin::RwLock;
 
 use crate::utils::circular_ring_buffer::CircularRingBuffer;
 
 pub static LOGGER: Logger = Logger::new();
 const LOG_BUFFER_SIZE: usize = 1024;
-const LOG_TARGET_SIZE: usize = 16;
+const LOG_SUBSCRIBERS_SIZE: usize = 16;
 
 #[macro_export]
 macro_rules! log {
@@ -43,8 +45,8 @@ struct LoggerSubscriber {
 
 pub struct Logger {
     main_buffer: CircularRingBuffer<Log, LOG_BUFFER_SIZE>,
-    subscribers: CircularRingBuffer<LoggerSubscriber, LOG_TARGET_SIZE>,
-    subscribers_swap: CircularRingBuffer<LoggerSubscriber, LOG_TARGET_SIZE>,
+    subscribers: RwLock<[Option<LoggerSubscriber>; LOG_SUBSCRIBERS_SIZE]>,
+    subscribers_index: AtomicUsize,
 }
 
 impl Log {
@@ -95,9 +97,9 @@ impl<'a> Future for LoggerAsync<'a> {
 impl Logger {
     pub const fn new() -> Self {
         Self {
-            subscribers: CircularRingBuffer::new(),
             main_buffer: CircularRingBuffer::new(),
-            subscribers_swap: CircularRingBuffer::new(),
+            subscribers: RwLock::new([const { None }; LOG_SUBSCRIBERS_SIZE]),
+            subscribers_index: AtomicUsize::new(0),
         }
     }
 
@@ -106,23 +108,21 @@ impl Logger {
     }
 
     pub fn add_target(&self, display: fn(&str)) {
-        self.subscribers.write(LoggerSubscriber { display });
+        self.subscribers.write()[self.subscribers_index.load(Ordering::Acquire)] =
+            Some(LoggerSubscriber { display });
+        self.subscribers_index.fetch_add(1, Ordering::Release);
     }
 
     pub async fn log_async(&self) {
         loop {
             let msg = LoggerAsync::new(&self.main_buffer).await;
-            let mut is_some = false;
-            while let Some(subscriber) = self.subscribers_swap.read() {
-                (subscriber.display)(&format!("{}", msg));
-                self.subscribers.write(subscriber);
-                is_some = true;
-            }
-            if !is_some {
-                while let Some(subscriber) = self.subscribers.read() {
-                    (subscriber.display)(&format!("{}", msg));
-                    self.subscribers_swap.write(subscriber);
-                }
+            let msg = format!("{}", msg);
+            for subscriber in self.subscribers.read().iter() {
+                let subscriber = match subscriber {
+                    Some(subscriber) => subscriber,
+                    None => break,
+                };
+                (subscriber.display)(&msg);
             }
         }
     }

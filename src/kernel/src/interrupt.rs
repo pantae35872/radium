@@ -1,11 +1,12 @@
 use core::arch::asm;
 
+use crate::defer;
 use crate::gdt;
 use crate::hlt_loop;
+use crate::log;
 use crate::memory::memory_controller;
 use crate::print;
 use crate::println;
-use crate::userland::scheduler::SCHEDULER;
 use alloc::ffi::CString;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
@@ -259,29 +260,24 @@ fn timer() {
 
 #[no_mangle]
 extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
-    let mut process = match SCHEDULER.get() {
-        Some(scheduler) => scheduler.lock(),
-        None => {
-            clean_up();
-            return;
-        }
-    };
-    match process.schedule_next() {
-        Some(_process) => {
-            //println!("Running: {}", process.get_name());
-        }
-        None => {
-            //println!("No process ran");
-        }
-    }
-
-    fn clean_up() {
-        unsafe {
-            LAPICS.get().unwrap().lock().end_of_interrupt();
-        }
-    }
-
-    clean_up();
+    log!(Info, "It works");
+    defer!(unsafe {
+        LAPICS.get().unwrap().lock().end_of_interrupt();
+    });
+    //let mut process = match SCHEDULER.get() {
+    //    Some(scheduler) => scheduler.lock(),
+    //    None => {
+    //        return;
+    //    }
+    //};
+    //match process.schedule_next() {
+    //    Some(_process) => {
+    //        //println!("Running: {}", process.get_name());
+    //    }
+    //    None => {
+    //        //println!("No process ran");
+    //    }
+    //}
 }
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     println!("AAA");
