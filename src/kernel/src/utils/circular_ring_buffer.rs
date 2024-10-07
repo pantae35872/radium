@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-/// A circular ring buffer but matains it order when overflowed
 pub struct CircularRingBuffer<T, const N: usize> {
     buffer: [Option<T>; N],
     head: AtomicUsize,
