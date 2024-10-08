@@ -1,22 +1,20 @@
 use core::{
     cell::UnsafeCell,
-    sync::atomic::{AtomicIsize, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 pub struct CircularRingBuffer<T, const N: usize> {
     buffer: [Slot<T>; N],
     head: AtomicUsize,
-    tail: AtomicIsize,
+    tail: AtomicUsize,
 }
-
-unsafe impl<T, const N: usize> Sync for CircularRingBuffer<T, N> {}
 
 impl<T, const N: usize> CircularRingBuffer<T, N> {
     pub const fn new() -> Self {
         Self {
             buffer: [const { Slot::new() }; N],
             head: AtomicUsize::new(0),
-            tail: AtomicIsize::new(-1),
+            tail: AtomicUsize::new(0),
         }
     }
 
@@ -31,11 +29,11 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
                 .compare_exchange(head, new_head, Ordering::Acquire, Ordering::Relaxed)
             {
                 Ok(head) => {
-                    if head == 0 {
+                    if self.buffer[head].is_some() {
                         let mut tail = self.tail.load(Ordering::Acquire);
                         let mut new_tail;
                         loop {
-                            new_tail = (tail + 1) % N as isize;
+                            new_tail = (tail + 1) % N;
                             match self.tail.compare_exchange(
                                 tail,
                                 new_tail,
@@ -65,7 +63,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
             }]
             .is_some()
             {
-                (tail + 1) % N as isize
+                (tail + 1) % N
             } else {
                 tail
             };
@@ -90,6 +88,9 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
         }
     }
 }
+
+unsafe impl<T, const N: usize> Sync for CircularRingBuffer<T, N> {}
+unsafe impl<T, const N: usize> Send for CircularRingBuffer<T, N> {}
 
 struct Slot<T> {
     state: AtomicUsize, // 0 = empty, 1 = writing, 2 = full
