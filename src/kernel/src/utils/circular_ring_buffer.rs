@@ -57,12 +57,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
         let mut tail = self.tail.load(Ordering::Acquire);
         let mut new_tail;
         loop {
-            new_tail = if self.buffer[match TryInto::<usize>::try_into(tail) {
-                Ok(res) => res,
-                Err(_) => return None,
-            }]
-            .is_some()
-            {
+            new_tail = if self.buffer[tail].is_some() {
                 (tail + 1) % N
             } else {
                 tail
@@ -75,11 +70,7 @@ impl<T, const N: usize> CircularRingBuffer<T, N> {
             ) {
                 Ok(tail) => {
                     if tail != new_tail {
-                        return self.buffer[match TryInto::<usize>::try_into(tail) {
-                            Ok(res) => res,
-                            Err(_) => return None,
-                        }]
-                        .take();
+                        return self.buffer[tail].take();
                     }
                     return None;
                 }
