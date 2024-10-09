@@ -23,6 +23,7 @@ BOOTLOADER_SOURCES := $(shell find src/bootloader/src -name '*.rs') $(shell find
 OSRUNNER_BIN := $(BUILD_DIR)/os-runner
 BOOTLOADER_BIN := $(BUILD_DIR)/bootx64.efi
 BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
+BOOT_INFO := bootinfo.toml
 
 ifeq ($(BUILD_MODE), $(shell cat $(BUILD_MODE_FILE) 2>/dev/null))
     BUILD_MODE_CHANGED := 0
@@ -83,11 +84,11 @@ update:
 	cd src/kernel && cargo update 
 	cd src/os-runner && cargo update
 
-$(FAT_IMG): $(BUILD_DIR)
+$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR)
 	@dd if=/dev/zero of=$(FAT_IMG) bs=1M count=16 status=none
 	@mkfs.vfat $(FAT_IMG)
 	@mmd -i $(FAT_IMG) ::/efi ::/efi/boot ::/boot
-	@mcopy -D o -i $(FAT_IMG) bootinfo.toml kernel-font.ttf ::/boot
+	@mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) kernel-font.ttf ::/boot
 
 make-test-kernel: $(BOOTLOADER_BIN) $(FAT_IMG) $(BUILD_DIR) $(ISO_DIR)
 	@mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
