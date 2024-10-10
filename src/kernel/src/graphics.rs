@@ -151,7 +151,7 @@ pub fn init(bootinfo: &BootInformation) {
                 .expect("Frame buffer has been already aquired"),
         );
         Mutex::new(Graphic::new(
-            bootinfo.gop_mode_info().clone(),
+            *bootinfo.gop_mode_info(),
             bootinfo
                 .framebuffer()
                 .expect("Failed to aquire framebuffer from bootinfo it already been taken"),

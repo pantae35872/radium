@@ -22,7 +22,7 @@ pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> 
     loop {}
 }
 
-const TEST_SIZE_IN_SECTOR: usize = 32; // 512 per sector
+const TEST_SIZE_IN_SECTOR: usize = 128; // 512 per sector
 const SECTOR_TEST_RANGE: u64 = 256;
 #[test_case]
 fn simple_read_write() {
@@ -62,9 +62,13 @@ fn simple_read_write() {
 
 fn get_random(buffer: &mut [u8]) {
     let mut random_data = [0u16; TEST_SIZE_IN_SECTOR * 256];
-    let rdrand = random::RdRand::new().unwrap();
+    let rdrand = random::RdRand::new();
     for data in random_data.iter_mut() {
-        *data = rdrand.get_u16().expect("Cannot get random");
+        if let Some(rdrand) = rdrand {
+            *data = rdrand.get_u16().unwrap_or(16);
+        } else {
+            *data = 1;
+        }
     }
 
     for (i, &num) in random_data.iter().enumerate() {
@@ -111,5 +115,6 @@ fn sector_read_write() {
         },
         AwaitType::Poll,
     ));
+
     executor.run_exit();
 }

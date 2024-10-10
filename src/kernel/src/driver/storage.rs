@@ -2,10 +2,15 @@ pub mod ahci_driver;
 pub mod ata_driver;
 
 use core::error::Error;
-use core::f64;
 use core::fmt::Display;
 use core::future::Future;
+use core::{f64, slice};
 
+use alloc::vec::Vec;
+use x86_64::PhysAddr;
+
+use crate::inline_if;
+use crate::memory::memory_controller;
 use crate::utils::floorf64;
 
 pub const MAX_SECTOR: f64 = 63.0;
@@ -16,6 +21,26 @@ pub struct CHS {
     head: u8,
     sector: u8,
     cylinder: u8,
+}
+
+/// Universal drive command
+#[derive(Clone, Copy, Debug)]
+enum DriveCommand {
+    Read(u64),
+    Write(u64),
+    Identify,
+}
+
+#[derive(Debug)]
+struct DmaBuffer {
+    start: PhysAddr,
+    size: usize, // Size in bytes
+    allocated_size: usize,
+}
+
+struct DmaRequest {
+    command: DriveCommand,
+    buffer: Vec<DmaBuffer>,
 }
 
 #[derive(Debug)]
@@ -46,6 +71,136 @@ impl Display for CHSError {
 }
 
 impl Error for CHSError {}
+
+impl DmaBuffer {
+    /// Allocate a buffer for a count and return a left over
+    fn new(mut count: usize) -> Option<(Self, usize)> {
+        let size = [0x1000, 0x2000, 0x4000]
+            .iter()
+            .find_map(|e| inline_if!(count <= e >> 9, Some(*e), None))
+            .unwrap_or(0x4000);
+        let old_count = count;
+        count = count.saturating_sub(size >> 9);
+        Some((
+            Self {
+                start: memory_controller().lock().physical_alloc(size)?,
+                size: (old_count - count) * 512,
+                allocated_size: size,
+            },
+            count,
+        ))
+    }
+
+    fn count(&self) -> usize {
+        self.size >> 9
+    }
+
+    fn copy_into(&self, target: &mut [u8]) {
+        assert!(target.len() == self.size);
+        memory_controller()
+            .lock()
+            .ident_map(self.allocated_size as u64, self.start.as_u64());
+
+        let buffer = unsafe { slice::from_raw_parts(self.start.as_u64() as *const u8, self.size) };
+        target.copy_from_slice(buffer);
+
+        memory_controller()
+            .lock()
+            .unmap_addr(self.start.as_u64(), self.allocated_size as u64);
+    }
+
+    fn copy_into_self(&self, source: &[u8]) {
+        assert!(source.len() == self.size);
+        memory_controller()
+            .lock()
+            .ident_map(self.allocated_size as u64, self.start.as_u64());
+
+        let buffer =
+            unsafe { slice::from_raw_parts_mut(self.start.as_u64() as *mut u8, self.size) };
+        buffer.copy_from_slice(source);
+
+        memory_controller()
+            .lock()
+            .unmap_addr(self.start.as_u64(), self.allocated_size as u64);
+    }
+}
+
+impl Drop for DmaBuffer {
+    fn drop(&mut self) {
+        let mut memory_alloc = memory_controller().lock();
+        memory_alloc.physical_dealloc(self.start, self.allocated_size);
+    }
+}
+
+impl DriveCommand {
+    fn to_ata(&self) -> u8 {
+        match self {
+            Self::Read(..) => 0x25,
+            Self::Write(..) => 0x35,
+            Self::Identify => 0xEC,
+        }
+    }
+
+    fn sector(&self) -> u64 {
+        match self {
+            Self::Read(value) | Self::Write(value) => *value,
+            Self::Identify => 0,
+        }
+    }
+
+    fn replace_sector(self, new_sector: u64) -> Self {
+        match self {
+            Self::Read(..) => Self::Read(new_sector),
+            Self::Write(..) => Self::Write(new_sector),
+            Self::Identify => Self::Identify,
+        }
+    }
+
+    fn is_write(&self) -> bool {
+        matches!(self, Self::Write(..))
+    }
+}
+
+impl DmaRequest {
+    fn new(mut count: usize, command: DriveCommand) -> Option<Self> {
+        let mut buffers = Vec::new();
+
+        while count > 0 {
+            let (buffer, left_count) = DmaBuffer::new(count)?;
+
+            count = left_count;
+
+            buffers.push(buffer);
+        }
+
+        return Some(Self {
+            buffer: buffers,
+            command,
+        });
+    }
+
+    fn copy_into(&self, target: &mut [u8]) {
+        assert!(target.len() >= self.count() * 512);
+        let mut offset = 0;
+        for buffer in self.buffer.iter() {
+            buffer.copy_into(&mut target[offset..(offset + buffer.size)]);
+            offset += buffer.size;
+        }
+    }
+
+    fn copy_into_self(&mut self, source: &[u8]) {
+        assert!(source.len() == self.count() * 512);
+        let mut offset = 0;
+        for buffer in self.buffer.iter() {
+            buffer.copy_into_self(&source[offset..(offset + buffer.size)]);
+            offset += buffer.size;
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.buffer.iter().map(|buffer| buffer.count()).sum()
+    }
+}
 
 impl CHS {
     pub fn new(h: u8, s: u8, c: u16) -> Result<Self, CHSError> {

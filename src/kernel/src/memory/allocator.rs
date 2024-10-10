@@ -1,4 +1,4 @@
-use core::{ptr, u8};
+use core::ptr;
 
 use alloc::alloc::*;
 use proc::comptime_alloc;

@@ -1,4 +1,4 @@
-use core::{cell::UnsafeCell, fmt::Debug};
+use core::{cell::SyncUnsafeCell, fmt::Debug};
 
 pub mod buffer_reader;
 pub mod circular_ring_buffer;
@@ -37,7 +37,7 @@ pub fn floorf64(x: f64) -> f64 {
 
 #[repr(transparent)]
 pub struct VolatileCell<T> {
-    value: UnsafeCell<T>,
+    value: SyncUnsafeCell<T>,
 }
 
 impl<T: Copy> VolatileCell<T> {

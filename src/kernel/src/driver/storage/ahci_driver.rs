@@ -3,6 +3,8 @@ use core::error::Error;
 use core::fmt::Display;
 use core::future::Future;
 use core::intrinsics::size_of;
+use core::marker::PhantomData;
+use core::ops::{Deref, DerefMut};
 use core::ptr::{self, write_bytes};
 use core::task::Poll;
 use core::{u32, usize};
@@ -20,7 +22,7 @@ use crate::log;
 use crate::memory::memory_controller;
 use crate::utils::VolatileCell;
 
-use super::Drive;
+use super::{DmaBuffer, DmaRequest, Drive, DriveCommand};
 
 pub static DRIVER: Once<Arc<AhciDriver>> = Once::new();
 
@@ -30,6 +32,7 @@ pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
 #[derive(Debug)]
 pub enum SataDriveError {
     NoCmdSlot,
+    DmaRequest,
     TaskFileError(u32),
     DriveNotFound(usize),
 }
@@ -42,6 +45,7 @@ impl Display for SataDriveError {
                 write!(f, "Execute command with task file error: {}", serr)
             }
             Self::DriveNotFound(id) => write!(f, "Trying to get drive with id: {}", id),
+            Self::DmaRequest => write!(f, "Failed to request dma memory"),
         }
     }
 }
@@ -106,45 +110,6 @@ enum FisType {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct FisRegH2D {
-    // DWORD 0
-    fis_type: VolatileCell<FisType>, // FIS_TYPE_REG_H2D
-    flags: VolatileCell<u8>,
-    command: VolatileCell<u8>,  // Command register
-    featurel: VolatileCell<u8>, // Feature register, 7:0
-
-    // DWORD 1
-    lba0: VolatileCell<u8>,   // LBA low register, 7:0
-    lba1: VolatileCell<u8>,   // LBA mid register, 15:8
-    lba2: VolatileCell<u8>,   // LBA high register, 23:16
-    device: VolatileCell<u8>, // Device register
-
-    // DWORD 2
-    lba3: VolatileCell<u8>,     // LBA register, 31:24
-    lba4: VolatileCell<u8>,     // LBA register, 39:32
-    lba5: VolatileCell<u8>,     // LBA register, 47:40
-    featureh: VolatileCell<u8>, // Feature register, 15:8
-
-    // DWORD 3
-    countl: VolatileCell<u8>, // Count register, 7:0
-    counth: VolatileCell<u8>,
-    icc: VolatileCell<u8>,     // Isochronous command completion
-    control: VolatileCell<u8>, // Control register
-
-    // DWORD 4
-    rsv1: [VolatileCell<u8>; 4], // Reserved
-}
-
-impl FisRegH2D {
-    pub fn set_command(&mut self, value: bool) {
-        let mut old_flags = self.flags.get();
-        old_flags.set_bit(7, value);
-        self.flags.set(old_flags);
-    }
-}
-
-#[derive(Debug)]
-#[repr(C)]
 pub struct HbaMem {
     // 0x00 - 0x2B, Generic Host Control
     cap: VolatileCell<u32>,     // 0x00, Host capability
@@ -193,9 +158,9 @@ impl HbaPRDTEntry {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct HbaCmdTbl {
+struct HbaCmdTbl {
     // 0x00
-    cfis: [VolatileCell<u8>; 64], // Command FIS
+    cfis: [u8; 64], // Command FIS
 
     // 0x40
     acmd: [VolatileCell<u8>; 16], // ATAPI command, 12 or 16 bytes
@@ -207,9 +172,131 @@ pub struct HbaCmdTbl {
     prdt_entry: [HbaPRDTEntry; 1], // Physical region descriptor table entries, 0 ~ 65535
 }
 
+#[derive(Debug)]
+#[repr(C)]
+pub struct FisRegH2D {
+    command: VolatileCell<u8>,  // Command register
+    featurel: VolatileCell<u8>, // Feature register, 7:0
+
+    // DWORD 1
+    lba0: VolatileCell<u8>,   // LBA low register, 7:0
+    lba1: VolatileCell<u8>,   // LBA mid register, 15:8
+    lba2: VolatileCell<u8>,   // LBA high register, 23:16
+    device: VolatileCell<u8>, // Device register
+
+    // DWORD 2
+    lba3: VolatileCell<u8>,     // LBA register, 31:24
+    lba4: VolatileCell<u8>,     // LBA register, 39:32
+    lba5: VolatileCell<u8>,     // LBA register, 47:40
+    featureh: VolatileCell<u8>, // Feature register, 15:8
+
+    // DWORD 3
+    count: VolatileCell<u16>,
+    icc: VolatileCell<u8>,     // Isochronous command completion
+    control: VolatileCell<u8>, // Control register
+
+    // DWORD 4
+    rsv1: [VolatileCell<u8>; 4], // Reserved
+}
+
+impl FisRegH2D {
+    fn set_lba(&mut self, lba: u64) {
+        self.lba0.set(lba.get_bits(0..8) as u8);
+        self.lba1.set(lba.get_bits(8..16) as u8);
+        self.lba2.set(lba.get_bits(16..24) as u8);
+        self.lba3.set(lba.get_bits(24..32) as u8);
+        self.lba4.set(lba.get_bits(32..40) as u8);
+        self.lba5.set(lba.get_bits(40..48) as u8);
+    }
+}
+
+impl FisRegister for FisRegH2D {
+    fn fis_type() -> FisType {
+        FisType::RegH2D
+    }
+}
+
+impl FisRegFlags<FisRegH2D> {
+    fn set_command(&mut self, value: bool) {
+        let mut new = self.flags.get();
+        new.set_bit(7, value);
+        self.flags.set(new);
+    }
+}
+
+#[repr(C)]
+struct FisRegInner<T: FisRegister> {
+    fis_type: VolatileCell<FisType>,
+    flags: FisRegFlags<T>,
+    fis: T,
+}
+
+#[repr(C)]
+struct FisRegFlags<T: FisRegister> {
+    flags: VolatileCell<u8>,
+    phantom: PhantomData<T>,
+}
+
+struct FisReg<'a, T: FisRegister> {
+    inner: &'a mut FisRegInner<T>,
+}
+
+impl<T: FisRegister> FisRegFlags<T> {
+    #[allow(dead_code)]
+    fn set_port_multiplier(&mut self, value: u8) {
+        let mut new = self.flags.get();
+        new.set_bits(0..4, value);
+        self.flags.set(new);
+    }
+
+    #[allow(dead_code)]
+    fn port_multiplier(&mut self) -> u8 {
+        self.flags.get().get_bits(0..4)
+    }
+}
+
+impl<'a, T: FisRegister> FisReg<'a, T> {
+    unsafe fn new(buffer: &'a mut [u8; 64]) -> Self {
+        assert!(size_of::<FisRegInner<T>>() <= 64); // Fis register must not be larger than the
+                                                    // buffer
+        buffer.fill(0);
+        buffer[0] = T::fis_type() as u8; // First field fis_type
+        Self {
+            inner: core::mem::transmute(buffer),
+        }
+    }
+
+    fn flags(&mut self) -> &mut FisRegFlags<T> {
+        &mut self.inner.flags
+    }
+}
+
+impl<'a, T: FisRegister> Deref for FisReg<'a, T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner.fis
+    }
+}
+
+impl<'a, T: FisRegister> DerefMut for FisReg<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner.fis
+    }
+}
+
+trait FisRegister {
+    fn fis_type() -> FisType;
+}
+
 impl HbaCmdTbl {
     pub fn get_prdt_entry(&mut self, index: usize) -> &mut HbaPRDTEntry {
         unsafe { &mut *self.prdt_entry.as_mut_ptr().add(index) }
+    }
+
+    fn command_fis<T: FisRegister>(&mut self) -> FisReg<T> {
+        let fis_reg = unsafe { FisReg::new(&mut self.cfis) };
+        return fis_reg;
     }
 }
 
@@ -373,13 +460,12 @@ pub struct SataPort {
 }
 
 impl SataPort {
-    fn cmd_header(&self, slot: usize) -> &mut HbaCmdHeader {
-        unsafe { &mut *(self.clb.as_mut_ptr::<HbaCmdHeader>().byte_add(slot)) }
+    fn cmd_header(&mut self, slot: usize) -> &mut HbaCmdHeader {
+        unsafe { &mut *(self.clb.as_mut_ptr::<HbaCmdHeader>().add(slot)) }
     }
 
-    fn cmd_tbl(&self) -> Result<&mut HbaCmdTbl, SataDriveError> {
-        let slot = self.find_cmdslot()?;
-        return Ok(unsafe { &mut *(self.ctba[slot].as_mut_ptr::<HbaCmdTbl>()) });
+    fn cmd_tbl(&mut self, slot: usize) -> &mut HbaCmdTbl {
+        unsafe { &mut *(self.ctba[slot].as_mut_ptr::<HbaCmdTbl>()) }
     }
 
     fn start_cmd(&mut self) {
@@ -477,6 +563,55 @@ impl SataPort {
         }
         return Err(SataDriveError::NoCmdSlot);
     }
+
+    async fn run_command(
+        &mut self,
+        count: usize,
+        buffer: &[DmaBuffer],
+        command: DriveCommand,
+    ) -> Result<(), SataDriveError> {
+        let slot = self.find_cmdslot()?;
+        let cmd_header = self.cmd_header(slot);
+
+        let mut flags = cmd_header.flags.get();
+        if command.is_write() {
+            flags.intersects(HbaCmdHeaderFlags::W);
+        } else {
+            flags.remove(HbaCmdHeaderFlags::W);
+        }
+
+        flags.insert(HbaCmdHeaderFlags::P | HbaCmdHeaderFlags::C);
+        flags.set_cfl(size_of::<FisRegH2D>() / size_of::<u32>());
+        cmd_header.flags.set(flags);
+
+        let length = ((count - 1) >> 4) + 1;
+        cmd_header.prdtl.set(length as _);
+        let cmdtbl = self.cmd_tbl(slot);
+        for (buffer, i) in buffer.iter().zip(0..length) {
+            cmdtbl.get_prdt_entry(i).dba.set(buffer.start);
+            cmdtbl.get_prdt_entry(i).set_dbc((buffer.size - 1) as u32);
+            cmdtbl.get_prdt_entry(i).set_i(i == length - 1);
+        }
+
+        let mut cmdfis = cmdtbl.command_fis::<FisRegH2D>();
+        cmdfis.control.set(0x00);
+        cmdfis.icc.set(0x00);
+        cmdfis.featurel.set(0x00);
+        cmdfis.featureh.set(0x00);
+        cmdfis.flags().set_command(true);
+        cmdfis.command.set(command.to_ata());
+        cmdfis.set_lba(command.sector());
+        cmdfis.device.set(1 << 6);
+        cmdfis.count.set(count as u16);
+
+        self.hba_port.ci.set(1 << slot);
+        while self.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
+            core::hint::spin_loop();
+        }
+        DriveAsync::new(self.hba_port, slot).await?;
+
+        return Ok(());
+    }
 }
 
 impl HbaMem {
@@ -490,29 +625,28 @@ pub struct AhciDrive {
     identifier: Option<[u8; 512]>,
 }
 
-struct DriveAsync {
-    port: Arc<Mutex<SataPort>>,
+struct DriveAsync<'a> {
+    port: &'a HbaPort,
     slot: usize,
 }
 
-impl DriveAsync {
-    pub fn new(port: Arc<Mutex<SataPort>>, slot: usize) -> Self {
+impl<'a> DriveAsync<'a> {
+    pub fn new(port: &'a HbaPort, slot: usize) -> Self {
         Self { port, slot }
     }
 }
 
-impl Future for DriveAsync {
+impl Future for DriveAsync<'_> {
     type Output = Result<(), SataDriveError>;
 
     fn poll(
         self: core::pin::Pin<&mut Self>,
         _cx: &mut core::task::Context<'_>,
     ) -> core::task::Poll<Self::Output> {
-        let port = &self.port.lock().hba_port;
-        if port.is.get().contains(HbaPortIS::TFES) {
-            return Poll::Ready(Err(SataDriveError::TaskFileError(port.serr.get())));
+        if self.port.is.get().contains(HbaPortIS::TFES) {
+            return Poll::Ready(Err(SataDriveError::TaskFileError(self.port.serr.get())));
         }
-        if port.ci.get() & (1 << self.slot) == 1 {
+        if self.port.ci.get() & (1 << self.slot) == 1 {
             return Poll::Pending;
         } else {
             return Poll::Ready(Ok(()));
@@ -535,88 +669,34 @@ impl AhciDrive {
         }
     }
 
-    // TODO: Ensure that buffer is word align (2 byte align)
-    async fn run_command(
-        &mut self,
-        lba: u64,
-        original_count: usize,
-        buffer: &[u8],
-        command: u8,
-        lba_mode: bool,
-    ) -> Result<(), SataDriveError> {
-        let port = self.port.lock();
-        let mut count = original_count;
-        let slot = port.find_cmdslot()?;
-        let cmd_header = port.cmd_header(slot);
+    async fn run_request(&self, request: &DmaRequest) -> Result<(), SataDriveError> {
+        let mut count = request.count();
+        let mut offset = 0;
+        let mut current_sector = request.command.sector();
 
-        let mut flags = cmd_header.flags.get();
-        if command == 0x35 {
-            flags.intersects(HbaCmdHeaderFlags::W);
-        } else {
-            flags.remove(HbaCmdHeaderFlags::W);
+        while count > 0 {
+            let this_count = count.min(128);
+            self.port
+                .lock()
+                .run_command(
+                    this_count,
+                    &request.buffer[offset..],
+                    request.command.replace_sector(current_sector),
+                )
+                .await?;
+            count -= this_count; // 128 sector (65536 byte)
+            offset += this_count >> 5; // 65536 byte per buffer
+            current_sector += this_count as u64;
         }
-
-        flags.insert(HbaCmdHeaderFlags::P | HbaCmdHeaderFlags::C);
-        flags.set_cfl(size_of::<FisRegH2D>() / size_of::<u32>());
-        cmd_header.flags.set(flags);
-
-        cmd_header.prdtl.set((((count - 1) >> 4) + 1) as u16);
-        let cmdtbl = port.cmd_tbl()?;
-        let mut buf_address = memory_controller()
-            .lock()
-            .get_physical(VirtAddr::new(buffer.as_ptr() as u64))
-            .unwrap();
-        assert!(buf_address.is_aligned(2u64));
-        let mut i: usize = 0;
-        while i < cmd_header.prdtl.get() as usize - 1 {
-            cmdtbl.get_prdt_entry(i).dba.set(buf_address);
-            cmdtbl.get_prdt_entry(i).set_dbc(8 * 1024 - 1);
-            cmdtbl.get_prdt_entry(i).set_i(false);
-            buf_address += (8 * 1024) as u64;
-            count -= 16;
-            i += 1;
-        }
-
-        cmdtbl.get_prdt_entry(i).dba.set(buf_address);
-        cmdtbl.get_prdt_entry(i).set_dbc((count << 9) as u32 - 1);
-        cmdtbl.get_prdt_entry(i).set_i(true);
-
-        let cmdfis = unsafe { &mut *(cmdtbl.cfis.as_mut_ptr() as *mut FisRegH2D) };
-        unsafe { core::ptr::write_bytes(cmdfis as *mut FisRegH2D, 0, 1) }
-        cmdfis.control.set(0x00);
-        cmdfis.icc.set(0x00);
-        cmdfis.featurel.set(0x00);
-        cmdfis.featureh.set(0x00);
-        cmdfis.fis_type.set(FisType::RegH2D);
-        cmdfis.set_command(true);
-        cmdfis.command.set(command);
-        if lba_mode {
-            cmdfis.lba0.set(lba as u8);
-            cmdfis.lba1.set((lba >> 8) as u8);
-            cmdfis.lba2.set((lba >> 16) as u8);
-            cmdfis.device.set(1 << 6);
-            cmdfis.lba3.set((lba >> 24) as u8);
-            cmdfis.lba4.set((lba >> 32) as u8);
-            cmdfis.lba5.set((lba >> 40) as u8);
-            cmdfis.countl.set((original_count & 0xFF) as u8);
-            cmdfis.counth.set((original_count >> 8) as u8);
-        } else {
-            cmdfis.device.set(0);
-        }
-
-        port.hba_port.ci.set(1 << slot);
-        while port.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
-            core::hint::spin_loop();
-        }
-        drop(port);
-        DriveAsync::new(self.port.clone(), slot).await?;
-
         return Ok(());
     }
 
     pub async fn identify(&mut self) -> Result<(), SataDriveError> {
-        let buf = [0u8; 512];
-        self.run_command(0, 1, &buf, 0xEC, false).await?;
+        let mut buf = [0u8; 512];
+        let request =
+            DmaRequest::new(1, DriveCommand::Identify).ok_or(SataDriveError::DmaRequest)?;
+        self.run_request(&request).await?;
+        request.copy_into(&mut buf);
         self.identifier = Some(buf);
         Ok(())
     }
@@ -643,9 +723,11 @@ impl Drive for AhciDrive {
         buffer: &mut [u8],
         count: usize,
     ) -> Result<(), Self::Error> {
-        return self
-            .run_command(from_sector, count, buffer, 0x25, true)
-            .await;
+        let request = DmaRequest::new(count, DriveCommand::Read(from_sector))
+            .ok_or(SataDriveError::DmaRequest)?;
+        self.run_request(&request).await?;
+        request.copy_into(buffer);
+        Ok(())
     }
 
     async fn write(
@@ -654,9 +736,11 @@ impl Drive for AhciDrive {
         buffer: &[u8],
         count: usize,
     ) -> Result<(), Self::Error> {
-        return self
-            .run_command(from_sector, count, buffer, 0x35, true)
-            .await;
+        let mut request = DmaRequest::new(count, DriveCommand::Write(from_sector))
+            .ok_or(SataDriveError::DmaRequest)?;
+        request.copy_into_self(buffer);
+        self.run_request(&request).await?;
+        Ok(())
     }
 }
 

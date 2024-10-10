@@ -1,3 +1,5 @@
+use core::{marker::PhantomData, ptr};
+
 use uefi::table::boot::{MemoryMap, MemoryType};
 
 use crate::{
@@ -6,15 +8,8 @@ use crate::{
     utils::NumberUtils,
 };
 
-#[derive(Debug)]
-struct FreeNode(Option<&'static mut FreeNode>);
-
-struct FreeNoteIterMut<'a> {
-    curr: &'a mut FreeNode,
-}
-
 pub struct BuddyAllocator<'a, const ORDER: usize> {
-    free_lists: [FreeNode; ORDER],
+    free_lists: [FreeList; ORDER],
     max_mem: usize,
     allocated: usize,
     areas: Option<&'a MemoryMap<'a>>,
@@ -36,27 +31,9 @@ impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
 }
 
 impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
-    pub unsafe fn addr_new(start_addr: usize, mut max_mem: usize) -> Self {
-        if !max_mem.is_power_of_two() {
-            max_mem = max_mem.prev_power_of_two();
-        }
-
-        let mut init = Self {
-            free_lists: [const { FreeNode(None) }; ORDER],
-            max_mem,
-            allocated: 0,
-            areas: None,
-        };
-
-        core::ptr::write_bytes(start_addr as *mut u8, 0, max_mem);
-        let node = &mut *(start_addr as *mut FreeNode);
-        init.free_lists[max_mem.trailing_zeros() as usize - 1] = FreeNode(Some(node));
-
-        return init;
-    }
     pub unsafe fn new(areas: &'a MemoryMap<'a>) -> Self {
         let mut init = Self {
-            free_lists: [const { FreeNode(None) }; ORDER],
+            free_lists: [const { FreeList::new() }; ORDER],
             max_mem: 0,
             allocated: 0,
             areas: Some(areas),
@@ -102,14 +79,15 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
         size -= start_addr - unaligned_addr;
 
         let mut offset = 0;
-        while size != 0 {
+        while size > 0 {
             let order = size.prev_power_of_two();
 
             if order < 8 {
                 break;
             }
 
-            let node = &mut *((start_addr + offset) as *mut FreeNode);
+            let node = &mut *((start_addr + offset) as *mut usize);
+            *node = 0;
             self.free_lists[order.trailing_zeros() as usize - 1].push(node);
             offset += order;
             self.max_mem += order;
@@ -130,17 +108,17 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
 
             for (i, node) in self.free_lists[order - 1..].iter_mut().enumerate() {
                 current_order = i + order;
-                match node.0 {
-                    Some(_) => {
+                match node.is_empty() {
+                    false => {
                         if current_order == order {
                             self.allocated += size;
-                            return node.pop()?.as_next_ptr();
+                            return unsafe { node.pop().map(|e| e as *mut u8) };
                         } else {
                             some_mem = true;
                             break;
                         }
                     }
-                    None => continue,
+                    true => continue,
                 }
             }
 
@@ -153,15 +131,11 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                     let (left, right) = self.free_lists.split_at_mut(i);
                     (&mut left[i - 1], &mut right[0])
                 };
-                match current_node.pop() {
-                    Some(mut o_node) => {
-                        let ptr = o_node.as_next_ptr().unwrap();
-
-                        unsafe {
-                            next_node.push(&mut *(ptr as *mut FreeNode));
-                            next_node.push(&mut *((ptr as usize + (1 << i)) as *mut FreeNode));
-                        }
-                    }
+                match unsafe { current_node.pop() } {
+                    Some(o_node) => unsafe {
+                        next_node.push(o_node);
+                        next_node.push((o_node as usize + (1 << i)) as *mut usize);
+                    },
                     None => continue,
                 }
             }
@@ -178,14 +152,16 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             let mut order = size.trailing_zeros() as usize;
             let mut ptr = ptr as usize;
 
-            self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+            unsafe {
+                self.free_lists[order - 1].push(ptr as *mut usize);
+            }
 
             while order <= ORDER {
                 let buddy = ptr ^ (1 << order);
                 let mut found_buddy = false;
 
                 for block in self.free_lists[order - 1].iter_mut() {
-                    if block.as_ptr().is_some_and(|e| e as usize == buddy) {
+                    if block.value() as usize == buddy {
                         block.pop();
                         found_buddy = true;
                         break;
@@ -193,10 +169,14 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 }
 
                 if found_buddy {
-                    self.free_lists[order - 1].pop();
+                    unsafe {
+                        self.free_lists[order - 1].pop();
+                    }
                     ptr = ptr.min(buddy);
                     order += 1;
-                    self.free_lists[order - 1].push(unsafe { &mut *(ptr as *mut FreeNode) });
+                    unsafe {
+                        self.free_lists[order - 1].push(ptr as *mut usize);
+                    }
                 } else {
                     break;
                 }
@@ -207,65 +187,87 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
     }
 }
 
-impl<'a> Iterator for FreeNoteIterMut<'a> {
-    type Item = &'static mut FreeNode;
+/// Code below is taken from https://github.com/rcore-os/buddy_system_allocator/blob/master/src/linked_list.rs
+#[derive(Debug)]
+struct FreeNode {
+    prev: *mut usize,
+    curr: *mut usize,
+}
 
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.curr.0.is_none() {
-            return None;
-        } else {
-            unsafe {
-                let curr = &mut *(self.curr as *mut FreeNode);
-                self.curr = &mut *self.curr.as_ptr()?;
-                return Some(curr);
-            }
-        }
-    }
+struct FreeList {
+    head: *mut usize,
 }
 
 impl FreeNode {
-    fn push(&mut self, new_node: &'static mut FreeNode) {
-        let mut current = self;
-
-        while let Some(ref mut next) = current.0 {
-            current = next;
+    fn pop(self) -> *mut usize {
+        unsafe {
+            *(self.prev) = *(self.curr);
         }
-
-        *new_node = FreeNode(None);
-        *current = FreeNode(Some(new_node));
+        self.curr
     }
 
-    fn pop(&mut self) -> Option<FreeNode> {
-        match self.0 {
-            Some(_) => {
-                let mut removed = core::mem::replace(self, FreeNode(None));
-
-                if let Some(ref mut next) = removed.0 {
-                    if let Some(ref mut next) = next.0 {
-                        *self = FreeNode(Some(unsafe { &mut *(*next as *mut FreeNode) }));
-                    }
-                }
-                return Some(removed);
-            }
-            None => None,
-        }
-    }
-
-    fn as_ptr(&mut self) -> Option<*mut FreeNode> {
-        match &mut self.0 {
-            Some(next) => Some(*next as *mut FreeNode),
-            None => None,
-        }
-    }
-
-    fn as_next_ptr(&mut self) -> Option<*mut u8> {
-        match &mut self.0 {
-            Some(next) => Some(*next as *mut FreeNode as *mut u8),
-            None => None,
-        }
-    }
-
-    pub fn iter_mut(&mut self) -> FreeNoteIterMut {
-        FreeNoteIterMut { curr: self }
+    fn value(&self) -> *mut usize {
+        self.curr
     }
 }
+
+impl FreeList {
+    const unsafe fn new() -> FreeList {
+        FreeList {
+            head: ptr::null_mut(),
+        }
+    }
+
+    unsafe fn push(&mut self, item: *mut usize) {
+        *item = self.head as usize;
+        self.head = item;
+    }
+
+    unsafe fn pop(&mut self) -> Option<*mut usize> {
+        match self.is_empty() {
+            true => None,
+            false => {
+                let item = self.head;
+                self.head = *item as *mut usize;
+                Some(item)
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.head.is_null()
+    }
+
+    fn iter_mut(&mut self) -> FreeListIterMut {
+        FreeListIterMut {
+            list: PhantomData,
+            previous: &mut self.head as *mut *mut usize as *mut usize,
+            current: self.head,
+        }
+    }
+}
+
+struct FreeListIterMut<'a> {
+    list: PhantomData<&'a mut FreeList>,
+    previous: *mut usize,
+    current: *mut usize,
+}
+impl<'a> Iterator for FreeListIterMut<'a> {
+    type Item = FreeNode;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.current.is_null() {
+            None
+        } else {
+            let res = FreeNode {
+                prev: self.previous,
+                curr: self.current,
+            };
+            self.previous = self.current;
+            self.current = unsafe { *self.current as *mut usize };
+            Some(res)
+        }
+    }
+}
+
+unsafe impl<const ORDER: usize> Send for BuddyAllocator<'_, ORDER> {}

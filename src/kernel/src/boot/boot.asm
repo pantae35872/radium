@@ -87,5 +87,5 @@ p3_table:
 p2_table:
   resb 4096 * 32
 stack_bottom:
-  resb 1024 * 256 ; 256 kb
+  resb 1024 * 1024 ; 1M Stack
 stack_top:

@@ -116,7 +116,7 @@ pub fn init() {
             .timer_vector(32)
             .error_vector(34)
             .spurious_vector(33)
-            .set_xapic_base(LAPIC_VADDR as u64)
+            .set_xapic_base(LAPIC_VADDR)
             .build()
             .expect("Could not create lapic");
         unsafe {
@@ -125,7 +125,7 @@ pub fn init() {
         Mutex::new(lapic)
     });
     IOAPICS.init_once(|| unsafe {
-        let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR as u64);
+        let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
         let mut entry = RedirectionTableEntry::default();
         entry.set_mode(IrqMode::Fixed);
         entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
@@ -278,11 +278,10 @@ extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
     //}
 }
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    println!("AAA");
-    /*let mut port = Port::new(0x60);
-    let scancode: u8 = unsafe { port.read() };
+    //let mut port = Port::new(0x60);
+    //let scancode: u8 = unsafe { port.read() };
 
-    crate::driver::keyboard::keyboard_scancode(scancode);*/
+    /*crate::driver::keyboard::keyboard_scancode(scancode);*/
     unsafe {
         LAPICS.get().unwrap().lock().end_of_interrupt();
     }

@@ -23,6 +23,7 @@ use nothingos::{log, println};
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
     nothingos::init(information_address);
     println!("Hello, world!");
+
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {

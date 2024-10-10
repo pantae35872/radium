@@ -98,10 +98,7 @@ impl Mapper {
         self.map_to(page, frame, flags, allocator)
     }
 
-    pub fn unmap<A>(&mut self, page: Page, allocator: &mut A)
-    where
-        A: FrameAllocator,
-    {
+    pub fn unmap_addr(&mut self, page: Page) -> Frame {
         use x86_64::instructions::tlb;
 
         assert!(self
@@ -117,6 +114,13 @@ impl Mapper {
         let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
         p1[page.p1_index() as usize].set_unused();
         tlb::flush(VirtAddr::new(page.start_address() as u64));
-        allocator.deallocate_frame(frame);
+        frame
+    }
+
+    pub fn unmap<A>(&mut self, page: Page, allocator: &mut A)
+    where
+        A: FrameAllocator,
+    {
+        allocator.deallocate_frame(self.unmap_addr(page));
     }
 }

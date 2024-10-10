@@ -106,35 +106,35 @@ macro_rules! direct_mapping {
             static p4_table: u8;
         }
 
-        {
-            let current_table;
+        let current_table;
 
-            unsafe {
-                let mut active_table = {
-                    use $crate::memory::paging::ActivePageTable;
+        x86_64::instructions::interrupts::disable();
+        unsafe {
+            let mut active_table = {
+                use $crate::memory::paging::ActivePageTable;
 
-                    ActivePageTable::new()
-                };
-                let old_table = {
-                    use $crate::memory::paging::InactivePageTable;
-                    use $crate::memory::Frame;
+                ActivePageTable::new()
+            };
+            let old_table = {
+                use $crate::memory::paging::InactivePageTable;
+                use $crate::memory::Frame;
 
-                    InactivePageTable::from_raw_frame(Frame::containing_address(
-                        &p4_table as *const u8 as u64,
-                    ))
-                };
-                current_table = active_table.switch(old_table);
-            }
-            $crate::defer!(unsafe {
-                let mut active_table = {
-                    use $crate::memory::paging::ActivePageTable;
-
-                    ActivePageTable::new()
-                };
-                active_table.switch(current_table);
-            });
-            $body
+                InactivePageTable::from_raw_frame(Frame::containing_address(
+                    &p4_table as *const u8 as u64,
+                ))
+            };
+            current_table = active_table.switch(old_table);
         }
+        $crate::defer!(unsafe {
+            let mut active_table = {
+                use $crate::memory::paging::ActivePageTable;
+
+                ActivePageTable::new()
+            };
+            active_table.switch(current_table);
+            x86_64::instructions::interrupts::enable();
+        });
+        $body
     };
 }
 
@@ -208,17 +208,28 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         });
     }
 
+    pub fn unmap_addr(&mut self, mapped_start: u64, size: u64) {
+        let start = Page::containing_address(mapped_start);
+        let end = Page::containing_address(mapped_start + size - 1);
+        Page::range_inclusive(start, end).for_each(|page| {
+            self.active_table.unmap_addr(page);
+        });
+    }
+
     fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
         self.active_table
             .map_to(page, frame, flags, &mut self.allocator);
     }
 
-    pub fn allocate(&mut self, size: usize) -> Option<*mut u8> {
-        return self.allocator.allocate(size);
+    pub fn physical_alloc(&mut self, size: usize) -> Option<PhysAddr> {
+        return self
+            .allocator
+            .allocate(size)
+            .map(|ptr| PhysAddr::new(ptr as u64));
     }
 
-    pub fn deallocate(&mut self, ptr: *mut u8, size: usize) {
-        self.allocator.dealloc(ptr, size);
+    pub fn physical_dealloc(&mut self, addr: PhysAddr, size: usize) {
+        self.allocator.dealloc(addr.as_u64() as *mut u8, size);
     }
 
     pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {

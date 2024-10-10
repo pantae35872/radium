@@ -9,6 +9,7 @@
 #![feature(str_from_utf16_endian)]
 #![feature(naked_functions)]
 #![feature(pointer_is_aligned_to)]
+#![feature(sync_unsafe_cell)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
 #![deny(warnings)]
@@ -71,7 +72,7 @@ pub fn hlt_loop() -> ! {
 }
 
 pub trait Testable {
-    fn run(&self) -> ();
+    fn run(&self);
 }
 
 #[panic_handler]
