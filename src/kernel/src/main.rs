@@ -19,11 +19,15 @@ use nothingos::task::executor::Executor;
 use nothingos::task::{AwaitType, Task};
 use nothingos::{log, println};
 
+// TODO: Implements acpi to get io apic
+// TODO: Use ahci interrupt (needs io apic) with waker
+// TODO: Implements waker based async mutex
+// TODO: Impelemnts kernel services executor
+
 #[no_mangle]
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
     nothingos::init(information_address);
     println!("Hello, world!");
-
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {

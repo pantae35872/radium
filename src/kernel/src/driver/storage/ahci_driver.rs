@@ -33,7 +33,7 @@ pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
 pub enum SataDriveError {
     NoCmdSlot,
     DmaRequest,
-    TaskFileError(u32),
+    TaskFileError(HbaPortSerr),
     DriveNotFound(usize),
 }
 
@@ -42,7 +42,7 @@ impl Display for SataDriveError {
         match self {
             Self::NoCmdSlot => write!(f, "Cannot find free command list entry"),
             Self::TaskFileError(serr) => {
-                write!(f, "Execute command with task file error: {}", serr)
+                write!(f, "Execute command with task file error: {:?}", serr)
             }
             Self::DriveNotFound(id) => write!(f, "Trying to get drive with id: {}", id),
             Self::DmaRequest => write!(f, "Failed to request dma memory"),
@@ -52,6 +52,7 @@ impl Display for SataDriveError {
 
 impl Error for SataDriveError {}
 
+#[derive(PartialEq)]
 enum HbaPortDd {
     None = 0,
     PresentNotE = 1,
@@ -112,17 +113,17 @@ enum FisType {
 #[repr(C)]
 pub struct HbaMem {
     // 0x00 - 0x2B, Generic Host Control
-    cap: VolatileCell<u32>,     // 0x00, Host capability
-    ghc: VolatileCell<u32>,     // 0x04, Global host control
-    is: VolatileCell<u32>,      // 0x08, Interrupt status
-    pi: VolatileCell<u32>,      // 0x0C, Port implemented
-    vs: VolatileCell<u32>,      // 0x10, Version
-    ccc_ctl: VolatileCell<u32>, // 0x14, Command completion coalescing control
-    ccc_pts: VolatileCell<u32>, // 0x18, Command completion coalescing ports
-    em_loc: VolatileCell<u32>,  // 0x1C, Enclosure management location
-    em_ctl: VolatileCell<u32>,  // 0x20, Enclosure management control
-    cap2: VolatileCell<u32>,    // 0x24, Host capabilities extended
-    bohc: VolatileCell<u32>,    // 0x28, BIOS/OS handoff control and status
+    cap: VolatileCell<HbaCapabilities>, // 0x00, Host capability
+    ghc: VolatileCell<u32>,             // 0x04, Global host control
+    is: VolatileCell<u32>,              // 0x08, Interrupt status
+    pi: VolatileCell<u32>,              // 0x0C, Port implemented
+    vs: VolatileCell<u32>,              // 0x10, Version
+    ccc_ctl: VolatileCell<u32>,         // 0x14, Command completion coalescing control
+    ccc_pts: VolatileCell<u32>,         // 0x18, Command completion coalescing ports
+    em_loc: VolatileCell<u32>,          // 0x1C, Enclosure management location
+    em_ctl: VolatileCell<u32>,          // 0x20, Enclosure management control
+    cap2: VolatileCell<u32>,            // 0x24, Host capabilities extended
+    bohc: VolatileCell<u32>,            // 0x28, BIOS/OS handoff control and status
 
     // 0x2C - 0x9F, Reserved
     rsv: [VolatileCell<u8>; 0xA0 - 0x2C],
@@ -169,7 +170,7 @@ struct HbaCmdTbl {
     _reserved: [VolatileCell<u8>; 48], // Reserved
 
     // 0x80
-    prdt_entry: [HbaPRDTEntry; 1], // Physical region descriptor table entries, 0 ~ 65535
+    prdt_entry: [HbaPRDTEntry; 8], // Physical region descriptor table entries, 0 ~ 65535
 }
 
 #[derive(Debug)]
@@ -260,10 +261,9 @@ impl<'a, T: FisRegister> FisReg<'a, T> {
         assert!(size_of::<FisRegInner<T>>() <= 64); // Fis register must not be larger than the
                                                     // buffer
         buffer.fill(0);
-        buffer[0] = T::fis_type() as u8; // First field fis_type
-        Self {
-            inner: core::mem::transmute(buffer),
-        }
+        let inner: &mut FisRegInner<T> = core::mem::transmute(buffer);
+        inner.fis_type.set(T::fis_type());
+        Self { inner }
     }
 
     fn flags(&mut self) -> &mut FisRegFlags<T> {
@@ -291,12 +291,34 @@ trait FisRegister {
 
 impl HbaCmdTbl {
     pub fn get_prdt_entry(&mut self, index: usize) -> &mut HbaPRDTEntry {
-        unsafe { &mut *self.prdt_entry.as_mut_ptr().add(index) }
+        &mut self.prdt_entry[index]
     }
 
     fn command_fis<T: FisRegister>(&mut self) -> FisReg<T> {
         let fis_reg = unsafe { FisReg::new(&mut self.cfis) };
         return fis_reg;
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    struct HbaCapabilities: u32 {
+        const S64A = 1 << 31;
+        const SNCQ = 1 << 30;
+        const SSNTF = 1 << 29;
+        const SMPS = 1 << 28;
+        const SSS = 1 << 27;
+        const SALP = 1 << 26;
+        const SAL = 1 << 25;
+        const SCLO = 1 << 24;
+        const SPM = 1 << 17;
+        const FBSS = 1 << 16;
+        const PMD = 1 << 15;
+        const SSC = 1 << 14;
+        const PSC = 1 << 13;
+        const CCCS = 1 << 7;
+        const EMS = 1 << 6;
+        const SXS = 1 << 5;
     }
 }
 
@@ -323,6 +345,29 @@ bitflags! {
         const DLAE = 1 << 25; // Drive LED on ATAPI Enable
         const ALPE = 1 << 26; // Aggressive Link Power Management Enable
         const ASP = 1 << 27; // Aggressive Slumber / Partial
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy)]
+    pub struct HbaPortSerr: u32 {
+        const Exchanged = 1 << 26;
+        const UnknownFisType = 1 << 25;
+        const TransportStateTransision = 1 << 24;
+        const LinkSequenceError = 1 << 23;
+        const HandshakeError = 1 << 22;
+        const CrcError = 1 << 21;
+        const DisparityError = 1 << 20;
+        const DecodeError = 1 << 19;
+        const CommWake = 1 << 18;
+        const PhyInternalError = 1 << 17;
+        const PhyRdyChange = 1 << 16;
+        const InternalError = 1 << 11;
+        const ProtocolError = 1 << 10;
+        const PersistentCommunicationOrDataIntegrityError = 1 << 9;
+        const TransientDataIntegrityError = 1 << 8;
+        const RecoveredCommunicationsError = 1 << 1;
+        const RecoveredDataIntegrityError = 1 << 0;
     }
 }
 
@@ -369,6 +414,17 @@ bitflags! {
         const HBFE = 1 << 29; // Host Bus Fatal Error Status
         const TFEE = 1 << 30; // Task File Error Status
         const CPDE = 1 << 31; // Cold Port Detect Status
+    }
+}
+
+impl HbaCapabilities {
+    #[allow(dead_code)]
+    fn number_of_ports(&self) -> u8 {
+        self.bits().get_bits(0..4) as u8 + 1
+    }
+
+    fn number_of_slots(&self) -> u8 {
+        self.bits().get_bits(8..12) as u8 + 1
     }
 }
 
@@ -442,7 +498,7 @@ pub struct HbaPort {
     sig: VolatileCell<u32>,              // 0x24, signature
     ssts: VolatileCell<HbaSataStatus>,   // 0x28, SATA status (SCR0:SStatus)
     sctl: VolatileCell<u32>,             // 0x2C, SATA control (SCR2:SControl)
-    serr: VolatileCell<u32>,             // 0x30, SATA error (SCR1:SError)
+    serr: VolatileCell<HbaPortSerr>,     // 0x30, SATA error (SCR1:SError)
     sact: VolatileCell<u32>,             // 0x34, SATA active (SCR3:SActive)
     ci: VolatileCell<u32>,               // 0x38, command issue
     sntf: VolatileCell<u32>,             // 0x3C, SATA notification (SCR4:SNotification)
@@ -456,7 +512,7 @@ pub struct SataPort {
     clb: VirtAddr,
     fb: VirtAddr,
     ctba: [VirtAddr; 32],
-    cap: usize,
+    cap: HbaCapabilities,
 }
 
 impl SataPort {
@@ -542,18 +598,36 @@ impl SataPort {
             unsafe {
                 ptr::write_bytes(virt_ctba.as_mut_ptr::<u8>(), 0, 4096);
             }
+
             self.ctba[i] = virt_ctba;
             cmdheader[i]
                 .ctba
                 .set(memory_controller().lock().get_physical(virt_ctba).unwrap());
         }
+        // Reset port for good mesure
+        self.hba_port
+            .sctl
+            .set(*self.hba_port.sctl.get().set_bits(0..3, 1));
+        // TODO: use a proper timer for this
+        for _ in 0..1000000 {}
+        self.hba_port
+            .sctl
+            .set(*self.hba_port.sctl.get().set_bits(0..3, 0));
+        // Wait for reestablished
+        while self.hba_port.ssts.get().device_detection() != HbaPortDd::PresentAndE {
+            core::hint::spin_loop();
+        }
+        self.hba_port.serr.set(HbaPortSerr::all());
         self.hba_port.ie.set(HbaPortIE::all());
+        let mut cmd = self.hba_port.cmd.get();
+        cmd.remove(HbaPortCmd::ALPE);
+        self.hba_port.cmd.set(cmd);
         self.start_cmd();
     }
 
     fn find_cmdslot(&self) -> Result<usize, SataDriveError> {
         let mut slots = self.hba_port.sact.get() | self.hba_port.ci.get();
-        let num_of_slots = (self.cap & 0x0F00) >> 8;
+        let num_of_slots = self.cap.number_of_slots().into();
         for i in 0..num_of_slots {
             if (slots & 1) == 0 {
                 return Ok(i);
@@ -581,13 +655,14 @@ impl SataPort {
         }
 
         flags.insert(HbaCmdHeaderFlags::P | HbaCmdHeaderFlags::C);
-        flags.set_cfl(size_of::<FisRegH2D>() / size_of::<u32>());
+        flags.set_cfl(size_of::<FisRegInner<FisRegH2D>>() / size_of::<u32>());
         cmd_header.flags.set(flags);
 
-        let length = ((count - 1) >> 4) + 1;
+        let length = ((count - 1) >> 5) + 1;
         cmd_header.prdtl.set(length as _);
         let cmdtbl = self.cmd_tbl(slot);
         for (buffer, i) in buffer.iter().zip(0..length) {
+            assert!(buffer.start.as_u64() % 2 == 0);
             cmdtbl.get_prdt_entry(i).dba.set(buffer.start);
             cmdtbl.get_prdt_entry(i).set_dbc((buffer.size - 1) as u32);
             cmdtbl.get_prdt_entry(i).set_i(i == length - 1);
@@ -608,6 +683,7 @@ impl SataPort {
         while self.hba_port.tfd.get() & 0x80 | 0x08 == 1 {
             core::hint::spin_loop();
         }
+
         DriveAsync::new(self.hba_port, slot).await?;
 
         return Ok(());
@@ -655,7 +731,7 @@ impl Future for DriveAsync<'_> {
 }
 
 impl AhciDrive {
-    pub fn new(hba_port: &'static mut HbaPort, cap: usize) -> Self {
+    fn new(hba_port: &'static mut HbaPort, cap: HbaCapabilities) -> Self {
         let port = Mutex::new(SataPort {
             hba_port,
             clb: VirtAddr::new(0),
@@ -810,7 +886,7 @@ impl AhciController {
 
         for i in 0..32 {
             if pi.get_bit(i) {
-                let drive = AhciDrive::new(self.hba.get_port(i), self.hba.cap.get() as usize);
+                let drive = AhciDrive::new(self.hba.get_port(i), self.hba.cap.get());
                 let dt = drive.port.lock().check_type();
                 if let Some(dt) = dt {
                     match dt {

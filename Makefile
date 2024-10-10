@@ -126,4 +126,5 @@ clean:
 	cd src/bootloader && cargo clean
 	cd src/kernel && cargo clean
 	cd src/os-runner && cargo clean
+	cd src/proc && cargo clean
 	rm -rf $(BUILD_DIR)

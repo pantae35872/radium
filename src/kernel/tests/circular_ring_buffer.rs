@@ -69,3 +69,21 @@ pub fn interleaved_read_write() {
     assert!(buffer.read().is_some_and(|e| e == 50));
     assert!(buffer.read().is_none());
 }
+
+#[test_case]
+pub fn sequential_read_write() {
+    let buffer = CircularRingBuffer::<_, 4>::new();
+
+    buffer.write(10);
+    assert!(buffer.read().is_some_and(|e| e == 10));
+    buffer.write(20);
+    assert!(buffer.read().is_some_and(|e| e == 20));
+    buffer.write(30);
+    assert!(buffer.read().is_some_and(|e| e == 30));
+    buffer.write(40);
+    assert!(buffer.read().is_some_and(|e| e == 40));
+    buffer.write(50);
+    assert!(buffer.read().is_some_and(|e| e == 50));
+    buffer.write(60);
+    assert!(buffer.read().is_some_and(|e| e == 60));
+}

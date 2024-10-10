@@ -12,9 +12,6 @@ use lazy_static::lazy_static;
 use proc::comptime_alloc;
 use spin::Mutex;
 use x2apic::ioapic::IoApic;
-use x2apic::ioapic::IrqFlags;
-use x2apic::ioapic::IrqMode;
-use x2apic::ioapic::RedirectionTableEntry;
 use x2apic::lapic::xapic_base;
 use x2apic::lapic::LocalApic;
 use x2apic::lapic::LocalApicBuilder;
@@ -108,9 +105,9 @@ pub fn init() {
     memory_controller()
         .lock()
         .phy_map(LAPIC_SIZE, apic_physical_address, LAPIC_VADDR);
-    memory_controller()
-        .lock()
-        .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
+    //memory_controller()
+    //    .lock()
+    //    .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
     LAPICS.init_once(|| {
         let mut lapic = LocalApicBuilder::new()
             .timer_vector(32)
@@ -124,17 +121,17 @@ pub fn init() {
         }
         Mutex::new(lapic)
     });
-    IOAPICS.init_once(|| unsafe {
-        let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
-        let mut entry = RedirectionTableEntry::default();
-        entry.set_mode(IrqMode::Fixed);
-        entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
-        entry.set_dest(LAPICS.get().unwrap().lock().id() as u8);
-        entry.set_vector(PIC_1_OFFSET + 14);
-        ioapic.set_table_entry(10, entry);
-        ioapic.enable_irq(10);
-        Mutex::new(ioapic)
-    });
+    //IOAPICS.init_once(|| unsafe {
+    //    let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
+    //    let mut entry = RedirectionTableEntry::default();
+    //    entry.set_mode(IrqMode::Fixed);
+    //    entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
+    //    entry.set_dest(LAPICS.get().unwrap().lock().id() as u8);
+    //    entry.set_vector(PIC_1_OFFSET + 14);
+    //    ioapic.set_table_entry(10, entry);
+    //    ioapic.enable_irq(10);
+    //    Mutex::new(ioapic)
+    //});
     IDT.load();
 }
 

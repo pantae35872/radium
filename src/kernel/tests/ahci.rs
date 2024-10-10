@@ -4,10 +4,12 @@
 #![reexport_test_harness_main = "test_main"]
 #![test_runner(nothingos::test_runner)]
 
+extern crate alloc;
 extern crate nothingos;
 
 use core::usize;
 
+use alloc::vec;
 use common::boot::BootInformation;
 use nothingos::{
     driver::storage::{ahci_driver::get_ahci, Drive},
@@ -22,7 +24,7 @@ pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> 
     loop {}
 }
 
-const TEST_SIZE_IN_SECTOR: usize = 128; // 512 per sector
+const TEST_SIZE_IN_SECTOR: usize = 256; // 512 per sector
 const SECTOR_TEST_RANGE: u64 = 256;
 #[test_case]
 fn simple_read_write() {
@@ -30,8 +32,8 @@ fn simple_read_write() {
     executor.spawn(Task::new(
         async {
             let mut controller = get_ahci().get_contoller().lock();
-            let mut backup_data = [0u8; TEST_SIZE_IN_SECTOR * 512];
-            let mut data = [0u8; TEST_SIZE_IN_SECTOR * 512];
+            let mut backup_data = vec![0u8; TEST_SIZE_IN_SECTOR * 512];
+            let mut data = vec![0u8; TEST_SIZE_IN_SECTOR * 512];
             get_random(&mut data);
 
             let drive = controller.get_drive(0).expect("Cannot get drive");
@@ -84,8 +86,8 @@ fn sector_read_write() {
     executor.spawn(Task::new(
         async {
             let mut controller = get_ahci().get_contoller().lock();
-            let mut backup_data = [0u8; TEST_SIZE_IN_SECTOR * 512];
-            let mut data = [0u8; TEST_SIZE_IN_SECTOR * 512];
+            let mut backup_data = vec![0u8; TEST_SIZE_IN_SECTOR * 512];
+            let mut data = vec![0u8; TEST_SIZE_IN_SECTOR * 512];
 
             let drive = controller.get_drive(0).expect("Cannot get drive");
             for sector in 0..SECTOR_TEST_RANGE {

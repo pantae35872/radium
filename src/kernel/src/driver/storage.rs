@@ -97,6 +97,7 @@ impl DmaBuffer {
 
     fn copy_into(&self, target: &mut [u8]) {
         assert!(target.len() == self.size);
+        assert!(self.size <= self.allocated_size);
         memory_controller()
             .lock()
             .ident_map(self.allocated_size as u64, self.start.as_u64());
@@ -127,8 +128,9 @@ impl DmaBuffer {
 
 impl Drop for DmaBuffer {
     fn drop(&mut self) {
-        let mut memory_alloc = memory_controller().lock();
-        memory_alloc.physical_dealloc(self.start, self.allocated_size);
+        memory_controller()
+            .lock()
+            .physical_dealloc(self.start, self.allocated_size);
     }
 }
 
