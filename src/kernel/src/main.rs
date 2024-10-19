@@ -2,22 +2,22 @@
 #![no_main]
 #![feature(custom_test_frameworks)]
 #![deny(warnings)]
-#![test_runner(nothingos::test_runner)]
+#![test_runner(radium::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
 extern crate core;
 extern crate lazy_static;
-extern crate nothingos;
+extern crate radium;
 extern crate spin;
 
 use common::boot::BootInformation;
-use nothingos::driver::storage::ahci_driver::get_ahci;
-use nothingos::filesystem::partition::gpt_partition::GPTPartitions;
-use nothingos::logger::LOGGER;
-use nothingos::task::executor::Executor;
-use nothingos::task::{AwaitType, Task};
-use nothingos::{log, println};
+use radium::driver::storage::ahci_driver::get_ahci;
+use radium::filesystem::partition::gpt_partition::GPTPartitions;
+use radium::logger::LOGGER;
+use radium::task::executor::Executor;
+use radium::task::{AwaitType, Task};
+use radium::{log, println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -26,7 +26,7 @@ use nothingos::{log, println};
 
 #[no_mangle]
 pub extern "C" fn start(information_address: *const BootInformation) -> ! {
-    nothingos::init(information_address);
+    radium::init(information_address);
     println!("Hello, world!");
     let mut executor = Executor::new();
     executor.spawn(Task::new(

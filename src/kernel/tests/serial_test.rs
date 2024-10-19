@@ -1,15 +1,15 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(nothingos::test_runner)]
+#![test_runner(radium::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 use common::boot::BootInformation;
-use nothingos::serial_println;
+use radium::serial_println;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {
-    nothingos::init(multiboot_information_address);
+    radium::init(multiboot_information_address);
     test_main();
     loop {}
 }

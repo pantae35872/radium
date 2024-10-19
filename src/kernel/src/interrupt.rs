@@ -1,4 +1,4 @@
-use core::arch::asm;
+use core::arch::naked_asm;
 
 use crate::defer;
 use crate::gdt;
@@ -224,7 +224,7 @@ extern "x86-interrupt" fn double_fault_handler(
 #[no_mangle]
 fn timer() {
     unsafe {
-        asm!(
+        naked_asm!(
             r#"
         push r11
         push r10
@@ -249,7 +249,6 @@ fn timer() {
         pop r11
         iretq
         "#,
-            options(noreturn)
         );
     }
 }
@@ -292,7 +291,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 #[no_mangle]
 fn syscall() {
     unsafe {
-        asm!(
+        naked_asm!(
             r#"
         push r11
         push r10
@@ -317,7 +316,6 @@ fn syscall() {
         pop r11
         iretq
         "#,
-            options(noreturn)
         );
     }
 }

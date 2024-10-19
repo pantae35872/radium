@@ -2,16 +2,16 @@
 #![no_main]
 #![feature(custom_test_frameworks)]
 #![reexport_test_harness_main = "test_main"]
-#![test_runner(nothingos::test_runner)]
+#![test_runner(radium::test_runner)]
 
 extern crate alloc;
-extern crate nothingos;
+extern crate radium;
 
 use core::usize;
 
 use alloc::vec;
 use common::boot::BootInformation;
-use nothingos::{
+use radium::{
     driver::storage::{ahci_driver::get_ahci, Drive},
     task::{executor::Executor, AwaitType, Task},
 };
@@ -19,7 +19,7 @@ use x86_64::instructions::random;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {
-    nothingos::init(multiboot_information_address);
+    radium::init(multiboot_information_address);
     test_main();
     loop {}
 }

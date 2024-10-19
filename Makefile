@@ -12,7 +12,7 @@ endif
 .PHONY: debug release clean run make-test-kernel test-run test disk update font ovmf dbg-run
 .DEFAULT_GOAL := debug
 
-NAME := nothingos
+NAME := radium
 BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 FAT_IMG := $(BUILD_DIR)/fat.img

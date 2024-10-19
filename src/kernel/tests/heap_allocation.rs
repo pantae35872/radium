@@ -1,11 +1,11 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![test_runner(nothingos::test_runner)]
+#![test_runner(radium::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-extern crate nothingos;
+extern crate radium;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -13,7 +13,7 @@ use common::boot::BootInformation;
 
 #[no_mangle]
 pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {
-    nothingos::init(multiboot_information_address);
+    radium::init(multiboot_information_address);
     test_main();
     loop {}
 }

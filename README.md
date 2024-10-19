@@ -1,6 +1,6 @@
-# Nothing OS
+# Radium
 
-Nothing OS is currently in the very early stages of development and is not yet usable as a complete operating system.
+Radium OS is currently in the very early stages of development and is not yet usable as a complete operating system.
 
 ## Build Dependices
 * ```rust``` (lastest nightly)
@@ -14,8 +14,8 @@ Nothing OS is currently in the very early stages of development and is not yet u
 * ```make```
 ## Getting the source code
 ```bash
-git clone https://github.com/pantae35872/nothingos
-cd nothingos
+git clone https://github.com/pantae35872/radium
+cd radium
 ```
 ## Build and Run
 Before building the OS, you might want to choose a font. It is recommended to use default font.

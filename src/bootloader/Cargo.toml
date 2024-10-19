@@ -1,5 +1,5 @@
 [package]
-name = "nothingos-bootloader"
+name = "radium-bootloader"
 version = "0.1.0"
 edition = "2021"
 
