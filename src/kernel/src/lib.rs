@@ -52,7 +52,7 @@ pub fn init(information_address: *const BootInformation) {
     print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();
     interrupt::init();
-    driver::init();
+    driver::init(boot_info);
     userland::init();
     x86_64::instructions::interrupts::enable();
 }

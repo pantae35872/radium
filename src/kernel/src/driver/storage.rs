@@ -11,6 +11,7 @@ use x86_64::PhysAddr;
 
 use crate::inline_if;
 use crate::memory::memory_controller;
+use crate::memory::paging::EntryFlags;
 use crate::utils::floorf64;
 
 pub const MAX_SECTOR: f64 = 63.0;
@@ -98,9 +99,11 @@ impl DmaBuffer {
     fn copy_into(&self, target: &mut [u8]) {
         assert!(target.len() == self.size);
         assert!(self.size <= self.allocated_size);
-        memory_controller()
-            .lock()
-            .ident_map(self.allocated_size as u64, self.start.as_u64());
+        memory_controller().lock().ident_map(
+            self.allocated_size as u64,
+            self.start.as_u64(),
+            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
+        );
 
         let buffer = unsafe { slice::from_raw_parts(self.start.as_u64() as *const u8, self.size) };
         target.copy_from_slice(buffer);
@@ -112,9 +115,11 @@ impl DmaBuffer {
 
     fn copy_into_self(&self, source: &[u8]) {
         assert!(source.len() == self.size);
-        memory_controller()
-            .lock()
-            .ident_map(self.allocated_size as u64, self.start.as_u64());
+        memory_controller().lock().ident_map(
+            self.allocated_size as u64,
+            self.start.as_u64(),
+            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
+        );
 
         let buffer =
             unsafe { slice::from_raw_parts_mut(self.start.as_u64() as *mut u8, self.size) };

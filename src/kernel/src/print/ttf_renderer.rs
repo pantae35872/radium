@@ -6,7 +6,7 @@ use hashbrown::HashMap;
 
 use crate::{
     graphics::{self, color::Color},
-    memory::memory_controller,
+    memory::{memory_controller, paging::EntryFlags},
     BootInformation,
 };
 
@@ -32,6 +32,7 @@ impl TtfRenderer {
             boot_info
                 .font_addr()
                 .expect("Failed to get font for mapping"),
+            EntryFlags::WRITABLE | EntryFlags::PRESENT | EntryFlags::NO_CACHE,
         );
         let font = Font::from_bytes(
             boot_info.font().expect("Failed to get font ownership"),

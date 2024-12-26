@@ -1,8 +1,9 @@
+use core::sync::atomic::{AtomicU64, Ordering};
+
 use allocator::buddy_allocator::BuddyAllocator;
 use common::boot::BootInformation;
 use conquer_once::spin::OnceCell;
 use paging::{ActivePageTable, EntryFlags, Page};
-use proc::comptime_alloc;
 use spin::Mutex;
 use stack_allocator::{Stack, StackAllocator};
 use x86_64::{
@@ -26,8 +27,9 @@ pub fn init(boot_info: &'static BootInformation) {
     enable_nxe_bit();
     enable_write_protect_bit();
     let active_table = remap_the_kernel(&mut allocator, &boot_info);
+
     let stack_allocator = {
-        let stack_alloc_start = Page::containing_address(comptime_alloc!(409600));
+        let stack_alloc_start = Page::containing_address(virt_addr_alloc(409600));
         let stack_alloc_end = stack_alloc_start + 100;
         let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
         StackAllocator::new(stack_alloc_range)
@@ -146,6 +148,29 @@ pub fn memory_controller() -> &'static Mutex<MemoryController<64>> {
         .expect("Memory controller not initialized");
 }
 
+const VIRT_BASE_ADDR: u64 = 0xFFFFFFFF00000000;
+const PAGE_ALIGN: u64 = 4096;
+static CURRENT_ADDR: AtomicU64 = AtomicU64::new(VIRT_BASE_ADDR);
+
+pub fn virt_addr_alloc(size: u64) -> u64 {
+    let mut addr = CURRENT_ADDR.load(Ordering::Acquire);
+    let mut new_addr;
+    loop {
+        new_addr = addr + size + (size as *const u8).align_offset(PAGE_ALIGN as usize) as u64;
+        match CURRENT_ADDR.compare_exchange_weak(
+            addr,
+            new_addr,
+            Ordering::Release,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                return addr;
+            }
+            Err(updated) => addr = updated,
+        }
+    }
+}
+
 pub struct MemoryController<const ORDER: usize> {
     active_table: ActivePageTable,
     allocator: BuddyAllocator<'static, ORDER>,
@@ -177,7 +202,7 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         }
     }
 
-    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64) {
+    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64, flags: EntryFlags) {
         let start_page = Page::containing_address(virt_start);
         let start_frame = Frame::containing_address(phy_start);
         let end_page = Page::containing_address(virt_start + size - 1);
@@ -185,26 +210,16 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         for (page, frame) in Page::range_inclusive(start_page, end_page)
             .zip(Frame::range_inclusive(start_frame, end_frame))
         {
-            self.map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT
-                    | EntryFlags::NO_CACHE
-                    | EntryFlags::WRITABLE
-                    | EntryFlags::WRITE_THROUGH,
-            );
+            self.map_to(page, frame, flags);
         }
     }
 
-    pub fn ident_map(&mut self, size: u64, phy_start: u64) {
+    pub fn ident_map(&mut self, size: u64, phy_start: u64, flags: EntryFlags) {
         let start = Frame::containing_address(phy_start);
         let end = Frame::containing_address(phy_start + size - 1);
         Frame::range_inclusive(start, end).for_each(|frame| {
-            self.active_table.identity_map(
-                frame,
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
-                &mut self.allocator,
-            )
+            self.active_table
+                .identity_map(frame, flags, &mut self.allocator)
         });
     }
 

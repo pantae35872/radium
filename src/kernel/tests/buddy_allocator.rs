@@ -13,8 +13,8 @@ use common::boot::BootInformation;
 use radium::memory::memory_controller;
 
 #[no_mangle]
-pub extern "C" fn start(multiboot_information_address: *mut BootInformation) -> ! {
-    radium::init(multiboot_information_address);
+pub extern "C" fn start(boot_info_address: *mut BootInformation) -> ! {
+    radium::init(boot_info_address);
     test_main();
     loop {}
 }

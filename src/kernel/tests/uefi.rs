@@ -5,16 +5,16 @@
 #![reexport_test_harness_main = "test_main"]
 
 use common::boot::BootInformation;
-use radium::serial_println;
+use radium::driver::uefi_runtime::uefi_runtime;
 
 #[no_mangle]
-pub extern "C" fn start(boot_info_address: *mut BootInformation) -> ! {
+pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
     radium::init(boot_info_address);
     test_main();
     loop {}
 }
 
 #[test_case]
-fn print_serial() {
-    serial_println!("Test serial");
+fn get_time() {
+    assert!(uefi_runtime().get_time().is_some())
 }

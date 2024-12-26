@@ -12,21 +12,24 @@ use core::{u32, usize};
 use alloc::alloc::alloc;
 use alloc::sync::Arc;
 use bit_field::BitField;
-use proc::comptime_alloc;
+use lazy_static::lazy_static;
 use spin::mutex::Mutex;
 use spin::Once;
 use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
 use crate::log;
-use crate::memory::memory_controller;
+use crate::memory::paging::EntryFlags;
+use crate::memory::{memory_controller, virt_addr_alloc};
 use crate::utils::VolatileCell;
 
 use super::{DmaBuffer, DmaRequest, Drive, DriveCommand};
 
 pub static DRIVER: Once<Arc<AhciDriver>> = Once::new();
 
-pub const ABAR_START: u64 = comptime_alloc!(0xFF);
+lazy_static! {
+    pub static ref ABAR_START: u64 = virt_addr_alloc(0xFF);
+}
 pub const ABAR_SIZE: u64 = size_of::<HbaMem>() as u64;
 
 #[derive(Debug)]
@@ -853,9 +856,15 @@ impl PciDeviceHandle for AhciDriver {
             Bar::IO { .. } => panic!("ABAR is in port space somehow"),
         };
 
-        memory_controller()
-            .lock()
-            .phy_map(ABAR_SIZE, abar_address, ABAR_START);
+        memory_controller().lock().phy_map(
+            ABAR_SIZE,
+            abar_address,
+            *ABAR_START,
+            EntryFlags::PRESENT
+                | EntryFlags::NO_CACHE
+                | EntryFlags::WRITABLE
+                | EntryFlags::WRITE_THROUGH,
+        );
 
         self.inner.lock().probe_port();
     }
@@ -865,7 +874,7 @@ impl AhciController {
     pub fn new() -> Self {
         Self {
             drives: [const { None }; 32],
-            hba: unsafe { &mut *((ABAR_START as *mut u8) as *mut HbaMem) },
+            hba: unsafe { &mut *((*ABAR_START as *mut u8) as *mut HbaMem) },
         }
     }
 

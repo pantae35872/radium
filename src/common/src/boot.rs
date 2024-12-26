@@ -1,4 +1,5 @@
 use core::{
+    ffi::c_void,
     slice,
     sync::atomic::{AtomicPtr, Ordering},
 };
@@ -6,7 +7,10 @@ use core::{
 use elf_rs::Elf;
 use uefi::{
     proto::console::gop::ModeInfo,
-    table::boot::{MemoryMap, MemoryType, PAGE_SIZE},
+    table::{
+        boot::{MemoryMap, MemoryType, PAGE_SIZE},
+        Runtime, SystemTable,
+    },
 };
 
 #[repr(C)]
@@ -17,7 +21,7 @@ pub struct BootInformation {
     gop_mode_info: ModeInfo,
     framebuffer: AtomicPtr<u32>, /* &'static mut [u32]*/
     framebuffer_len: usize,
-    runtime_system_table: u64,
+    runtime_system_table: AtomicPtr<c_void>,
     memory_map: MemoryMap<'static>,
     kernel_start: u64,
     kernel_size: usize,
@@ -53,7 +57,7 @@ impl BootInformation {
             .expect("Cannot get max mem")
             >> 30)
             + 1;
-        self.runtime_system_table = runtime_system_table;
+        self.runtime_system_table = AtomicPtr::new(runtime_system_table as *mut c_void);
     }
 
     pub fn init_kernel(
@@ -119,8 +123,11 @@ impl BootInformation {
         self.framebuffer_len * size_of::<u32>()
     }
 
-    pub fn runtime_system_table(&self) -> u64 {
-        self.runtime_system_table
+    pub fn runtime_system_table(&self) -> Option<SystemTable<Runtime>> {
+        let ptr = self
+            .runtime_system_table
+            .swap(core::ptr::null_mut(), Ordering::Acquire);
+        unsafe { SystemTable::<Runtime>::from_ptr(ptr) }
     }
 
     pub fn memory_map(&self) -> &MemoryMap<'static> {

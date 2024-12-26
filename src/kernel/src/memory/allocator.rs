@@ -1,7 +1,9 @@
 use core::ptr;
 
+use crate::memory::virt_addr_alloc;
 use alloc::alloc::*;
-use proc::comptime_alloc;
+use lazy_static::lazy_static;
+
 pub mod buddy_allocator;
 pub mod linked_list;
 
@@ -9,7 +11,9 @@ use self::linked_list::LinkedListAllocator;
 
 use super::memory_controller;
 
-pub const HEAP_START: u64 = comptime_alloc!(0x2000000);
+lazy_static! {
+    pub static ref HEAP_START: u64 = virt_addr_alloc(0x2000000);
+}
 pub const HEAP_SIZE: u64 = 0x2000000; // 32 Mib
 
 pub fn align_up(addr: usize, align: usize) -> usize {
@@ -59,11 +63,11 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
 static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAllocator::new());
 
 pub fn init() {
-    memory_controller().lock().alloc_map(HEAP_SIZE, HEAP_START);
+    memory_controller().lock().alloc_map(HEAP_SIZE, *HEAP_START);
 
     unsafe {
         GLOBAL_ALLOCATOR
             .lock()
-            .init(HEAP_START as usize, HEAP_SIZE as usize);
+            .init(*HEAP_START as usize, HEAP_SIZE as usize);
     }
 }

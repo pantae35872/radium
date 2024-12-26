@@ -6,7 +6,10 @@ use uefi::proto::console::gop::{ModeInfo, PixelFormat};
 
 use common::boot::BootInformation;
 
-use crate::{log, memory::memory_controller};
+use crate::{
+    log,
+    memory::{memory_controller, paging::EntryFlags},
+};
 
 pub mod color;
 
@@ -149,6 +152,7 @@ pub fn init(bootinfo: &BootInformation) {
             bootinfo
                 .framebuffer_addr()
                 .expect("Frame buffer has been already aquired"),
+            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
         );
         Mutex::new(Graphic::new(
             *bootinfo.gop_mode_info(),

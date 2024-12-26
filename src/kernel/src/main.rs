@@ -12,12 +12,13 @@ extern crate radium;
 extern crate spin;
 
 use common::boot::BootInformation;
-use radium::driver::storage::ahci_driver::get_ahci;
-use radium::filesystem::partition::gpt_partition::GPTPartitions;
+use radium::driver::uefi_runtime::uefi_runtime;
+//use radium::driver::storage::ahci_driver::get_ahci;
+//use radium::filesystem::partition::gpt_partition::GPTPartitions;
 use radium::logger::LOGGER;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
-use radium::{log, println};
+use radium::{/*log,*/ println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -25,15 +26,16 @@ use radium::{log, println};
 // TODO: Impelemnts kernel services executor
 
 #[no_mangle]
-pub extern "C" fn start(information_address: *const BootInformation) -> ! {
-    radium::init(information_address);
+pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
+    radium::init(boot_info_address);
     println!("Hello, world!");
+    println!("{:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
-            let mut controller = get_ahci().get_contoller().lock();
-            let drive = controller.get_drive(0).expect("Cannot get drive");
-            let mut gpt = GPTPartitions::new(drive);
+            //let mut controller = get_ahci().get_contoller().lock();
+            //let drive = controller.get_drive(0).expect("Cannot get drive");
+            //let mut gpt = GPTPartitions::new(drive);
 
             //gpt.format().await.unwrap();
             //gpt.set_partiton(
@@ -54,8 +56,8 @@ pub extern "C" fn start(information_address: *const BootInformation) -> ! {
             //)
             //.await
             //.expect("Error");
-            let partition1 = gpt.read_partition(1).await.expect("Error");
-            log!(Debug, "{}", partition1.get_partition_name());
+            //let partition1 = gpt.read_partition(1).await.expect("Error");
+            //log!(Debug, "{}", partition1.get_partition_name());
         },
         AwaitType::Poll,
     ));

@@ -4,12 +4,13 @@ use crate::defer;
 use crate::gdt;
 use crate::hlt_loop;
 use crate::memory::memory_controller;
+use crate::memory::paging::EntryFlags;
+use crate::memory::virt_addr_alloc;
 use crate::print;
 use crate::println;
 use alloc::ffi::CString;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
-use proc::comptime_alloc;
 use spin::Mutex;
 use x2apic::ioapic::IoApic;
 use x2apic::lapic::xapic_base;
@@ -74,8 +75,10 @@ lazy_static! {
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
 
-pub const LAPIC_VADDR: u64 = comptime_alloc!(0xFFF);
-pub const IO_APIC_MMIO_VADDR: u64 = comptime_alloc!(0x1000);
+lazy_static! {
+    pub static ref LAPIC_VADDR: u64 = virt_addr_alloc(0xFFF);
+    pub static ref IO_APIC_MMIO_VADDR: u64 = virt_addr_alloc(0xFFF);
+}
 pub const LAPIC_SIZE: u64 = 0xFFF;
 pub const IO_APIC_MMIO_SIZE: u64 = 0x1000;
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
@@ -102,9 +105,15 @@ impl InterruptIndex {
 
 pub fn init() {
     let apic_physical_address: u64 = unsafe { xapic_base() };
-    memory_controller()
-        .lock()
-        .phy_map(LAPIC_SIZE, apic_physical_address, LAPIC_VADDR);
+    memory_controller().lock().phy_map(
+        LAPIC_SIZE,
+        apic_physical_address,
+        *LAPIC_VADDR,
+        EntryFlags::PRESENT
+            | EntryFlags::NO_CACHE
+            | EntryFlags::WRITABLE
+            | EntryFlags::WRITE_THROUGH,
+    );
     //memory_controller()
     //    .lock()
     //    .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
@@ -113,7 +122,7 @@ pub fn init() {
             .timer_vector(32)
             .error_vector(34)
             .spurious_vector(33)
-            .set_xapic_base(LAPIC_VADDR)
+            .set_xapic_base(*LAPIC_VADDR)
             .build()
             .expect("Could not create lapic");
         unsafe {
