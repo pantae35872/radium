@@ -1,15 +1,14 @@
 use alloc::string::String;
-use x86_64::PhysAddr;
 
 use crate::{
     log,
     memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
 };
 
-use super::AcpiRevisions;
+use super::{rsdt::Xrsdt, AcpiRevisions};
 
 #[repr(C, packed)]
-struct Rsdp {
+pub struct Rsdp {
     signature: [u8; 8],
     checksum: u8,
     oem: [u8; 6],
@@ -18,26 +17,20 @@ struct Rsdp {
 }
 
 #[repr(C, packed)]
-struct Xsdp {
+pub struct Xsdp {
     rdsp: Rsdp,
     length: u32,
-    xsdt: PhysAddr,
+    xsdt: u64,
     ex_checksum: u8,
     reserved: [u8; 3],
 }
-
-pub struct Sdp {
-    #[allow(unused)]
-    sdp: ESdp,
-}
-
 #[allow(unused)]
-enum ESdp {
+pub enum Xrsdp {
     XSDP(&'static Xsdp),
     RSDP(&'static Rsdp),
 }
 
-impl Sdp {
+impl Xrsdp {
     pub unsafe fn new(rsdp_addr: u64) -> Self {
         // Map sdp for revision checking
         memory_controller().lock().ident_map(
@@ -64,26 +57,25 @@ impl Sdp {
                     virt_rdsp,
                     EntryFlags::PRESENT | EntryFlags::NO_CACHE,
                 );
-                ESdp::RSDP(unsafe { Rsdp::new(guard.apply(virt_rdsp)) })
+                Xrsdp::RSDP(unsafe { Rsdp::new(guard.apply(virt_rdsp)) })
             }
             AcpiRevisions::Rev2 => {
-                let virt_xsdt = virt_addr_alloc(size_of::<Xsdp>() as u64);
+                let virt_xsdp = virt_addr_alloc(size_of::<Xsdp>() as u64);
                 let guard = memory_controller().lock().phy_map(
                     size_of::<Xsdp>() as u64,
                     rsdp_addr,
-                    virt_xsdt,
+                    virt_xsdp,
                     EntryFlags::PRESENT | EntryFlags::NO_CACHE,
                 );
-                ESdp::XSDP(unsafe { Xsdp::new(guard.apply(virt_xsdt)) })
+                Xrsdp::XSDP(unsafe { Xsdp::new(guard.apply(virt_xsdp)) })
             }
         };
         sdp.validate();
-        sdp.oem();
-        Self { sdp }
-    }
-}
+        log!(Trace, "Acpi Oem Id: {}", sdp.oem());
 
-impl ESdp {
+        sdp
+    }
+
     fn rsdp(&self) -> &'static Rsdp {
         match self {
             Self::RSDP(rsdp) => rsdp,
@@ -91,15 +83,19 @@ impl ESdp {
         }
     }
 
-    fn oem(&self) {
-        let oem_id = self
-            .rsdp()
+    pub fn oem(&self) -> String {
+        self.rsdp()
             .oem
             .iter()
             .map(|e| *e as char)
-            .collect::<String>();
+            .collect::<String>()
+    }
 
-        log!(Trace, "Uefi oem: {oem_id}");
+    pub unsafe fn xrsdt(&self) -> Xrsdt {
+        match self {
+            Self::XSDP(xsdp) => unsafe { Xrsdt::new(xsdp.xsdt).expect("") },
+            Self::RSDP(rsdp) => unsafe { Xrsdt::new(rsdp.rsdt_addr as u64).expect("") },
+        }
     }
 
     fn validate(&self) {
