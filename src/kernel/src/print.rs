@@ -3,7 +3,7 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::logger::LOGGER;
-use crate::BootInformation;
+use crate::{log, BootInformation};
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
@@ -39,6 +39,7 @@ macro_rules! println {
 }
 
 pub fn init(bootinfo: &BootInformation, foreground_color: Color, background: Color) {
+    log!(Trace, "Initializing text output");
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color, background)));
     LOGGER.add_target(|msg| {
         println!("{msg}");

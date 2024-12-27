@@ -1,11 +1,31 @@
 use alloc::format;
 use common::{boot::BootInformation, toml::parser::TomlValue};
-use uefi::table::{boot::MemoryType, Boot, SystemTable};
+use uefi::table::{boot::MemoryType, cfg::ConfigTableEntry, Boot, SystemTable};
 
 use crate::{
     boot_services::{read_config, read_file},
     elf_loader::load_elf,
 };
+
+pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
+    config_table
+        .iter()
+        .find(|e| {
+            matches!(
+                &e.guid.to_ascii_hex_lower(),
+                b"8868e871-e4f1-11d3-bc22-0080c73c8881"
+            )
+        })
+        .or_else(|| {
+            config_table.iter().find(|e| {
+                matches!(
+                    &e.guid.to_ascii_hex_lower(),
+                    b"eb9d2d30-2d88-11d3-9a16-0090273fc14d"
+                )
+            })
+        })
+        .map(|e| e.address as u64)
+}
 
 pub fn load_kernel(
     system_table: &mut SystemTable<Boot>,
@@ -45,6 +65,7 @@ pub fn load_kernel(
         kern_start,
         (kern_end - kern_start) as usize,
         elf,
+        find_rsdp(system_table.config_table()).unwrap_or(0),
     );
     return (
         entrypoint,

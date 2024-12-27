@@ -42,15 +42,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut system_table).unwrap();
 
     initialize_graphics_bootloader(&mut system_table);
-    let rsdp = system_table.config_table().iter().find(|e| {
-        matches!(
-            &e.guid.to_ascii_hex_lower(),
-            b"eb9d2d30-2d88-11d3-9a16-0090273fc14d" | b"8868e871-e4f1-11d3-bc22-0080c73c8881",
-        )
-    });
-    if let Some(rsdp) = rsdp {
-        println!("Found rsdp: {:?}", rsdp);
-    }
 
     let (entrypoint, boot_info, is_any_key_boot) = load_kernel(&mut system_table);
     if is_any_key_boot {

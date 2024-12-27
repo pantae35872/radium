@@ -12,7 +12,7 @@ use spin::RwLock;
 use crate::utils::circular_ring_buffer::CircularRingBuffer;
 
 pub static LOGGER: Logger = Logger::new();
-const LOG_BUFFER_SIZE: usize = 32;
+const LOG_BUFFER_SIZE: usize = 128;
 const LOG_SUBSCRIBERS_SIZE: usize = 16;
 
 #[macro_export]

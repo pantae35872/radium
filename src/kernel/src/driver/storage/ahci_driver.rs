@@ -825,6 +825,7 @@ impl Drive for AhciDrive {
 
 pub struct AhciController {
     drives: [Option<AhciDrive>; 32],
+    initialized: bool,
     hba: &'static mut HbaMem,
 }
 
@@ -847,7 +848,12 @@ impl PciDeviceHandle for AhciDriver {
     }
 
     fn start(&self, header: &pci::PciHeader) {
-        log!(Info, "Starting ahci driver");
+        if self.inner.lock().initialized() {
+            log!(Warning, "Found two or more achi controller. currently the os support only one ahci controller, ignoring the other one.");
+            return;
+        }
+        log!(Trace, "Initializing ahci driver (2nd phase)");
+        log!(Trace, "Starting ahci driver");
         let abar = header.get_bar(5).expect("Failed to get ABAR for ahci");
 
         let (abar_address, _) = match abar {
@@ -874,11 +880,16 @@ impl AhciController {
     pub fn new() -> Self {
         Self {
             drives: [const { None }; 32],
+            initialized: false,
             hba: unsafe { &mut *((*ABAR_START as *mut u8) as *mut HbaMem) },
         }
     }
 
+    pub fn initialized(&self) -> bool {
+        self.initialized
+    }
     pub fn probe_port(&mut self) {
+        self.initialized = true;
         let pi = self.hba.pi.get();
 
         if self.hba.bohc.get() & 2 == 0 {
@@ -934,11 +945,12 @@ pub fn get_ahci() -> &'static Arc<AhciDriver> {
 }
 
 pub fn init() {
+    log!(Trace, "Initializing ahci driver (1st phase)");
     DRIVER.call_once(|| {
         Arc::new(AhciDriver {
             inner: Mutex::new(AhciController::new()),
         })
     });
-    log!(Info, "Registering ahci driver");
+    log!(Trace, "Registering ahci driver");
     register_driver(get_ahci().clone());
 }

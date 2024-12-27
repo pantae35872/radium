@@ -3,6 +3,7 @@ use core::arch::naked_asm;
 use crate::defer;
 use crate::gdt;
 use crate::hlt_loop;
+use crate::log;
 use crate::memory::memory_controller;
 use crate::memory::paging::EntryFlags;
 use crate::memory::virt_addr_alloc;
@@ -104,6 +105,7 @@ impl InterruptIndex {
 }
 
 pub fn init() {
+    log!(Trace, "Initializing interrupts");
     let apic_physical_address: u64 = unsafe { xapic_base() };
     memory_controller().lock().phy_map(
         LAPIC_SIZE,

@@ -4,6 +4,7 @@ use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::{PrivilegeLevel, VirtAddr};
 
+use crate::log;
 use crate::memory::memory_controller;
 
 pub struct Gdt {
@@ -58,6 +59,7 @@ impl Gdt {
 }
 
 pub fn init_gdt() {
+    log!(Trace, "Initializing gdt");
     use x86_64::instructions::tables::load_tss;
     let double_fault = memory_controller()
         .lock()

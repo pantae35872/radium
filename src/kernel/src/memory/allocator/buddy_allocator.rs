@@ -52,9 +52,7 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
         for area in areas.entries().filter(|e| {
             matches!(
                 e.ty,
-                MemoryType::CONVENTIONAL
-                    | MemoryType::BOOT_SERVICES_DATA
-                    | MemoryType::BOOT_SERVICES_CODE
+                MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE
             )
         }) {
             if area.phys_start == 0 {

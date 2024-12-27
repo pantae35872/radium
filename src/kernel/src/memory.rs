@@ -202,7 +202,15 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         }
     }
 
-    pub fn phy_map(&mut self, size: u64, phy_start: u64, virt_start: u64, flags: EntryFlags) {
+    /// Map the provided virtual address to the provided physical address. if the physical address
+    /// is not align, will return a offset that used to offset the provided virtual address to match the provided physical address.
+    pub fn phy_map(
+        &mut self,
+        size: u64,
+        phy_start: u64,
+        virt_start: u64,
+        flags: EntryFlags,
+    ) -> UnalignPhysicalMapGuard {
         let start_page = Page::containing_address(virt_start);
         let start_frame = Frame::containing_address(phy_start);
         let end_page = Page::containing_address(virt_start + size - 1);
@@ -212,6 +220,7 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         {
             self.map_to(page, frame, flags);
         }
+        return UnalignPhysicalMapGuard::new(phy_start);
     }
 
     pub fn ident_map(&mut self, size: u64, phy_start: u64, flags: EntryFlags) {
@@ -257,6 +266,46 @@ impl<const ORDER: usize> MemoryController<ORDER> {
 
     pub fn allocated(&self) -> usize {
         self.allocator.allocated()
+    }
+}
+
+/// A guard for unalign physical map.
+/// If the caller of phy_map not adding the offset correctly, this will issue a warning.
+pub struct UnalignPhysicalMapGuard {
+    offset: u64,
+    used: bool,
+}
+
+impl UnalignPhysicalMapGuard {
+    pub fn new(phy_addr: u64) -> Self {
+        if (phy_addr as *const u8).is_aligned_to(PAGE_ALIGN as usize) {
+            return Self::new_empty();
+        }
+        Self {
+            offset: PAGE_ALIGN - (phy_addr as *const u8).align_offset(PAGE_ALIGN as usize) as u64,
+            used: false,
+        }
+    }
+
+    pub fn new_empty() -> Self {
+        Self {
+            offset: 0,
+            used: true,
+        }
+    }
+
+    /// Apply the provided virtual address to the required offset, consuming this in the process.
+    pub fn apply(mut self, virt_addr: u64) -> u64 {
+        self.used = true;
+        virt_addr + self.offset
+    }
+}
+
+impl Drop for UnalignPhysicalMapGuard {
+    fn drop(&mut self) {
+        if !self.used {
+            log!(Warning, "Unused physical alignment for virtual address ");
+        }
     }
 }
 

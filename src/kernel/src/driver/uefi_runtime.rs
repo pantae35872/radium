@@ -4,14 +4,17 @@ use spin::{Mutex, Once};
 use uefi::{
     prelude::RuntimeServices,
     table::{
-        boot::MemoryType,
+        boot::{MemoryAttribute, MemoryType},
         runtime::{ResetType, Time},
         Runtime, SystemTable,
     },
     Status,
 };
 
-use crate::memory::{memory_controller, paging::EntryFlags, virt_addr_alloc, PAGE_SIZE};
+use crate::{
+    log,
+    memory::{memory_controller, paging::EntryFlags, virt_addr_alloc, PAGE_SIZE},
+};
 
 pub static UEFI_RUNTIME: Once<UefiRuntime> = Once::new();
 
@@ -49,6 +52,7 @@ pub fn uefi_runtime() -> &'static UefiRuntime {
 }
 
 pub fn init(boot_info: &BootInformation) {
+    log!(Trace, "Initializing uefi runtime");
     let mut runtime_table = boot_info
         .runtime_system_table()
         .expect("Failed to get runtime table ");
@@ -56,8 +60,14 @@ pub fn init(boot_info: &BootInformation) {
     let mut runtime_map: Vec<_> = boot_info
         .memory_map()
         .entries()
-        .filter_map(|descriptor| match descriptor.ty {
-            MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA => {
+        .filter_map(|descriptor| match (descriptor.ty, descriptor.att) {
+            (
+                MemoryType::RUNTIME_SERVICES_CODE
+                | MemoryType::RUNTIME_SERVICES_DATA
+                | MemoryType::BOOT_SERVICES_DATA,
+                _,
+            )
+            | (_, MemoryAttribute::RUNTIME) => {
                 let size = descriptor.page_count * PAGE_SIZE;
                 let virt_addr = virt_addr_alloc(size);
 

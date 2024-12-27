@@ -145,7 +145,7 @@ impl Graphic {
 }
 
 pub fn init(bootinfo: &BootInformation) {
-    log!(Info, "Initializing graphic");
+    log!(Trace, "Initializing graphic");
     DRIVER.init_once(|| {
         memory_controller().lock().ident_map(
             bootinfo.framebuffer_size() as u64,

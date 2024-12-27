@@ -22,6 +22,7 @@ pub struct BootInformation {
     framebuffer: AtomicPtr<u32>, /* &'static mut [u32]*/
     framebuffer_len: usize,
     runtime_system_table: AtomicPtr<c_void>,
+    rsdp: u64,
     memory_map: MemoryMap<'static>,
     kernel_start: u64,
     kernel_size: usize,
@@ -67,6 +68,7 @@ impl BootInformation {
         kernel_start: u64,
         kernel_size: usize,
         elf: Elf<'static>,
+        rsdp: u64,
     ) {
         self.kernel_start = kernel_start;
         self.kernel_size = kernel_size;
@@ -75,6 +77,8 @@ impl BootInformation {
         self.font_start
             .store(font_start as *mut u8, Ordering::Relaxed);
         self.font_size = font_size;
+        assert!(rsdp != 0, "Can't boot with no acpi support");
+        self.rsdp = rsdp;
     }
 
     pub fn init_graphics(
@@ -149,6 +153,10 @@ impl BootInformation {
 
     pub fn font_size(&self) -> usize {
         self.font_size
+    }
+
+    pub fn rsdp(&self) -> u64 {
+        self.rsdp
     }
 
     pub fn font(&self) -> Option<&'static mut [u8]> {
