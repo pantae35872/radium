@@ -3,6 +3,7 @@ use core::fmt::Display;
 use alloc::fmt;
 use common::boot::BootInformation;
 use fadt::Fadt;
+use madt::Madt;
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
 use spin::{Mutex, Once};
@@ -12,7 +13,10 @@ use crate::{
     memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
 };
 
+mod aml;
+mod dsdt;
 mod fadt;
+mod madt;
 mod rsdt;
 mod sdp;
 
@@ -34,7 +38,18 @@ impl Acpi {
     unsafe fn new(rsdp_addr: u64) -> Self {
         let xrsdp = unsafe { Xrsdp::new(rsdp_addr) };
         let xrsdt = unsafe { xrsdp.xrsdt() };
-        let _ = xrsdt.get::<Fadt>().expect("No fadt acpi table found");
+        let madt = xrsdt.get::<Madt>().expect("No fadt acpi table found");
+        let fadt = xrsdt.get::<Fadt>().expect("No dsdt found in acpi table");
+        let dsdt = fadt.dsdt();
+        let aml = dsdt.aml();
+        log!(Trace, "Apic address madt: {:#x}", madt.apic_base());
+        log!(
+            Trace,
+            "DSDT AML. len: {}, first 32 bytes: {:x?}",
+            aml.len(),
+            &aml[0..32]
+        );
+        madt.iter().for_each(|e| log!(Debug, "{e:?}"));
         Self { xrsdp, xrsdt }
     }
 }

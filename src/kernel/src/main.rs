@@ -13,12 +13,10 @@ extern crate spin;
 
 use common::boot::BootInformation;
 use radium::driver::uefi_runtime::uefi_runtime;
-//use radium::driver::storage::ahci_driver::get_ahci;
-//use radium::filesystem::partition::gpt_partition::GPTPartitions;
 use radium::logger::LOGGER;
+use radium::println;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
-use radium::{/*log,*/ println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker

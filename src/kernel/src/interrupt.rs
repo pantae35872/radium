@@ -107,6 +107,7 @@ impl InterruptIndex {
 pub fn init() {
     log!(Trace, "Initializing interrupts");
     let apic_physical_address: u64 = unsafe { xapic_base() };
+    log!(Trace, "Apic base: {:#x}", apic_physical_address);
     memory_controller().lock().phy_map(
         LAPIC_SIZE,
         apic_physical_address,

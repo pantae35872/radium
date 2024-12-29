@@ -8,7 +8,7 @@ use common::boot::BootInformation;
 
 use crate::{
     log,
-    memory::{memory_controller, paging::EntryFlags},
+    memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
 };
 
 pub mod color;
@@ -18,11 +18,13 @@ pub static DRIVER: OnceCell<Mutex<Graphic>> = OnceCell::uninit();
 pub struct Graphic {
     mode: ModeInfo,
     plot_fn: for<'a> fn(&'a mut Self, color: Color, y: usize, x: usize),
+    #[allow(unused)]
     get_pixel_fn: for<'a> fn(&'a Self, x: usize, y: usize) -> Color,
     frame_buffer: &'static mut [u32],
+    real_buffer: &'static mut [u32],
 }
 
-pub const BACKGROUND_COLOR: Color = Color::new(27, 38, 59);
+pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
 
 impl Graphic {
     pub fn new(mode: ModeInfo, frame_buffer: &'static mut [u32]) -> Self {
@@ -40,18 +42,31 @@ impl Graphic {
             PixelFormat::Bitmask => Self::get_pixel_bitmask,
             PixelFormat::BltOnly => unimplemented!("Not support"),
         };
+        let framebuffer_len = frame_buffer.len();
+        let framebuffer_size = (framebuffer_len * size_of::<u32>()) as u64;
+        let virt = virt_addr_alloc(framebuffer_size);
+        memory_controller().lock().alloc_map(framebuffer_size, virt);
         let mut va = Self {
             mode,
             plot_fn,
             get_pixel_fn,
-            frame_buffer,
+            real_buffer: frame_buffer,
+            frame_buffer: unsafe {
+                core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
+            },
         };
         for y in 0..vertical {
             for x in 0..horizontal {
                 va.plot(x, y, BACKGROUND_COLOR);
             }
         }
+        va.swap();
         va
+    }
+
+    /// Performs a backbuffer swap
+    pub fn swap(&mut self) {
+        self.real_buffer.copy_from_slice(self.frame_buffer);
     }
 
     pub fn plot(&mut self, x: usize, y: usize, color: Color) {
@@ -64,21 +79,28 @@ impl Graphic {
     }
 
     pub fn scroll_up(&mut self, scroll_amount: usize) {
-        let (width, height) = self.mode.resolution();
+        let (_width, height) = self.mode.resolution();
 
-        for y in 0..(height - scroll_amount) {
-            for x in 0..width {
-                let src_y = y + scroll_amount;
-                let color = (self.get_pixel_fn)(self, src_y, x);
-                (self.plot_fn)(self, color, y, x);
-            }
+        unsafe {
+            let scroll = &self.frame_buffer[(self.mode.stride() * scroll_amount)..];
+            let scroll_len = scroll.len();
+            let scroll = &scroll[0] as *const u32;
+            core::ptr::copy(scroll, &mut self.frame_buffer[0] as *mut u32, scroll_len);
         }
 
-        for y in (height - scroll_amount)..height {
-            for x in 0..width {
-                (self.plot_fn)(self, BACKGROUND_COLOR, y, x);
-            }
-        }
+        self.frame_buffer[(self.mode.stride() * (height - scroll_amount))..].fill(
+            match self.mode.pixel_format() {
+                PixelFormat::Rgb => BACKGROUND_COLOR.as_u32() << 8,
+                PixelFormat::Bgr => BACKGROUND_COLOR.as_u32(),
+                PixelFormat::Bitmask => match self.mode.pixel_bitmask() {
+                    Some(bitmask) => {
+                        BACKGROUND_COLOR.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue)
+                    }
+                    None => BACKGROUND_COLOR.as_u32(), // Assumes bgr
+                },
+                PixelFormat::BltOnly => unimplemented!("Not support"),
+            },
+        );
     }
 
     fn plot_rgb(&mut self, color: Color, y: usize, x: usize) {

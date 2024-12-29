@@ -17,8 +17,9 @@ pub struct TtfRenderer {
     foreground_color: Color,
     background_color: Color,
     font: Font,
-    y_offset: usize,
+    initial_offset: isize,
     modified_fg_color: Option<Color>,
+    current_line: u64,
 }
 
 impl TtfRenderer {
@@ -43,9 +44,10 @@ impl TtfRenderer {
             data: Vec::with_capacity(5000),
             foreground_color,
             background_color,
+            current_line: 0,
             font,
             modified_fg_color: None,
-            y_offset: 0,
+            initial_offset: 0,
             cache: HashMap::with_capacity(255),
         }
     }
@@ -81,14 +83,15 @@ impl TtfRenderer {
     pub fn update(&mut self) {
         let mut graphics = graphics::DRIVER.get().unwrap().lock();
         let mut offset = 1;
-        let mut y_offset = 0;
+        let mut y_offset = self.initial_offset;
         let (horizontal, vertical) = graphics.get_res();
         let max_lines = vertical / PIXEL_SIZE; // Calculate maximum lines
         let mut iter = self.data.iter().peekable();
-        let mut next_y_offset = 0;
+        let mut current_line = 0;
         while let Some(charactor) = iter.next() {
             if *charactor == '\n' {
                 y_offset += 1;
+                current_line += 1;
                 offset = 1;
                 continue;
             }
@@ -96,6 +99,7 @@ impl TtfRenderer {
                 offset += 8;
                 if offset > horizontal - 10 {
                     y_offset += 1;
+                    current_line += 1;
                     offset = 1;
                 }
                 continue;
@@ -147,36 +151,43 @@ impl TtfRenderer {
             let mut x = metrics.width;
             let mut y = PIXEL_SIZE;
 
-            if y_offset as i32 - self.y_offset as i32 / PIXEL_SIZE as i32 >= max_lines as i32 {
+            if y_offset as i32 >= max_lines as i32 {
                 graphics.scroll_up(PIXEL_SIZE);
-                next_y_offset += PIXEL_SIZE;
-                y_offset = max_lines - 1;
+                y_offset = max_lines as isize - 1;
+                self.initial_offset -= 1;
             }
 
-            for pixel in bitmap.iter().rev() {
-                let color = match self.modified_fg_color {
-                    Some(modcolor) => modcolor,
-                    None => self.foreground_color,
-                };
-                graphics.plot(
-                    x + offset,
-                    ((y + y_offset * PIXEL_SIZE) as i32 - metrics.ymin - self.y_offset as i32)
-                        .try_into()
-                        .unwrap_or(horizontal),
-                    color.blend(self.background_color, *pixel as f32 / 255.0),
-                );
-                x -= 1;
-                if x <= 0 {
-                    y -= 1;
-                    x = metrics.width;
+            if y_offset >= 0 && current_line == self.current_line {
+                for pixel in bitmap.iter().rev() {
+                    let color = match self.modified_fg_color {
+                        Some(modcolor) => modcolor,
+                        None => self.foreground_color,
+                    };
+                    graphics.plot(
+                        x + offset,
+                        ((y as isize + y_offset * PIXEL_SIZE as isize) - metrics.ymin as isize)
+                            .try_into()
+                            .unwrap_or(horizontal),
+                        color.blend(self.background_color, *pixel as f32 / 255.0),
+                    );
+                    x -= 1;
+                    if x <= 0 {
+                        y -= 1;
+                        x = metrics.width;
+                    }
                 }
             }
+
             offset += metrics.width as usize + 2;
             if offset > horizontal - 10 {
                 y_offset += 1;
+                current_line += 1;
                 offset = 1;
             }
         }
-        self.y_offset += next_y_offset;
+        if self.current_line != current_line {
+            graphics.swap();
+        }
+        self.current_line = self.current_line.max(current_line);
     }
 }

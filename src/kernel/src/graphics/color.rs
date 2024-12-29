@@ -29,4 +29,14 @@ impl Color {
 
         return red | green | blue;
     }
+
+    pub fn increase_brightness(&mut self, factor: f32) {
+        if factor < 0.0 {
+            return;
+        }
+
+        self.r = ((self.r as f32 * factor).min(255.0)) as u8;
+        self.g = ((self.g as f32 * factor).min(255.0)) as u8;
+        self.b = ((self.b as f32 * factor).min(255.0)) as u8;
+    }
 }
