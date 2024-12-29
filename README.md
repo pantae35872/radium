@@ -23,17 +23,17 @@ If you want to use custom font follow these step.
 1. Copy your font file (`.ttf`) to the project directory and 
 2. rename it to ```kernel-font.ttf```
 ```bash
-# if you use custom font skip this step 
+# if you use custom font skip this step Only Once!!
 make font
 
-# release build
-make release
-
-# Create a virtual disk image (run this before running the OS for the first time)
+# Create a virtual disk image. Only Once!!
 make disk
 
-# get OVMF.fd before running
+# get OVMF.fd before running. Only Once!!
 make ovmf
+
+# build the os (release mode. if you want debug mode change the make argument to "debug")
+make release
 
 # run using QEMU
 make run
