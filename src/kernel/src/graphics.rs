@@ -26,14 +26,18 @@ pub struct Graphic {
     min_render_y: usize,
     max_render_x: usize,
     max_render_y: usize,
+    //min_glyph_render_x: usize,
+    //min_glyph_render_y: usize,
+    //max_glyph_render_x: usize,
+    //max_glyph_render_y: usize,
 }
 
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
 
 impl Graphic {
     pub fn new(mode: ModeInfo, frame_buffer: &'static mut [u32]) -> Self {
-        let (horizontal, vertical) = mode.resolution();
-        log!(Info, "Graphic resolution {}x{}", horizontal, vertical);
+        let (width, height) = mode.resolution();
+        log!(Info, "Graphic resolution {}x{}", width, height);
         let plot_fn = match mode.pixel_format() {
             PixelFormat::Rgb => Self::plot_rgb,
             PixelFormat::Bgr => Self::plot_bgr,
@@ -58,13 +62,17 @@ impl Graphic {
             frame_buffer: unsafe {
                 core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
             },
-            min_render_x: 0,
-            min_render_y: 0,
+            min_render_x: width - 1,
+            min_render_y: height - 1,
             max_render_x: 0,
             max_render_y: 0,
+            /*min_glyph_render_x: 0,
+            min_glyph_render_y: 0,
+            max_glyph_render_x: 0,
+            max_glyph_render_y: 0,*/
         };
-        for y in 0..vertical {
-            for x in 0..horizontal {
+        for y in 0..height {
+            for x in 0..width {
                 va.plot(x, y, BACKGROUND_COLOR);
             }
         }
@@ -74,11 +82,12 @@ impl Graphic {
 
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
+        let (width, height) = self.mode.resolution();
         let min_pos = self.min_render_y * self.mode.stride() + self.min_render_x;
         let max_pos = self.max_render_y * self.mode.stride() + self.max_render_x;
         self.real_buffer[min_pos..max_pos].copy_from_slice(&self.frame_buffer[min_pos..max_pos]);
-        self.min_render_x = 0;
-        self.min_render_y = 0;
+        self.min_render_x = width - 1;
+        self.min_render_y = height - 1;
         self.max_render_x = 0;
         self.max_render_y = 0;
     }
