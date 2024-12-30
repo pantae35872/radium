@@ -177,12 +177,9 @@ impl Graphic {
         let (_width, height) = self.mode.resolution();
         self.backbuffer_tracker.track_all();
 
-        unsafe {
-            let scroll = &self.frame_buffer[(self.mode.stride() * scroll_amount)..];
-            let scroll_len = scroll.len();
-            let scroll = &scroll[0] as *const u32;
-            core::ptr::copy(scroll, &mut self.frame_buffer[0] as *mut u32, scroll_len);
-        }
+        let stride = self.mode.stride();
+        self.frame_buffer
+            .copy_within(stride * scroll_amount..stride * height, 0);
 
         self.frame_buffer[(self.mode.stride() * (height - scroll_amount))..].fill(
             match self.mode.pixel_format() {
