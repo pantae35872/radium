@@ -1,3 +1,4 @@
+// TODO: change this to u32 for optimization
 #[derive(Clone, Copy, Debug)]
 pub struct Color {
     r: u8,

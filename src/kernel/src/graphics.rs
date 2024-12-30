@@ -17,11 +17,15 @@ pub static DRIVER: OnceCell<Mutex<Graphic>> = OnceCell::uninit();
 
 pub struct Graphic {
     mode: ModeInfo,
-    plot_fn: for<'a> fn(&'a mut Self, color: Color, y: usize, x: usize),
+    plot_fn: for<'a> unsafe fn(&'a mut Self, color: Color, y: usize, x: usize),
     #[allow(unused)]
     get_pixel_fn: for<'a> fn(&'a Self, x: usize, y: usize) -> Color,
     frame_buffer: &'static mut [u32],
     real_buffer: &'static mut [u32],
+    min_render_x: usize,
+    min_render_y: usize,
+    max_render_x: usize,
+    max_render_y: usize,
 }
 
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
@@ -54,6 +58,10 @@ impl Graphic {
             frame_buffer: unsafe {
                 core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
             },
+            min_render_x: 0,
+            min_render_y: 0,
+            max_render_x: 0,
+            max_render_y: 0,
         };
         for y in 0..vertical {
             for x in 0..horizontal {
@@ -66,7 +74,13 @@ impl Graphic {
 
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
-        self.real_buffer.copy_from_slice(self.frame_buffer);
+        let min_pos = self.min_render_y * self.mode.stride() + self.min_render_x;
+        let max_pos = self.max_render_y * self.mode.stride() + self.max_render_x;
+        self.real_buffer[min_pos..max_pos].copy_from_slice(&self.frame_buffer[min_pos..max_pos]);
+        self.min_render_x = 0;
+        self.min_render_y = 0;
+        self.max_render_x = 0;
+        self.max_render_y = 0;
     }
 
     pub fn plot(&mut self, x: usize, y: usize, color: Color) {
@@ -75,11 +89,22 @@ impl Graphic {
             return;
         }
 
-        (self.plot_fn)(self, color, y, x);
+        self.min_render_x = self.min_render_x.min(x);
+        self.min_render_y = self.min_render_y.min(y);
+        self.max_render_x = self.max_render_x.max(x);
+        self.max_render_y = self.max_render_y.max(y);
+
+        unsafe {
+            (self.plot_fn)(self, color, y, x);
+        }
     }
 
     pub fn scroll_up(&mut self, scroll_amount: usize) {
-        let (_width, height) = self.mode.resolution();
+        let (width, height) = self.mode.resolution();
+        self.min_render_x = 0;
+        self.min_render_y = 0;
+        self.max_render_x = width - 1;
+        self.max_render_y = height - 1;
 
         unsafe {
             let scroll = &self.frame_buffer[(self.mode.stride() * scroll_amount)..];
@@ -103,12 +128,20 @@ impl Graphic {
         );
     }
 
-    fn plot_rgb(&mut self, color: Color, y: usize, x: usize) {
-        self.frame_buffer[y * self.mode.stride() + x] = color.as_u32() << 8;
+    unsafe fn plot_rgb(&mut self, color: Color, y: usize, x: usize) {
+        unsafe {
+            *self
+                .frame_buffer
+                .get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32() << 8;
+        }
     }
 
-    fn plot_bgr(&mut self, color: Color, y: usize, x: usize) {
-        self.frame_buffer[y * self.mode.stride() + x] = color.as_u32();
+    unsafe fn plot_bgr(&mut self, color: Color, y: usize, x: usize) {
+        unsafe {
+            *self
+                .frame_buffer
+                .get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32();
+        }
     }
 
     fn plot_bitmask(&mut self, color: Color, y: usize, x: usize) {

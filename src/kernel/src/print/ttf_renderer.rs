@@ -172,7 +172,7 @@ impl TtfRenderer {
                     );
                     x -= 1;
                     if x <= 0 {
-                        y -= 1;
+                        y = y.saturating_sub(1);
                         x = metrics.width;
                     }
                 }
