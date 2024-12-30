@@ -12,9 +12,9 @@ use self::linked_list::LinkedListAllocator;
 use super::memory_controller;
 
 lazy_static! {
-    pub static ref HEAP_START: u64 = virt_addr_alloc(0x2000000);
+    pub static ref HEAP_START: u64 = virt_addr_alloc(HEAP_SIZE);
 }
-pub const HEAP_SIZE: u64 = 0x2000000; // 32 Mib
+pub const HEAP_SIZE: u64 = 0x4000000; // 64 Mib
 
 pub fn align_up(addr: usize, align: usize) -> usize {
     (addr + align - 1) & !(align - 1)

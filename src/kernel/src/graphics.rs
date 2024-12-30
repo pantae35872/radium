@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use bit_field::BitField;
 use color::Color;
 use conquer_once::spin::OnceCell;
@@ -17,6 +18,14 @@ mod frame_tracker;
 
 pub static DRIVER: OnceCell<Mutex<Graphic>> = OnceCell::uninit();
 
+#[derive(Clone)]
+struct GlyphData {
+    start: usize,
+    size: usize,
+    width: usize,
+    height: usize,
+}
+
 pub struct Graphic {
     mode: ModeInfo,
     plot_fn: for<'a> unsafe fn(&'a mut Self, color: Color, y: usize, x: usize),
@@ -25,6 +34,9 @@ pub struct Graphic {
     frame_buffer: &'static mut [u32],
     real_buffer: &'static mut [u32],
     backbuffer_tracker: FrameTracker,
+    glyph_tracker: FrameTracker,
+    glyphs: Vec<u32>,
+    glyph_ids: Vec<GlyphData>,
 }
 
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
@@ -58,6 +70,9 @@ impl Graphic {
                 core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
             },
             backbuffer_tracker: FrameTracker::new(width, height, mode.stride()),
+            glyph_tracker: FrameTracker::new(width, height, mode.stride()),
+            glyphs: Vec::new(),
+            glyph_ids: Vec::new(),
         };
         for y in 0..height {
             for x in 0..width {
@@ -71,9 +86,77 @@ impl Graphic {
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
         let min_pos = self.backbuffer_tracker.frame_buffer_min();
-        let max_pos = self.backbuffer_tracker.frame_buffer_max();
-        self.real_buffer[min_pos..max_pos].copy_from_slice(&self.frame_buffer[min_pos..max_pos]);
+        let max_pos = self
+            .backbuffer_tracker
+            .frame_buffer_max()
+            .min(self.real_buffer.len() - 1);
+        self.real_buffer[min_pos..=max_pos].copy_from_slice(&self.frame_buffer[min_pos..=max_pos]);
         self.backbuffer_tracker.reset();
+    }
+
+    /// Create a new glyph and returns it's id
+    pub fn new_glyph<F>(&mut self, render: F) -> usize
+    where
+        F: FnOnce(&mut Self),
+    {
+        self.glyph_tracker.reset();
+        render(self);
+        let glyph_min = self.glyph_tracker.frame_buffer_min();
+        let glyph_max = self.glyph_tracker.frame_buffer_max();
+        let glyph = &self.frame_buffer[glyph_min..=glyph_max];
+        self.glyph_ids.push(GlyphData {
+            start: self.glyphs.len(),
+            size: glyph.len(),
+            width: self.glyph_tracker.frame_width(),
+            height: self.glyph_tracker.frame_height(),
+        });
+        self.glyphs.extend_from_slice(glyph);
+        self.glyph_ids.len() - 1
+    }
+
+    pub fn plot_glyph(&mut self, x: usize, y: usize, glyph_id: usize) {
+        let (width, height) = self.mode.resolution();
+
+        if x >= width || y >= height {
+            return;
+        }
+
+        let glyph_data = match self.glyph_ids.get(glyph_id) {
+            Some(glyph) => glyph,
+            None => {
+                log!(Error, "Invalid glyph id");
+                return;
+            }
+        }
+        .clone();
+        let glyph = match self
+            .glyphs
+            .get(glyph_data.start..(glyph_data.start + glyph_data.size))
+        {
+            Some(glyph) => glyph,
+            None => {
+                log!(Error, "Invalid glyph data");
+                return;
+            }
+        };
+        let stride = self.mode.stride();
+        let start_x = x;
+        let start_y = y;
+
+        for yy in 0..glyph_data.height {
+            let fb_offset = (start_y + yy) * stride + start_x;
+            let glyph_offset = yy * stride;
+
+            if start_y + yy >= height {
+                continue;
+            }
+
+            self.frame_buffer[fb_offset..fb_offset + glyph_data.width]
+                .copy_from_slice(&glyph[glyph_offset..glyph_offset + glyph_data.width]);
+        }
+        self.backbuffer_tracker.track(x, y);
+        self.backbuffer_tracker
+            .track(x + glyph_data.width, y + glyph_data.height);
     }
 
     pub fn plot(&mut self, x: usize, y: usize, color: Color) {
@@ -83,6 +166,7 @@ impl Graphic {
         }
 
         self.backbuffer_tracker.track(x, y);
+        self.glyph_tracker.track(x, y);
 
         unsafe {
             (self.plot_fn)(self, color, y, x);
@@ -184,6 +268,10 @@ impl Graphic {
     pub fn get_res(&self) -> (usize, usize) {
         return self.mode.resolution();
     }
+}
+
+pub fn graphic() -> &'static Mutex<Graphic> {
+    DRIVER.get().expect("Uninitialize graphics")
 }
 
 pub fn init(bootinfo: &BootInformation) {

@@ -1,14 +1,20 @@
-use core::usize;
+use core::{isize, usize};
 
 use alloc::{string::String, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 
 use crate::{
-    graphics::{self, color::Color},
+    graphics::{color::Color, graphic},
     memory::{memory_controller, paging::EntryFlags},
     BootInformation,
 };
+
+#[derive(Hash, PartialEq, Eq)]
+struct Glyph {
+    color: u32,
+    character: char,
+}
 
 const PIXEL_SIZE: usize = 25;
 pub struct TtfRenderer {
@@ -20,6 +26,7 @@ pub struct TtfRenderer {
     initial_offset: isize,
     modified_fg_color: Option<Color>,
     current_line: u64,
+    glyph_cache: HashMap<Glyph, usize>,
 }
 
 impl TtfRenderer {
@@ -49,6 +56,7 @@ impl TtfRenderer {
             modified_fg_color: None,
             initial_offset: 0,
             cache: HashMap::with_capacity(255),
+            glyph_cache: HashMap::with_capacity(255),
         }
     }
 
@@ -73,29 +81,29 @@ impl TtfRenderer {
                 return true;
             }
             None => {
-                let font = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
-                self.cache.insert(*charactor, font);
+                let ft = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
+                self.cache.insert(*charactor, ft);
                 return false;
             }
         };
     }
 
     pub fn update(&mut self) {
-        let mut graphics = graphics::DRIVER.get().unwrap().lock();
+        let mut graphics = graphic().lock();
         let mut offset = 1;
         let mut y_offset = self.initial_offset;
         let (horizontal, vertical) = graphics.get_res();
-        let max_lines = vertical / PIXEL_SIZE; // Calculate maximum lines
+        let max_lines = vertical / PIXEL_SIZE - 1; // Calculate maximum lines
         let mut iter = self.data.iter().peekable();
         let mut current_line = 0;
-        while let Some(charactor) = iter.next() {
-            if *charactor == '\n' {
+        while let Some(character) = iter.next() {
+            if *character == '\n' {
                 y_offset += 1;
                 current_line += 1;
                 offset = 1;
                 continue;
             }
-            if *charactor == ' ' {
+            if *character == ' ' {
                 offset += 8;
                 if offset > horizontal - 10 {
                     y_offset += 1;
@@ -104,7 +112,7 @@ impl TtfRenderer {
                 }
                 continue;
             }
-            if *charactor == '\x1b' {
+            if *character == '\x1b' {
                 if iter.next_if(|e| **e == '[').is_some() {
                     let mut buf = String::new();
                     while let Some(number) = iter.next() {
@@ -140,12 +148,12 @@ impl TtfRenderer {
                 }
                 continue;
             }
-            let (metrics, bitmap) = match self.cache.get_mut(charactor) {
+            let (metrics, bitmap) = match self.cache.get_mut(character) {
                 Some(polygon) => polygon,
                 None => {
-                    let font = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
-                    self.cache.insert(*charactor, font);
-                    self.cache.get_mut(charactor).unwrap()
+                    let font = self.font.rasterize(*character, PIXEL_SIZE as f32);
+                    self.cache.insert(*character, font);
+                    self.cache.get_mut(character).unwrap()
                 }
             };
             let mut x = metrics.width;
@@ -158,24 +166,78 @@ impl TtfRenderer {
             }
 
             if y_offset >= 0 && current_line == self.current_line {
-                for pixel in bitmap.iter().rev() {
-                    let color = match self.modified_fg_color {
-                        Some(modcolor) => modcolor,
-                        None => self.foreground_color,
-                    };
-                    graphics.plot(
-                        x + offset,
-                        ((y as isize + y_offset * PIXEL_SIZE as isize) - metrics.ymin as isize)
+                let color = match self.modified_fg_color {
+                    Some(modcolor) => modcolor,
+                    None => self.foreground_color,
+                };
+                self.glyph_cache
+                    .entry(Glyph {
+                        character: *character,
+                        color: color.as_u32(),
+                    })
+                    .and_modify(|id| {
+                        graphics.plot_glyph(
+                            offset + 1,
+                            (y_offset * PIXEL_SIZE as isize
+                                + (y as isize - metrics.height as isize)
+                                - metrics.ymin as isize
+                                + 1)
                             .try_into()
                             .unwrap_or(horizontal),
-                        color.blend(self.background_color, *pixel as f32 / 255.0),
-                    );
-                    x -= 1;
-                    if x <= 0 {
-                        y = y.saturating_sub(1);
-                        x = metrics.width;
+                            *id,
+                        );
+                    })
+                    .or_insert_with(|| {
+                        graphics.new_glyph(|graphics| {
+                            for pixel in bitmap.iter().rev() {
+                                graphics.plot(
+                                    x + offset,
+                                    ((y as isize + y_offset * PIXEL_SIZE as isize)
+                                        - metrics.ymin as isize)
+                                        .try_into()
+                                        .unwrap_or(horizontal),
+                                    color.blend(self.background_color, *pixel as f32 / 255.0),
+                                );
+                                x -= 1;
+                                if x <= 0 {
+                                    y = y.saturating_sub(1);
+                                    x = metrics.width;
+                                }
+                            }
+                        })
+                    });
+                /*glyph_id = Some(match glyph_id {
+                    Some(id) => {
+                        graphics.plot_glyph(
+                            offset + 1,
+                            (y_offset * PIXEL_SIZE as isize
+                                + (y as isize - metrics.height as isize)
+                                - metrics.ymin as isize
+                                + 1)
+                            .try_into()
+                            .unwrap_or(horizontal),
+                            *id,
+                        );
+                        *id
                     }
-                }
+                    None => graphics.new_glyph(|graphics| {
+                        for pixel in bitmap.iter().rev() {
+                            graphics.plot(
+                                x + offset,
+                                ((y as isize + y_offset * PIXEL_SIZE as isize)
+                                    - metrics.ymin as isize)
+                                    .try_into()
+                                    .unwrap_or(horizontal),
+                                color.blend(self.background_color, *pixel as f32 / 255.0),
+                            );
+                            x -= 1;
+                            if x <= 0 {
+                                y = y.saturating_sub(1);
+                                x = metrics.width;
+                            }
+                        }
+                    }),
+                });*/
             }
 
             offset += metrics.width as usize + 2;

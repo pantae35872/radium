@@ -43,6 +43,14 @@ impl FrameTracker {
         self.max_y * self.stride + self.max_x
     }
 
+    pub fn frame_width(&self) -> usize {
+        self.max_x.abs_diff(self.min_x) + 1
+    }
+
+    pub fn frame_height(&self) -> usize {
+        self.max_y.abs_diff(self.min_y) + 1
+    }
+
     pub fn reset(&mut self) {
         self.min_x = self.width - 1;
         self.min_y = self.height - 1;
