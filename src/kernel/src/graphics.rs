@@ -1,6 +1,7 @@
 use bit_field::BitField;
 use color::Color;
 use conquer_once::spin::OnceCell;
+use frame_tracker::FrameTracker;
 use spin::mutex::Mutex;
 use uefi::proto::console::gop::{ModeInfo, PixelFormat};
 
@@ -12,6 +13,7 @@ use crate::{
 };
 
 pub mod color;
+mod frame_tracker;
 
 pub static DRIVER: OnceCell<Mutex<Graphic>> = OnceCell::uninit();
 
@@ -22,14 +24,7 @@ pub struct Graphic {
     get_pixel_fn: for<'a> fn(&'a Self, x: usize, y: usize) -> Color,
     frame_buffer: &'static mut [u32],
     real_buffer: &'static mut [u32],
-    min_render_x: usize,
-    min_render_y: usize,
-    max_render_x: usize,
-    max_render_y: usize,
-    //min_glyph_render_x: usize,
-    //min_glyph_render_y: usize,
-    //max_glyph_render_x: usize,
-    //max_glyph_render_y: usize,
+    backbuffer_tracker: FrameTracker,
 }
 
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
@@ -62,14 +57,7 @@ impl Graphic {
             frame_buffer: unsafe {
                 core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
             },
-            min_render_x: width - 1,
-            min_render_y: height - 1,
-            max_render_x: 0,
-            max_render_y: 0,
-            /*min_glyph_render_x: 0,
-            min_glyph_render_y: 0,
-            max_glyph_render_x: 0,
-            max_glyph_render_y: 0,*/
+            backbuffer_tracker: FrameTracker::new(width, height, mode.stride()),
         };
         for y in 0..height {
             for x in 0..width {
@@ -82,14 +70,10 @@ impl Graphic {
 
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
-        let (width, height) = self.mode.resolution();
-        let min_pos = self.min_render_y * self.mode.stride() + self.min_render_x;
-        let max_pos = self.max_render_y * self.mode.stride() + self.max_render_x;
+        let min_pos = self.backbuffer_tracker.frame_buffer_min();
+        let max_pos = self.backbuffer_tracker.frame_buffer_max();
         self.real_buffer[min_pos..max_pos].copy_from_slice(&self.frame_buffer[min_pos..max_pos]);
-        self.min_render_x = width - 1;
-        self.min_render_y = height - 1;
-        self.max_render_x = 0;
-        self.max_render_y = 0;
+        self.backbuffer_tracker.reset();
     }
 
     pub fn plot(&mut self, x: usize, y: usize, color: Color) {
@@ -98,10 +82,7 @@ impl Graphic {
             return;
         }
 
-        self.min_render_x = self.min_render_x.min(x);
-        self.min_render_y = self.min_render_y.min(y);
-        self.max_render_x = self.max_render_x.max(x);
-        self.max_render_y = self.max_render_y.max(y);
+        self.backbuffer_tracker.track(x, y);
 
         unsafe {
             (self.plot_fn)(self, color, y, x);
@@ -109,11 +90,8 @@ impl Graphic {
     }
 
     pub fn scroll_up(&mut self, scroll_amount: usize) {
-        let (width, height) = self.mode.resolution();
-        self.min_render_x = 0;
-        self.min_render_y = 0;
-        self.max_render_x = width - 1;
-        self.max_render_y = height - 1;
+        let (_width, height) = self.mode.resolution();
+        self.backbuffer_tracker.track_all();
 
         unsafe {
             let scroll = &self.frame_buffer[(self.mode.stride() * scroll_amount)..];
