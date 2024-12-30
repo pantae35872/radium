@@ -13,8 +13,6 @@ extern crate spin;
 
 use common::boot::BootInformation;
 use radium::driver::uefi_runtime::uefi_runtime;
-//use radium::graphics::color::Color;
-//use radium::graphics::graphic;
 use radium::logger::LOGGER;
 use radium::println;
 use radium::task::executor::Executor;
@@ -24,24 +22,12 @@ use radium::task::{AwaitType, Task};
 // TODO: Use ahci interrupt (needs io apic) with waker
 // TODO: Implements waker based async mutex
 // TODO: Impelemnts kernel services executor
-// TODO: Fix text scrolling issue
 
 #[no_mangle]
 pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
     radium::init(boot_info_address);
     println!("Hello, world!");
     println!("{:?}", uefi_runtime().get_time());
-    /*let mut graphic = graphic().lock();
-    let glyph = graphic.new_glyph(|graphic| {
-        for y in 0..10 {
-            for x in 0..10 {
-                graphic.plot(x, y, Color::new(0xFF, 0, 0));
-            }
-        }
-        graphic.swap();
-    });
-    graphic.plot_glyph(20, 20, glyph);
-    graphic.swap();*/
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
