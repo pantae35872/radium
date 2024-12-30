@@ -75,19 +75,6 @@ impl TtfRenderer {
         self.update();
     }
 
-    pub fn cache(&mut self, charactor: &char) -> bool {
-        match self.cache.get_mut(charactor) {
-            Some(_) => {
-                return true;
-            }
-            None => {
-                let ft = self.font.rasterize(*charactor, PIXEL_SIZE as f32);
-                self.cache.insert(*charactor, ft);
-                return false;
-            }
-        };
-    }
-
     pub fn update(&mut self) {
         let mut graphics = graphic().lock();
         let mut offset = 1;
@@ -206,38 +193,6 @@ impl TtfRenderer {
                             }
                         })
                     });
-                /*glyph_id = Some(match glyph_id {
-                    Some(id) => {
-                        graphics.plot_glyph(
-                            offset + 1,
-                            (y_offset * PIXEL_SIZE as isize
-                                + (y as isize - metrics.height as isize)
-                                - metrics.ymin as isize
-                                + 1)
-                            .try_into()
-                            .unwrap_or(horizontal),
-                            *id,
-                        );
-                        *id
-                    }
-                    None => graphics.new_glyph(|graphics| {
-                        for pixel in bitmap.iter().rev() {
-                            graphics.plot(
-                                x + offset,
-                                ((y as isize + y_offset * PIXEL_SIZE as isize)
-                                    - metrics.ymin as isize)
-                                    .try_into()
-                                    .unwrap_or(horizontal),
-                                color.blend(self.background_color, *pixel as f32 / 255.0),
-                            );
-                            x -= 1;
-                            if x <= 0 {
-                                y = y.saturating_sub(1);
-                                x = metrics.width;
-                            }
-                        }
-                    }),
-                });*/
             }
 
             offset += metrics.width as usize + 2;
