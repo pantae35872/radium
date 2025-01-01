@@ -16,7 +16,6 @@ struct Glyph {
     character: char,
 }
 
-const PIXEL_SIZE: usize = 25;
 pub struct TtfRenderer {
     data: Vec<char>,
     cache: HashMap<char, (Metrics, Vec<u8>)>,
@@ -27,6 +26,7 @@ pub struct TtfRenderer {
     modified_fg_color: Option<Color>,
     current_line: u64,
     glyph_cache: HashMap<Glyph, usize>,
+    pixel_size: usize,
 }
 
 impl TtfRenderer {
@@ -57,6 +57,7 @@ impl TtfRenderer {
             initial_offset: 0,
             cache: HashMap::with_capacity(255),
             glyph_cache: HashMap::with_capacity(255),
+            pixel_size: boot_info.font_pixel_size(),
         }
     }
 
@@ -80,7 +81,7 @@ impl TtfRenderer {
         let mut offset = 1;
         let mut y_offset = self.initial_offset;
         let (horizontal, vertical) = graphics.get_res();
-        let max_lines = vertical / PIXEL_SIZE - 1; // Calculate maximum lines
+        let max_lines = vertical / self.pixel_size - 1; // Calculate maximum lines
         let mut iter = self.data.iter().peekable();
         let mut current_line = 0;
         while let Some(character) = iter.next() {
@@ -138,16 +139,16 @@ impl TtfRenderer {
             let (metrics, bitmap) = match self.cache.get_mut(character) {
                 Some(polygon) => polygon,
                 None => {
-                    let font = self.font.rasterize(*character, PIXEL_SIZE as f32);
+                    let font = self.font.rasterize(*character, self.pixel_size as f32);
                     self.cache.insert(*character, font);
                     self.cache.get_mut(character).unwrap()
                 }
             };
             let mut x = metrics.width;
-            let mut y = PIXEL_SIZE;
+            let mut y = self.pixel_size;
 
             if y_offset as i32 >= max_lines as i32 {
-                graphics.scroll_up(PIXEL_SIZE);
+                graphics.scroll_up(self.pixel_size);
                 y_offset = max_lines as isize - 1;
                 self.initial_offset -= 1;
             }
@@ -165,7 +166,7 @@ impl TtfRenderer {
                     .and_modify(|id| {
                         graphics.plot_glyph(
                             offset + 1,
-                            (y_offset * PIXEL_SIZE as isize
+                            (y_offset * self.pixel_size as isize
                                 + (y as isize - metrics.height as isize)
                                 - metrics.ymin as isize
                                 + 1)
@@ -179,7 +180,7 @@ impl TtfRenderer {
                             for pixel in bitmap.iter().rev() {
                                 graphics.plot(
                                     x + offset,
-                                    ((y as isize + y_offset * PIXEL_SIZE as isize)
+                                    ((y as isize + y_offset * self.pixel_size as isize)
                                         - metrics.ymin as isize)
                                         .try_into()
                                         .unwrap_or(horizontal),

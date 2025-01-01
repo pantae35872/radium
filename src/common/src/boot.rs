@@ -29,6 +29,7 @@ pub struct BootInformation {
     elf_section: Elf<'static>,
     font_start: AtomicPtr<u8>,
     font_size: usize,
+    font_pixel_size: usize,
 }
 
 impl BootInformation {
@@ -65,6 +66,7 @@ impl BootInformation {
         &mut self,
         font_start: u64,
         font_size: usize,
+        font_pixel_size: usize,
         kernel_start: u64,
         kernel_size: usize,
         elf: Elf<'static>,
@@ -77,6 +79,7 @@ impl BootInformation {
         self.font_start
             .store(font_start as *mut u8, Ordering::Relaxed);
         self.font_size = font_size;
+        self.font_pixel_size = font_pixel_size;
         assert!(rsdp != 0, "Can't boot with no acpi support");
         self.rsdp = rsdp;
     }
@@ -153,6 +156,10 @@ impl BootInformation {
 
     pub fn font_size(&self) -> usize {
         self.font_size
+    }
+
+    pub fn font_pixel_size(&self) -> usize {
+        self.font_pixel_size
     }
 
     pub fn rsdp(&self) -> u64 {

@@ -58,10 +58,16 @@ pub fn load_kernel(
     };
 
     let (entrypoint, kern_start, kern_end, elf) = load_elf(system_table, kernel_buffer);
+    let font_size = config
+        .get("font_size")
+        .expect("font_size not found in the config file")
+        .as_interger()
+        .expect("font_size is not an integer") as usize;
 
     boot_info.init_kernel(
         kernel_font_buffer.as_ptr() as u64,
         kernel_font_buffer.len(),
+        font_size,
         kern_start,
         (kern_end - kern_start) as usize,
         elf,
