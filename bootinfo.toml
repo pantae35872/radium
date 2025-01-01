@@ -1,4 +1,4 @@
 kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
-font_size = 16
+font_size = 24
 any_key_boot = true

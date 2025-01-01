@@ -152,8 +152,7 @@ impl TtfRenderer {
                 y_offset = max_lines as isize - 1;
                 self.initial_offset -= 1;
             }
-
-            if y_offset >= 0 && current_line == self.current_line {
+            if y_offset >= 0 && current_line >= self.current_line {
                 let color = match self.modified_fg_color {
                     Some(modcolor) => modcolor,
                     None => self.foreground_color,

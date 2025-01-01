@@ -22,7 +22,6 @@ use radium::task::{AwaitType, Task};
 // TODO: Use ahci interrupt (needs io apic) with waker
 // TODO: Implements waker based async mutex
 // TODO: Impelemnts kernel services executor
-// TODO: Fix one line oo many charactors issues in the ttf renderer
 
 #[no_mangle]
 pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
