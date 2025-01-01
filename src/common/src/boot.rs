@@ -130,6 +130,10 @@ impl BootInformation {
         self.framebuffer_len * size_of::<u32>()
     }
 
+    pub fn framebuffer_len(&self) -> usize {
+        self.framebuffer_len
+    }
+
     pub fn runtime_system_table(&self) -> Option<SystemTable<Runtime>> {
         let ptr = self
             .runtime_system_table

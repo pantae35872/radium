@@ -2,6 +2,7 @@ use alloc::vec::Vec;
 use bit_field::BitField;
 use color::Color;
 use conquer_once::spin::OnceCell;
+use core::arch::asm;
 use frame_tracker::FrameTracker;
 use spin::mutex::Mutex;
 use uefi::proto::console::gop::{ModeInfo, PixelFormat};
@@ -90,7 +91,14 @@ impl Graphic {
             .backbuffer_tracker
             .frame_buffer_max()
             .min(self.real_buffer.len() - 1);
-        self.real_buffer[min_pos..=max_pos].copy_from_slice(&self.frame_buffer[min_pos..=max_pos]);
+        unsafe {
+            let src = &self.frame_buffer[min_pos..=max_pos];
+            let dst = &mut self.real_buffer[min_pos..=max_pos];
+            let dst_ptr = &mut dst[0] as *mut u32 as *mut u8;
+            let src_ptr = &src[0] as *const u32 as *const u8;
+            let src_len = src.len() * 4;
+            Self::memmove_sse(dst_ptr, src_ptr, src_len);
+        }
         self.backbuffer_tracker.reset();
     }
 
@@ -151,8 +159,11 @@ impl Graphic {
                 continue;
             }
 
-            self.frame_buffer[fb_offset..fb_offset + glyph_data.width]
-                .copy_from_slice(&glyph[glyph_offset..glyph_offset + glyph_data.width]);
+            unsafe {
+                let dest = self.frame_buffer.as_mut_ptr().add(fb_offset);
+                let src = glyph.as_ptr().add(glyph_offset);
+                Self::memmove_sse(dest as *mut u8, src as *const u8, glyph_data.width * 4);
+            }
         }
         self.backbuffer_tracker.track(x, y);
         self.backbuffer_tracker
@@ -173,13 +184,62 @@ impl Graphic {
         }
     }
 
+    /// This function is only intended to be used by this module
+    unsafe fn memmove_sse(mut dest: *mut u8, mut src: *const u8, count: usize) {
+        let mut i = 0;
+
+        while count - i >= 128 {
+            unsafe {
+                asm!(
+                    "movdqu xmm0, [{src}]",
+                    "movdqu xmm1, [{src} + 16]",
+                    "movdqu xmm2, [{src} + 32]",
+                    "movdqu xmm3, [{src} + 48]",
+                    "movdqu xmm4, [{src} + 64]",
+                    "movdqu xmm5, [{src} + 80]",
+                    "movdqu xmm6, [{src} + 96]",
+                    "movdqu xmm7, [{src} + 112]",
+                    "movdqu [{dst}], xmm0",
+                    "movdqu [{dst} + 16], xmm1",
+                    "movdqu [{dst} + 32], xmm2",
+                    "movdqu [{dst} + 48], xmm3",
+                    "movdqu [{dst} + 64], xmm4",
+                    "movdqu [{dst} + 80], xmm5",
+                    "movdqu [{dst} + 96], xmm6",
+                    "movdqu [{dst} + 112], xmm7",
+                    src = in(reg) src,
+                    dst = in(reg) dest,
+                    options(nostack, preserves_flags),
+                );
+                src = src.add(128);
+                dest = dest.add(128);
+            }
+            i += 128;
+        }
+
+        let remaining = count - i;
+        if remaining > 0 {
+            unsafe {
+                core::ptr::copy(src.add(i), dest.add(i), remaining);
+            }
+        }
+    }
+
     pub fn scroll_up(&mut self, scroll_amount: usize) {
         let (_width, height) = self.mode.resolution();
         self.backbuffer_tracker.track_all();
 
         let stride = self.mode.stride();
-        self.frame_buffer
-            .copy_within(stride * scroll_amount..stride * height, 0);
+        unsafe {
+            let src = &self.frame_buffer[stride * scroll_amount..stride * height];
+            let src_ptr = &src[0] as *const u32 as *const u8;
+            let src_len = src.len() * 4;
+            Self::memmove_sse(
+                &mut self.frame_buffer[0] as *mut u32 as *mut u8,
+                src_ptr,
+                src_len,
+            );
+        }
 
         self.frame_buffer[(self.mode.stride() * (height - scroll_amount))..].fill(
             match self.mode.pixel_format() {
@@ -274,18 +334,23 @@ pub fn graphic() -> &'static Mutex<Graphic> {
 pub fn init(bootinfo: &BootInformation) {
     log!(Trace, "Initializing graphic");
     DRIVER.init_once(|| {
-        memory_controller().lock().ident_map(
+        let virt = virt_addr_alloc(bootinfo.framebuffer_size() as u64);
+        let guard = memory_controller().lock().phy_map(
             bootinfo.framebuffer_size() as u64,
             bootinfo
                 .framebuffer_addr()
                 .expect("Frame buffer has been already aquired"),
-            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
+            virt,
+            EntryFlags::WRITABLE
+                | EntryFlags::NO_CACHE
+                | EntryFlags::PRESENT
+                | EntryFlags::WRITE_THROUGH,
         );
-        Mutex::new(Graphic::new(
-            *bootinfo.gop_mode_info(),
-            bootinfo
-                .framebuffer()
-                .expect("Failed to aquire framebuffer from bootinfo it already been taken"),
-        ))
+        Mutex::new(Graphic::new(*bootinfo.gop_mode_info(), unsafe {
+            core::slice::from_raw_parts_mut(
+                guard.apply(virt) as *mut u32,
+                bootinfo.framebuffer_len(),
+            )
+        }))
     });
 }

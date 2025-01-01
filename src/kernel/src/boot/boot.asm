@@ -75,7 +75,7 @@ enable_paging:
   ; load p4 to cr3 register 
   mov rax, p4_table
   mov cr3, rax
-  
+
   ret
 
 section .bss

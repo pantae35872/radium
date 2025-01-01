@@ -62,13 +62,13 @@ run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
 	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -enable-kvm -cpu host,+rdrand -serial stdio -display sdl 
+	-no-reboot -enable-kvm -cpu host,+rdrand,+sse,+mmx -serial stdio -display sdl 
 
 dbg-run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
 	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -serial stdio -display gtk -S -s
+	-no-reboot -serial stdio -display sdl -S -s
 
 test-run:
 	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd -serial stdio \
