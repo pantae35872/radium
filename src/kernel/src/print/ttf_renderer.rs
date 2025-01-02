@@ -144,6 +144,12 @@ impl TtfRenderer {
                     self.cache.get_mut(character).unwrap()
                 }
             };
+
+            if offset + metrics.width > horizontal {
+                y_offset += 1;
+                current_line += 1;
+                offset = 1;
+            }
             let mut x = metrics.width;
             let mut y = self.pixel_size;
 
@@ -196,11 +202,6 @@ impl TtfRenderer {
             }
 
             offset += metrics.width as usize + 2;
-            if offset > horizontal - 10 {
-                y_offset += 1;
-                current_line += 1;
-                offset = 1;
-            }
         }
         if self.current_line != current_line {
             graphics.swap();

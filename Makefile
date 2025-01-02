@@ -26,6 +26,11 @@ BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
 BOOT_INFO := bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
 
+QEMU_FLAGS := -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd -serial stdio \
+	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
+	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
+	-no-reboot
+
 ifeq ($(BUILD_MODE), $(shell cat $(BUILD_MODE_FILE) 2>/dev/null))
     BUILD_MODE_CHANGED := 0
 else
@@ -59,22 +64,13 @@ ovmf:
 	wget https://github.com/clearlinux/common/raw/master/OVMF.fd
 
 run: 
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
-	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
-	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -enable-kvm -cpu host,+rdrand,+sse,+mmx -serial stdio -display sdl 
+	qemu-system-x86_64 $(QEMU_FLAGS) -enable-kvm -cpu host,+rdrand,+sse,+mmx -display sdl 
 
 dbg-run:
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd \
-	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
-	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -serial stdio -display sdl -S -s
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -S -s
 
 test-run:
-	qemu-system-x86_64 -cdrom $(BUILD_DIR)/os.iso -m 1G -bios OVMF.fd -serial stdio \
-	-drive id=disk,file=disk.img,if=none,format=qcow2 -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-	-device ahci,id=ahci -device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-no-reboot -enable-kvm -cpu host,+rdrand -display none 
+	qemu-system-x86_64 $(QEMU_FLAGS) -device isa-debug-exit,iobase=0xf4,iosize=0x04 -enable-kvm -cpu host,+rdrand,+sse,+mmx -display none
 
 $(OSRUNNER_BIN): $(OSRUNNER_SOURCES) $(BUILD_DIR) 
 	cd src/os-runner && cargo build --release --quiet
