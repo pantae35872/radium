@@ -1,4 +1,5 @@
 kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
 font_size = 24
+screen_resolution = { width = 1920, height = 1080 }
 any_key_boot = true

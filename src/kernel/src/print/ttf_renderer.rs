@@ -150,6 +150,7 @@ impl TtfRenderer {
                 current_line += 1;
                 offset = 1;
             }
+
             let mut x = metrics.width;
             let mut y = self.pixel_size;
 
@@ -158,6 +159,7 @@ impl TtfRenderer {
                 y_offset = max_lines as isize - 1;
                 self.initial_offset -= 1;
             }
+
             if y_offset >= 0 && current_line >= self.current_line {
                 let color = match self.modified_fg_color {
                     Some(modcolor) => modcolor,

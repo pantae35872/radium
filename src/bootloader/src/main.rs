@@ -5,6 +5,8 @@
 
 use core::arch::asm;
 
+use boot_services::read_config;
+use common::toml::parser::TomlValue;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use uefi::{
@@ -43,12 +45,14 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     initialize_graphics_bootloader(&mut system_table);
 
-    let (entrypoint, boot_info, is_any_key_boot) = load_kernel(&mut system_table);
+    let config: TomlValue = read_config(&mut system_table, "\\boot\\bootinfo.toml");
+
+    let (entrypoint, boot_info, is_any_key_boot) = load_kernel(&mut system_table, &config);
     if is_any_key_boot {
         any_key_boot(&mut system_table);
     }
 
-    initialize_graphics_kernel(&mut system_table, boot_info);
+    initialize_graphics_kernel(&mut system_table, boot_info, &config);
 
     let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
     boot_info.init_memory(memory_map, system_table.get_current_system_table_addr());

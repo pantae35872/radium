@@ -1,4 +1,4 @@
-use common::boot::BootInformation;
+use common::{boot::BootInformation, toml::parser::TomlValue};
 use uefi::{
     proto::console::{
         gop::GraphicsOutput,
@@ -41,6 +41,7 @@ pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
 pub fn initialize_graphics_kernel(
     system_table: &mut SystemTable<Boot>,
     boot_info: &mut BootInformation,
+    config: &TomlValue,
 ) {
     let handle = system_table
         .boot_services()
@@ -59,9 +60,22 @@ pub fn initialize_graphics_kernel(
     };
     let mut gop = gop.unwrap();
 
+    let resolution = config
+        .get("screen_resolution")
+        .expect("screen_resolution not found in the config file");
+    let width = resolution
+        .get("width")
+        .expect("width not found in the config file")
+        .as_integer()
+        .expect("width is not an integer") as usize;
+    let height = resolution
+        .get("height")
+        .expect("height not found in the config file")
+        .as_integer()
+        .expect("height is not an integer") as usize;
     if let Some(mode) = gop
         .modes(system_table.boot_services())
-        .find(|mode| mode.info().resolution() == (1920, 1080))
+        .find(|mode| mode.info().resolution() == (width, height))
     {
         gop.set_mode(&mode).expect("Could not set mode");
         let framebuffer = gop.frame_buffer().as_mut_ptr() as u64;
@@ -69,5 +83,7 @@ pub fn initialize_graphics_kernel(
         let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
 
         boot_info.init_graphics(mode.info().clone(), framebuffer, framebuffer_len);
+    } else {
+        panic!("Could not set to the target resolution");
     }
 }

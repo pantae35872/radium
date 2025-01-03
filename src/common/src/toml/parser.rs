@@ -155,7 +155,7 @@ impl TomlValue {
         }
     }
 
-    pub fn as_interger(&self) -> Option<i64> {
+    pub fn as_integer(&self) -> Option<i64> {
         match self {
             TomlValue::Integer(value) => return Some(*value),
             _ => return None,

@@ -2,10 +2,7 @@ use alloc::format;
 use common::{boot::BootInformation, toml::parser::TomlValue};
 use uefi::table::{boot::MemoryType, cfg::ConfigTableEntry, Boot, SystemTable};
 
-use crate::{
-    boot_services::{read_config, read_file},
-    elf_loader::load_elf,
-};
+use crate::{boot_services::read_file, elf_loader::load_elf};
 
 pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
     config_table
@@ -29,9 +26,8 @@ pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
 
 pub fn load_kernel(
     system_table: &mut SystemTable<Boot>,
+    config: &TomlValue,
 ) -> (u64, &'static mut BootInformation, bool) {
-    let config: TomlValue = read_config(system_table, "\\boot\\bootinfo.toml");
-
     let kernel_file: &str = config
         .get("kernel_file")
         .expect("No kernel file found in info file")
@@ -61,7 +57,7 @@ pub fn load_kernel(
     let font_size = config
         .get("font_size")
         .expect("font_size not found in the config file")
-        .as_interger()
+        .as_integer()
         .expect("font_size is not an integer") as usize;
 
     boot_info.init_kernel(
