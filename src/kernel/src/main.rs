@@ -27,7 +27,7 @@ use radium::task::{AwaitType, Task};
 pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
     radium::init(boot_info_address);
     println!("Hello, world!");
-    println!("{:?}", uefi_runtime().get_time());
+    println!("Current Time: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {
