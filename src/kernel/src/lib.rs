@@ -12,7 +12,6 @@
 #![feature(sync_unsafe_cell)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
-#![deny(warnings)]
 
 #[macro_use]
 extern crate bitflags;
