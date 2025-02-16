@@ -121,7 +121,7 @@ mod tests {
     }
 
     #[test_case]
-    fn dual_name_string_test() {
+    fn dual_name_path_test() {
         parser_ok!(
             name_string(),
             [0x2E, b'E', b'A', b'D', b'E', b'E', b'4', b'3', b'2'],
@@ -156,22 +156,18 @@ mod tests {
     }
 
     #[test_case]
-    fn name_path_test() {
-        //assert_eq!(
-        //    name_path().parse(&[b'_', b'A', b'D', b'E']),
-        //    Ok((vec![].as_slice(), Some(vec![['_', 'A', 'D', 'E']])))
-        //);
-        //assert_eq!(
-        //    name_path().parse(&[b'_', b'A', b'2', b'1']),
-        //    Ok((vec![].as_slice(), Some(vec![['_', 'A', '2', '1']])))
-        //);
-        //assert_eq!(
-        //    name_path().parse(&[b'e', b'A', b'D', b'E']),
-        //    Err(vec![b'e', b'A', b'D', b'E'].as_slice()),
-        //);
-        //assert_eq!(
-        //    name_path().parse(&[b'1', b'A', b'D', b'E']),
-        //    Err(vec![b'1', b'A', b'D', b'E'].as_slice()),
-        //);
+    fn single_name_path_test() {
+        parser_ok!(
+            name_string(),
+            [b'_', b'A', b'D', b'E'],
+            AmlName::from_str("_ADE").unwrap()
+        );
+        parser_ok!(
+            name_string(),
+            [b'_', b'A', b'2', b'1'],
+            AmlName::from_str("_A21").unwrap()
+        );
+        parser_err!(name_string(), [b'e', b'A', b'D', b'E']);
+        parser_err!(name_string(), [b'1', b'A', b'D', b'E']);
     }
 }
