@@ -10,12 +10,13 @@
 #![feature(naked_functions)]
 #![feature(pointer_is_aligned_to)]
 #![feature(sync_unsafe_cell)]
+#![feature(iter_next_chunk)]
+#![feature(iter_array_chunks)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
 
 #[macro_use]
 extern crate bitflags;
-
 extern crate alloc;
 extern crate core;
 extern crate lazy_static;

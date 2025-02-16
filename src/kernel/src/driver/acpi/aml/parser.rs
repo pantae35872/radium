@@ -1,17 +1,45 @@
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 
-mod named_objects;
+mod name_string;
+mod opcode;
 mod package_length;
+mod term_object;
 
 #[macro_export]
 macro_rules! choose {
     ($first:expr, $($rest:expr),+ $(,)?) => {{
         let next = $first;
         $(
-            let next = either(next, $rest);
+            let next = $crate::driver::acpi::aml::parser::either(next, $rest);
         )+
         next
     }};
+}
+
+#[macro_export]
+macro_rules! parser_ok {
+    ($parser:expr, $input:expr, $expected:expr $(,)?) => {
+        assert_eq!(
+            $parser.parse(&$input),
+            Ok((alloc::vec![].as_slice(), $expected))
+        )
+    };
+}
+
+#[macro_export]
+macro_rules! parser_err {
+    ($parser:expr, $input:expr, $err:tt $(,)?) => {
+        assert_eq!(
+            $parser.parse(&$input),
+            Err(alloc::vec!$err.as_slice())
+        )
+    };
+    ($parser:expr, $input:tt $(,)?) => {
+        assert_eq!(
+            $parser.parse(&$input),
+            Err(alloc::vec!$input.as_slice())
+        )
+    };
 }
 
 pub type ParserError<'a> = &'a [u8];
