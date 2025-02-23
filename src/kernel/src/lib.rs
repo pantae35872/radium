@@ -12,6 +12,7 @@
 #![feature(sync_unsafe_cell)]
 #![feature(iter_next_chunk)]
 #![feature(iter_array_chunks)]
+#![feature(decl_macro)]
 #![allow(internal_features)]
 #![allow(undefined_naked_function_abi)]
 

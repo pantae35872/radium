@@ -1,26 +1,202 @@
+use core::fmt::{self, Display};
 use core::iter;
 use core::str::FromStr;
 
+use alloc::collections::btree_map::BTreeMap;
+use alloc::vec;
 use alloc::vec::Vec;
 
-#[derive(PartialEq, Clone, Copy, Debug)]
+use crate::log;
+
+use super::AmlError;
+
+#[derive(PartialEq, Clone, Copy, Debug, Eq, PartialOrd, Ord)]
 pub struct NameSeg([char; 4]);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AmlName(pub Vec<NameComponent>);
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameComponent {
     Root,
     Prefix,
     Segment(NameSeg),
 }
 
-pub struct Namespace {}
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum LevelType {
+    Scope,
+    Device,
+    Processor,
+    PowerResource,
+    ThermalZone,
+    MethodLocals,
+}
+
+#[derive(Clone, Debug)]
+pub struct NamespaceLevel {
+    pub typ: LevelType,
+    pub children: BTreeMap<NameSeg, NamespaceLevel>,
+    pub values: BTreeMap<NameSeg, AmlHandle>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct AmlHandle(u32);
+
+#[derive(Debug)]
+pub struct Namespace {
+    //object_map: BTreeMap<AmlHandle, AmlValue>,
+    root: NamespaceLevel,
+}
+
+impl NamespaceLevel {
+    pub fn new(typ: LevelType) -> NamespaceLevel {
+        NamespaceLevel {
+            typ,
+            children: BTreeMap::new(),
+            values: BTreeMap::new(),
+        }
+    }
+}
+
+impl Namespace {
+    pub fn new() -> Self {
+        Namespace {
+            root: NamespaceLevel::new(LevelType::Scope),
+        }
+    }
+
+    pub fn add_level(&mut self, path: AmlName, typ: LevelType) -> Result<(), AmlError> {
+        assert!(path.is_absolute());
+        let mut path = path.normalize()?;
+
+        if path != AmlName::root() {
+            let name = path.0.pop().unwrap().as_nameseg().unwrap();
+            let level = self.get_level_from_path_mut(&path)?;
+            level
+                .children
+                .entry(name)
+                .and_modify(|level: &mut NamespaceLevel| {
+                    log!(
+                        Warning,
+                        "Aml trying to create namespace level, to an existing one with type: {:?}, path: {path}, name: {name}, new_type: {typ:?}",
+                        level.typ
+                    )
+                })
+                .or_insert_with(|| NamespaceLevel::new(typ));
+        }
+
+        return Ok(());
+    }
+
+    pub fn get_level_from_path(&self, path: &AmlName) -> Result<&NamespaceLevel, AmlError> {
+        assert!(path.is_absolute());
+
+        if path == &AmlName::root() {
+            return Ok(&self.root);
+        }
+
+        path.0
+            .iter()
+            .skip(1)
+            .try_fold(&self.root, |current_level, name| {
+                match current_level.children.get(
+                    &name
+                        .as_nameseg()
+                        .map_err(|_| AmlError::PathIsNotNormalize)?,
+                ) {
+                    Some(new_level) => Ok(new_level),
+                    None => Err(AmlError::LevelDoesNotExists { path: path.clone() }),
+                }
+            })
+    }
+
+    pub fn get_level_from_path_mut(
+        &mut self,
+        path: &AmlName,
+    ) -> Result<&mut NamespaceLevel, AmlError> {
+        assert!(path.is_absolute());
+
+        if path == &AmlName::root() {
+            return Ok(&mut self.root);
+        }
+
+        path.0
+            .iter()
+            .skip(1)
+            .try_fold(&mut self.root, |current_level, name| {
+                match current_level.children.get_mut(
+                    &name
+                        .as_nameseg()
+                        .map_err(|_| AmlError::PathIsNotNormalize)?,
+                ) {
+                    Some(new_level) => Ok(new_level),
+                    None => Err(AmlError::LevelDoesNotExists { path: path.clone() }),
+                }
+            })
+    }
+}
 
 impl AmlName {
     pub fn null_name() -> Self {
         Self(Vec::new())
+    }
+
+    pub fn root() -> Self {
+        Self(vec![NameComponent::Root])
+    }
+
+    pub fn is_normalize(&self) -> bool {
+        !self.0.contains(&NameComponent::Prefix)
+    }
+
+    pub fn is_absolute(&self) -> bool {
+        self.0
+            .get(0)
+            .is_some_and(|e| matches!(e, NameComponent::Root))
+    }
+
+    pub fn normalize(self) -> Result<AmlName, AmlError> {
+        if !self.is_absolute() {
+            log!(Warning, "Trying to normalize an relative aml path");
+            return Ok(self);
+        }
+        if self.is_normalize() {
+            return Ok(self);
+        }
+
+        self.0
+            .iter()
+            .try_fold(Vec::new(), |mut new_name, name| match name {
+                segment @ NameComponent::Segment(_) | segment @ NameComponent::Root => {
+                    new_name.push(*segment);
+                    Ok(new_name)
+                }
+                NameComponent::Prefix => match new_name.pop() {
+                    Some(NameComponent::Segment(_)) => Ok(new_name),
+                    Some(NameComponent::Root) | None => Err(AmlError::NormalizingInvalidName),
+                    Some(NameComponent::Prefix) => unreachable!(),
+                },
+            })
+            .map(|e| AmlName(e))
+    }
+
+    pub fn resolve(&self, scope: &AmlName) -> Result<AmlName, AmlError> {
+        assert!(scope.is_absolute());
+
+        if self.is_absolute() {
+            return Ok(self.clone());
+        }
+
+        let mut path = scope.clone();
+        path.0.extend_from_slice(&self.0);
+        path.normalize()
+    }
+
+    pub fn search_rules_apply(&self) -> bool {
+        self.0
+            .get(0)
+            .is_some_and(|e| matches!(e, NameComponent::Segment(_)))
     }
 }
 
@@ -70,6 +246,28 @@ impl NameSeg {
     }
 }
 
+impl Display for NameSeg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for e in self.0 {
+            write!(f, "{e}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for AmlName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for component in &self.0 {
+            match component {
+                NameComponent::Segment(seg) => write!(f, "{seg}")?,
+                NameComponent::Prefix => write!(f, "^")?,
+                NameComponent::Root => write!(f, "\\")?,
+            }
+        }
+        Ok(())
+    }
+}
+
 impl TryFrom<[char; 4]> for NameSeg {
     type Error = ();
     fn try_from(value: [char; 4]) -> Result<Self, Self::Error> {
@@ -99,10 +297,119 @@ impl Into<NameComponent> for NameSeg {
     }
 }
 
+impl NameComponent {
+    fn as_nameseg(self) -> Result<NameSeg, AmlError> {
+        match self {
+            NameComponent::Segment(seg) => Ok(seg),
+            _ => Err(AmlError::NotANameSeg),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test_case]
+    pub fn namespace_level() {
+        let mut namespace = Namespace::new();
+        assert!(namespace
+            .add_level(AmlName::from_str("\\").unwrap(), LevelType::Scope)
+            .is_ok());
+        assert!(namespace
+            .add_level(AmlName::from_str("\\_SB_").unwrap(), LevelType::Scope)
+            .is_ok());
+        assert!(namespace
+            .get_level_from_path(&AmlName::from_str("\\").unwrap())
+            .is_ok());
+        assert!(namespace
+            .get_level_from_path(&AmlName::from_str("\\_SB_").unwrap())
+            .is_ok());
+        assert!(namespace
+            .add_level(AmlName::from_str("\\_SB_.PCI1").unwrap(), LevelType::Device)
+            .is_ok());
+        assert!(namespace
+            .add_level(
+                AmlName::from_str("\\_SB_.^MINE").unwrap(),
+                LevelType::ThermalZone
+            )
+            .is_ok());
+        assert!(namespace
+            .get_level_from_path(&AmlName::from_str("\\_SB_.PCI1").unwrap())
+            .is_ok_and(|e| e.typ == LevelType::Device));
+        assert!(namespace
+            .get_level_from_path(&AmlName::from_str("\\MINE").unwrap())
+            .is_ok_and(|e| e.typ == LevelType::ThermalZone));
+    }
+
+    #[test_case]
+    pub fn aml_name_resolve() {
+        assert_eq!(
+            AmlName::from_str("_CRS")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0").unwrap()),
+            Ok(AmlName::from_str("\\_SB_.PCI0._CRS").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("^_CRS")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0").unwrap()),
+            Ok(AmlName::from_str("\\_SB_._CRS").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("^_CRS")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0.BUS0").unwrap()),
+            Ok(AmlName::from_str("\\_SB_.PCI0._CRS").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("^_FOO.PCR_")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0.BUS0").unwrap()),
+            Ok(AmlName::from_str("\\_SB_.PCI0._FOO.PCR_").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("\\_SB_._FOO.PCR_")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0.BUS0").unwrap()),
+            Ok(AmlName::from_str("\\_SB_._FOO.PCR_").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("^^^^^^^_FOO.PCR_")
+                .unwrap()
+                .resolve(&AmlName::from_str("\\_SB_.PCI0.BUS0").unwrap()),
+            Err(AmlError::NormalizingInvalidName)
+        );
+    }
+
+    #[test_case]
+    pub fn aml_name_normalize() {
+        assert_eq!(
+            AmlName::from_str("\\_SB_.PCI0.^FOO_")
+                .unwrap()
+                .is_normalize(),
+            false
+        );
+        assert_eq!(
+            AmlName::from_str("\\_SB_.^PCI0").unwrap().normalize(),
+            Ok(AmlName::from_str("\\PCI0").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("\\_SB_.PCI1.FOO_.^^BAR1")
+                .unwrap()
+                .normalize(),
+            Ok(AmlName::from_str("\\_SB_.BAR1").unwrap())
+        );
+        assert_eq!(
+            AmlName::from_str("\\^^BAR1").unwrap().normalize(),
+            Err(AmlError::NormalizingInvalidName)
+        );
+        assert_eq!(
+            AmlName::from_str("\\^FOO_").unwrap().normalize(),
+            Err(AmlError::NormalizingInvalidName)
+        );
+    }
 
     #[test_case]
     pub fn aml_name_from_str() {
