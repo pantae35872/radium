@@ -1,5 +1,8 @@
 # Radium
 
+![Project Status](https://img.shields.io/badge/status-not%20finished-orange)
+![Build](https://img.shields.io/badge/build-failed-red)
+
 Radium OS is currently in the very early stages of development and is not yet usable as a complete operating system.
 
 ## Build Dependices
