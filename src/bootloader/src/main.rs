@@ -5,17 +5,23 @@
 
 use core::arch::asm;
 
+use alloc::vec;
+use alloc::vec::Vec;
+use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::read_config;
-use common::toml::parser::TomlValue;
+use bootbridge::BootBridgeBuilder;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use uefi::{
     entry,
-    table::{boot::MemoryType, Boot, SystemTable},
+    table::{
+        boot::{self, MemoryDescriptor, MemoryMap, MemoryType},
+        Boot, SystemTable,
+    },
     Handle, Status,
 };
 
-use uefi_services::println;
+use uefi_services::{println, system_table};
 extern crate alloc;
 
 pub mod boot_services;
@@ -43,19 +49,37 @@ fn any_key_boot(system_table: &mut SystemTable<Boot>) {
 fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut system_table).unwrap();
 
+    let mut boot_bridge = BootBridgeBuilder::new(|size: usize| {
+        uefi_services::system_table()
+            .boot_services()
+            .allocate_pool(MemoryType::LOADER_CODE, size)
+            .unwrap_or_else(|e| panic!("Failed to allocate memory for the boot information {}", e))
+    });
+
     initialize_graphics_bootloader(&mut system_table);
 
     let config: TomlValue = read_config(&mut system_table, "\\boot\\bootinfo.toml");
 
-    let (entrypoint, boot_info, is_any_key_boot) = load_kernel(&mut system_table, &config);
-    if is_any_key_boot {
+    let entrypoint = load_kernel(&mut system_table, &mut boot_bridge, &config);
+    if config
+        .get("any_key_boot")
+        .expect("any_key_boot boot config not found")
+        .as_bool()
+        .expect("any_key_boot is not a boolean")
+    {
         any_key_boot(&mut system_table);
     }
 
-    initialize_graphics_kernel(&mut system_table, boot_info, &config);
+    initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
+    let entry_size = system_table.boot_services().memory_map_size().entry_size;
 
     let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
-    boot_info.init_memory(memory_map, system_table.get_current_system_table_addr());
+    let entries = memory_map.entries();
+    let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
+    let len = entries.len() * core::mem::size_of::<boot::MemoryDescriptor>();
+    let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
+    boot_bridge.memory_map(memory_map_bytes, entry_size);
+    let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 
     unsafe {
         asm!(
@@ -63,7 +87,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
             jmp {}
         "#,
         in(reg) entrypoint,
-        in("rdi") boot_info
+        in("rdi") boot_bridge
         );
     }
 

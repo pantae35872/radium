@@ -33,13 +33,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::driver::acpi::aml::parser::parser_ok;
+    use crate::driver::acpi::aml::{parser::parser_ok, TestHandle};
 
     use super::*;
 
     #[test_case]
     fn package_length_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(package_length(), [0b00011101], &mut context, 0b11101);
         parser_ok!(
             package_length(),

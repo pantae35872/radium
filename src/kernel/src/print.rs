@@ -2,8 +2,9 @@ use core::fmt;
 use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
+use crate::log;
 use crate::logger::LOGGER;
-use crate::{log, BootInformation};
+use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
@@ -38,7 +39,7 @@ macro_rules! println {
     }};
 }
 
-pub fn init(bootinfo: &BootInformation, foreground_color: Color, background: Color) {
+pub fn init(bootinfo: &BootBridge, foreground_color: Color, background: Color) {
     log!(Trace, "Initializing text output");
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color, background)));
     LOGGER.add_target(|msg| {
@@ -51,7 +52,7 @@ pub struct Print {
 }
 
 impl Print {
-    pub fn new(bootinfo: &BootInformation, foreground: Color, background: Color) -> Self {
+    pub fn new(bootinfo: &BootBridge, foreground: Color, background: Color) -> Self {
         return Self {
             renderer: TtfRenderer::new(bootinfo, foreground, background),
         };

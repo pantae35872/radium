@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use allocator::buddy_allocator::BuddyAllocator;
-use common::boot::BootInformation;
+use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use paging::{ActivePageTable, EntryFlags, Page};
 use spin::Mutex;
@@ -11,7 +11,7 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-use crate::log;
+use crate::{log, serial_print};
 
 pub use self::paging::remap_the_kernel;
 
@@ -22,11 +22,11 @@ pub mod stack_allocator;
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ALIGN: usize = 8192;
 
-pub fn init(boot_info: &'static BootInformation) {
+pub fn init(boot_info: &BootBridge) {
     let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    let active_table = remap_the_kernel(&mut allocator, &boot_info);
+    let active_table = remap_the_kernel(&mut allocator, boot_info);
 
     let stack_allocator = {
         let stack_alloc_start = Page::containing_address(virt_addr_alloc(409600));

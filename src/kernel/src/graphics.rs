@@ -1,17 +1,16 @@
 use alloc::vec::Vec;
 use bit_field::BitField;
+use bootbridge::{BootBridge, GraphicsInfo, PixelFormat};
 use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
 use spin::mutex::Mutex;
-use uefi::proto::console::gop::{ModeInfo, PixelFormat};
-
-use common::boot::BootInformation;
 
 use crate::{
     log,
     memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
+    serial_println,
 };
 
 pub mod color;
@@ -28,7 +27,7 @@ struct GlyphData {
 }
 
 pub struct Graphic {
-    mode: ModeInfo,
+    mode: GraphicsInfo,
     plot_fn: for<'a> unsafe fn(&'a mut Self, color: Color, y: usize, x: usize),
     #[allow(unused)]
     get_pixel_fn: for<'a> fn(&'a Self, x: usize, y: usize) -> Color,
@@ -43,19 +42,19 @@ pub struct Graphic {
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
 
 impl Graphic {
-    pub fn new(mode: ModeInfo, frame_buffer: &'static mut [u32]) -> Self {
+    pub fn new(mode: GraphicsInfo, frame_buffer: &'static mut [u32]) -> Self {
         let (width, height) = mode.resolution();
         log!(Info, "Graphic resolution {}x{}", width, height);
         let plot_fn = match mode.pixel_format() {
             PixelFormat::Rgb => Self::plot_rgb,
             PixelFormat::Bgr => Self::plot_bgr,
-            PixelFormat::Bitmask => Self::plot_bitmask,
+            PixelFormat::Bitmask(_) => Self::plot_bitmask,
             PixelFormat::BltOnly => unimplemented!("Not support"),
         };
         let get_pixel_fn = match mode.pixel_format() {
             PixelFormat::Rgb => Self::get_pixel_rgb,
             PixelFormat::Bgr => Self::get_pixel_bgr,
-            PixelFormat::Bitmask => Self::get_pixel_bitmask,
+            PixelFormat::Bitmask(_) => Self::get_pixel_bitmask,
             PixelFormat::BltOnly => unimplemented!("Not support"),
         };
         let framebuffer_len = frame_buffer.len();
@@ -230,6 +229,7 @@ impl Graphic {
         self.backbuffer_tracker.track_all();
 
         let stride = self.mode.stride();
+
         unsafe {
             let src = &self.frame_buffer[stride * scroll_amount..stride * height];
             let src_ptr = &src[0] as *const u32 as *const u8;
@@ -245,12 +245,9 @@ impl Graphic {
             match self.mode.pixel_format() {
                 PixelFormat::Rgb => BACKGROUND_COLOR.as_u32() << 8,
                 PixelFormat::Bgr => BACKGROUND_COLOR.as_u32(),
-                PixelFormat::Bitmask => match self.mode.pixel_bitmask() {
-                    Some(bitmask) => {
-                        BACKGROUND_COLOR.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue)
-                    }
-                    None => BACKGROUND_COLOR.as_u32(), // Assumes bgr
-                },
+                PixelFormat::Bitmask(bitmask) => {
+                    BACKGROUND_COLOR.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue)
+                }
                 PixelFormat::BltOnly => unimplemented!("Not support"),
             },
         );
@@ -273,12 +270,12 @@ impl Graphic {
     }
 
     fn plot_bitmask(&mut self, color: Color, y: usize, x: usize) {
-        match self.mode.pixel_bitmask() {
-            Some(bitmask) => {
+        match self.mode.pixel_format() {
+            PixelFormat::Bitmask(bitmask) => {
                 self.frame_buffer[y * self.mode.stride() + x] =
                     color.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue);
             }
-            None => {}
+            _ => {}
         }
     }
 
@@ -301,8 +298,8 @@ impl Graphic {
     }
 
     fn get_pixel_bitmask(&self, y: usize, x: usize) -> Color {
-        match self.mode.pixel_bitmask() {
-            Some(bitmask) => {
+        match self.mode.pixel_format() {
+            PixelFormat::Bitmask(bitmask) => {
                 let color = self.frame_buffer[y * self.mode.stride() + x];
                 let red = color.get_bits(
                     (bitmask.red.trailing_zeros() - 8) as usize
@@ -318,7 +315,7 @@ impl Graphic {
                 );
                 return Color::new(red as u8, green as u8, blue as u8);
             }
-            None => Color::new(0, 0, 0),
+            _ => Color::new(0, 0, 0),
         }
     }
 
@@ -331,25 +328,24 @@ pub fn graphic() -> &'static Mutex<Graphic> {
     DRIVER.get().expect("Uninitialize graphics")
 }
 
-pub fn init(bootinfo: &BootInformation) {
+pub fn init(boot_bridge: &BootBridge) {
     log!(Trace, "Initializing graphic");
     DRIVER.init_once(|| {
-        let virt = virt_addr_alloc(bootinfo.framebuffer_size() as u64);
+        let framebuffer = boot_bridge.framebuffer_data();
+        let virt = virt_addr_alloc(framebuffer.size() as u64);
         let guard = memory_controller().lock().phy_map(
-            bootinfo.framebuffer_size() as u64,
-            bootinfo
-                .framebuffer_addr()
-                .expect("Frame buffer has been already aquired"),
+            framebuffer.size() as u64,
+            framebuffer.start(),
             virt,
             EntryFlags::WRITABLE
                 | EntryFlags::NO_CACHE
                 | EntryFlags::PRESENT
                 | EntryFlags::WRITE_THROUGH,
         );
-        Mutex::new(Graphic::new(*bootinfo.gop_mode_info(), unsafe {
+        Mutex::new(Graphic::new(boot_bridge.graphics_info(), unsafe {
             core::slice::from_raw_parts_mut(
                 guard.apply(virt) as *mut u32,
-                bootinfo.framebuffer_len(),
+                framebuffer.size() / size_of::<u32>(),
             )
         }))
     });

@@ -7,7 +7,7 @@ use super::{AmlContext, AmlError, AmlValue};
 mod name_string;
 mod opcode;
 mod package_length;
-mod term_object;
+pub mod term_object;
 
 macro choose($first:expr, $($rest:expr),+ $(,)?) {{
     let next = $first;

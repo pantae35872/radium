@@ -24,7 +24,7 @@ where
     )
 }
 
-fn term_list<'a, 'c>(list_length: u32) -> impl Parser<'a, 'c, ()>
+pub fn term_list<'a, 'c>(list_length: u32) -> impl Parser<'a, 'c, ()>
 where
     'c: 'a,
 {

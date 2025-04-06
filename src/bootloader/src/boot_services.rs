@@ -1,4 +1,4 @@
-use common::toml::{self, parser::TomlValue};
+use boot_cfg_parser::toml::{parse_toml, parser::TomlValue};
 use uefi::{
     proto::{
         loaded_image::LoadedImage,
@@ -16,7 +16,7 @@ pub fn read_config(system_table: &mut SystemTable<Boot>, config_path: &str) -> T
     let file = read_file(system_table, config_path);
     let info_file = core::str::from_utf8(file).expect("Info file is not valid utf8");
 
-    return toml::parse_toml(info_file).expect("Cannot parse kernel info file");
+    return parse_toml(info_file).expect("Cannot parse kernel info file");
 }
 
 pub fn read_file(system_table: &mut SystemTable<Boot>, path: &str) -> &'static [u8] {

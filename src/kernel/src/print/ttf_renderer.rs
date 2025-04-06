@@ -1,13 +1,16 @@
 use core::{isize, usize};
 
 use alloc::{string::String, vec::Vec};
+use bootbridge::BootBridge;
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 
 use crate::{
     graphics::{color::Color, graphic},
+    log,
+    logger::LOGGER,
     memory::{memory_controller, paging::EntryFlags},
-    BootInformation,
+    serial_println,
 };
 
 #[derive(Hash, PartialEq, Eq)]
@@ -30,20 +33,16 @@ pub struct TtfRenderer {
 }
 
 impl TtfRenderer {
-    pub fn new(
-        boot_info: &BootInformation,
-        foreground_color: Color,
-        background_color: Color,
-    ) -> Self {
+    pub fn new(boot_info: &BootBridge, foreground_color: Color, background_color: Color) -> Self {
+        let font = boot_info.font_data();
+
         memory_controller().lock().ident_map(
-            boot_info.font_size() as u64,
-            boot_info
-                .font_addr()
-                .expect("Failed to get font for mapping"),
+            font.size() as u64,
+            font.start(),
             EntryFlags::WRITABLE | EntryFlags::PRESENT | EntryFlags::NO_CACHE,
         );
         let font = Font::from_bytes(
-            boot_info.font().expect("Failed to get font ownership"),
+            unsafe { core::slice::from_raw_parts(font.start() as *const u8, font.size()) },
             FontSettings::default(),
         )
         .unwrap();
@@ -57,7 +56,7 @@ impl TtfRenderer {
             initial_offset: 0,
             cache: HashMap::with_capacity(255),
             glyph_cache: HashMap::with_capacity(255),
-            pixel_size: boot_info.font_pixel_size(),
+            pixel_size: boot_info.font_size(),
         }
     }
 

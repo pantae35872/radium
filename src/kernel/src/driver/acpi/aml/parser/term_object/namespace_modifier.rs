@@ -68,14 +68,14 @@ mod tests {
     use crate::driver::acpi::aml::{
         namespace::AmlName,
         parser::{opcode::DEF_SCOPE, parser_ok, Parser},
-        AmlContext,
+        AmlContext, TestHandle,
     };
 
     use super::def_scope;
 
     #[test_case]
     fn def_scope() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
 
         parser_ok!(
             def_scope(),

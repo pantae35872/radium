@@ -11,12 +11,11 @@ extern crate lazy_static;
 extern crate radium;
 extern crate spin;
 
-use common::boot::BootInformation;
-use radium::driver::uefi_runtime::uefi_runtime;
+use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
-use radium::println;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
+use radium::{log, println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -24,10 +23,14 @@ use radium::task::{AwaitType, Task};
 // TODO: Impelemnts kernel services executor
 
 #[no_mangle]
-pub extern "C" fn start(boot_info_address: *const BootInformation) -> ! {
-    radium::init(boot_info_address);
+pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
+    radium::init(boot_bridge);
     println!("Hello, world!");
-    println!("Time Test: {:?}", uefi_runtime().get_time());
+    log!(Trace, "Hello, world!");
+    log!(Trace, "Hello, world!");
+    log!(Trace, "Hello, world!");
+    log!(Trace, "Hello, world!");
+    //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(
         async {

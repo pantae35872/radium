@@ -111,13 +111,16 @@ where
 mod tests {
     use alloc::{string::String, vec::Vec};
 
-    use crate::driver::acpi::aml::parser::{parser_err, parser_ok};
+    use crate::driver::acpi::aml::{
+        parser::{parser_err, parser_ok},
+        TestHandle,
+    };
 
     use super::*;
     use core::str::FromStr;
     #[test_case]
     fn relative_name_string_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(
             name_string(),
             [b'_', b'A', b'B', b'_'],
@@ -140,7 +143,7 @@ mod tests {
 
     #[test_case]
     fn absolute_name_string_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(
             name_string(),
             [0x5C, b'_', b'S', b'B', b'_'],
@@ -151,13 +154,13 @@ mod tests {
 
     #[test_case]
     fn null_name_string_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(name_string(), [0x00], &mut context, AmlName::null_name());
     }
 
     #[test_case]
     fn dual_name_path_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(
             name_string(),
             [0x2E, b'E', b'A', b'D', b'E', b'E', b'4', b'3', b'2'],
@@ -169,7 +172,7 @@ mod tests {
 
     #[test_case]
     fn multi_name_path_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         let count = 4;
         let mut multiname_test = vec![0x2F, count];
         for _ in 0..(count - 1) {
@@ -196,7 +199,7 @@ mod tests {
 
     #[test_case]
     fn single_name_path_test() {
-        let mut context = AmlContext::test_context();
+        let mut context = AmlContext::new(TestHandle);
         parser_ok!(
             name_string(),
             [b'_', b'A', b'D', b'E'],

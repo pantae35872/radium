@@ -1,9 +1,8 @@
 [package]
-name = "common"
+name = "boot_cfg_parser"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-uefi = "0.27.0"
-elf_rs = "0.3.1" 
 hashbrown = "0.14.5"
+

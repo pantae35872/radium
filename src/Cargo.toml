@@ -1,0 +1,13 @@
+[workspace]
+members = ["boot_cfg_parser", "kernel", "bootloader", "os-runner", "bootbridge"]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+opt-level = 0
+
+[profile.release]
+panic = "abort"
+opt-level = 3 
+
+[workspace.dependencies]

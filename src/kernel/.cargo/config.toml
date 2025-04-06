@@ -3,9 +3,9 @@ build-std-features = ["compiler-builtins-mem"]
 build-std = ["core", "alloc", "compiler_builtins"]
 
 [build]
-target = "x86_64.json"
+target = "../x86_64.json"
 rustflags = [
-    "-Zthreads=1", "--emit=asm"
+    "-Zthreads=1", "--emit=asm", "--cfg=getrandom_backend=\"rdrand\""
 ]
 
 [target.'cfg(target_os = "none")']

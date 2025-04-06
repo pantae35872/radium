@@ -3,8 +3,6 @@ name = "radium-bootloader"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 elf_rs = "0.3.1"
 uefi = "0.27.0"
@@ -13,5 +11,8 @@ uefi-services = "0.24.0"
 uart_16550 = "0.2.0"
 x86_64 = "0.15.1"
 
-[dependencies.common]
-path = "../common"
+[dependencies.boot_cfg_parser]
+path = "../boot_cfg_parser"
+
+[dependencies.bootbridge]
+path = "../bootbridge"

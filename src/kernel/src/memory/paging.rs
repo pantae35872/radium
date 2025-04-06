@@ -3,12 +3,11 @@ use self::mapper::Mapper;
 use self::table::{Level4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::BootInformation;
+use bootbridge::{BootBridge, MemoryDescriptor, RawBootBridge};
 use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
 use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
-use uefi::table::boot::MemoryDescriptor;
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
@@ -289,11 +288,11 @@ impl InactivePageTable {
     }
 
     pub unsafe fn from_raw_frame(frame: Frame) -> InactivePageTable {
-        return InactivePageTable { p4_frame: frame };
+        InactivePageTable { p4_frame: frame }
     }
 }
 
-pub fn remap_the_kernel<A>(allocator: &mut A, boot_info: &BootInformation) -> ActivePageTable
+pub fn remap_the_kernel<A>(allocator: &mut A, boot_info: &BootBridge) -> ActivePageTable
 where
     A: FrameAllocator,
 {
@@ -305,7 +304,7 @@ where
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        for section in boot_info.elf_section().section_header_iter() {
+        for section in boot_info.kernel_elf().section_header_iter() {
             if !section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
                 continue;
             }
@@ -322,31 +321,43 @@ where
                 mapper.identity_map(frame, flags, allocator);
             }
         }
-        let bootinfo_start = Frame::containing_address(boot_info as *const BootInformation as u64);
-        let bootinfo_end = Frame::containing_address(
-            boot_info as *const BootInformation as u64 + size_of::<BootInformation>() as u64,
-        );
 
-        let memory_map_start = Frame::containing_address(
-            boot_info.memory_map().entries().next().unwrap() as *const MemoryDescriptor as u64,
-        );
-        let memory_map_end = Frame::containing_address(
-            boot_info.memory_map().entries().last().unwrap() as *const MemoryDescriptor as u64,
-        );
-        for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {
-            if frame >= bootinfo_start && frame <= bootinfo_end {
-                continue;
+        boot_info.map_self(|start, size| {
+            let start_frame = Frame::containing_address(start);
+            let end_frame = Frame::containing_address(start + size - 1);
+            for frame in Frame::range_inclusive(start_frame, end_frame) {
+                mapper.identity_map(
+                    frame,
+                    EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
+                    allocator,
+                );
             }
-            mapper.identity_map(
-                frame,
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
-                allocator,
-            );
-        }
+        });
 
-        for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
-            mapper.identity_map(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE, allocator)
-        }
+        //let bootinfo_start = Frame::containing_address(boot_info.0 as u64);
+        //let bootinfo_end =
+        //    Frame::containing_address(boot_info.0 as u64 + size_of::<RawBootBridge>() as u64);
+
+        //let memory_map_start = Frame::containing_address(
+        //    boot_info.memory_map().entries().next().unwrap() as *const MemoryDescriptor as u64,
+        //);
+        //let memory_map_end = Frame::containing_address(
+        //    boot_info.memory_map().entries().last().unwrap() as *const MemoryDescriptor as u64,
+        //);
+        //for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {
+        //    if frame >= bootinfo_start && frame <= bootinfo_end {
+        //        continue;
+        //    }
+        //    mapper.identity_map(
+        //        frame,
+        //        EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
+        //        allocator,
+        //    );
+        //}
+
+        //for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
+        //    mapper.identity_map(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE, allocator)
+        //}
     });
 
     active_table.switch(new_table);

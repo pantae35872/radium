@@ -18,8 +18,8 @@ ISO_DIR := $(BUILD_DIR)/iso
 FAT_IMG := $(BUILD_DIR)/fat.img
 KERNEL_BIN := $(BUILD_DIR)/kernel.bin
 OSRUNNER_SOURCES := $(shell find src/os-runner/src -name '*.rs')
-KERNEL_SOURCES := $(shell find src/kernel/src -name '*.rs') $(shell find src/common/src -name '*.rs') src/kernel/build.rs src/kernel/linker.ld
-BOOTLOADER_SOURCES := $(shell find src/bootloader/src -name '*.rs') $(shell find src/common/src -name '*.rs')
+KERNEL_SOURCES := $(shell find src/kernel/src -name '*.rs') $(shell find src/bootbridge/src -name '*.rs') src/kernel/build.rs src/linker.ld
+BOOTLOADER_SOURCES := $(shell find src/bootloader/src -name '*.rs') $(shell find src/bootbridge/src -name '*.rs') $(shell find src/boot_cfg_parser/src -name '*.rs')
 OSRUNNER_BIN := $(BUILD_DIR)/os-runner
 BOOTLOADER_BIN := $(BUILD_DIR)/bootx64.efi
 BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
@@ -97,11 +97,11 @@ make-test-kernel: $(BOOTLOADER_BIN) $(FAT_IMG) $(BUILD_DIR) $(ISO_DIR)
 
 $(KERNEL_BIN): $(KERNEL_SOURCES) $(BUILD_DIR)
 	cd src/kernel && cargo build $(if $(RELEASE),--release,)
-	cp src/kernel/target/x86_64/$(if $(RELEASE),release,debug)/$(NAME) $(KERNEL_BIN)
+	cp $(BUILD_DIR)/x86_64/$(if $(RELEASE),release,debug)/$(NAME) $(KERNEL_BIN)
 
 $(BOOTLOADER_BIN): $(BOOTLOADER_SOURCES) $(BUILD_DIR)
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
-	cp src/bootloader/target/x86_64-unknown-uefi/$(if $(RELEASE),release,debug)/$(NAME)-bootloader.efi $(BOOTLOADER_BIN)
+	cp $(BUILD_DIR)/x86_64-unknown-uefi/$(if $(RELEASE),release,debug)/$(NAME)-bootloader.efi $(BOOTLOADER_BIN)
 
 debug: force_rebuild $(BOOTLOADER_BIN) $(KERNEL_BIN) $(FAT_IMG) $(ISO_DIR)
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BIN) ::/boot 
@@ -119,8 +119,4 @@ test: $(OSRUNNER_BIN)
 	cd src/kernel && cargo test $(RUN_ARGS)
 
 clean:
-	cd src/common && cargo clean
-	cd src/bootloader && cargo clean
-	cd src/kernel && cargo clean
-	cd src/os-runner && cargo clean
 	rm -rf $(BUILD_DIR)

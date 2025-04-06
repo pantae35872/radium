@@ -38,29 +38,29 @@ pub mod utils;
 
 use core::panic::PanicInfo;
 
-use common::boot::BootInformation;
+use bootbridge::{BootBridge, RawBootBridge};
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
 
-pub fn init(information_address: *const BootInformation) {
-    let boot_info = unsafe { BootInformation::from_ptr(information_address) };
-    memory::init(boot_info);
+pub fn init(boot_bridge: *const RawBootBridge) {
+    let boot_bridge = BootBridge::new(boot_bridge);
+    memory::init(&boot_bridge);
     LOGGER.add_target(|msg| {
         serial_println!("{}", msg);
     });
-    graphics::init(boot_info);
-    print::init(boot_info, Color::new(209, 213, 219), BACKGROUND_COLOR);
+    graphics::init(&boot_bridge);
+    print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();
     interrupt::init();
-    driver::init(boot_info);
+    driver::init(&boot_bridge);
     userland::init();
     x86_64::instructions::interrupts::enable();
 }
 
 #[cfg(test)]
 #[no_mangle]
-pub extern "C" fn start(boot_info: *mut BootInformation) -> ! {
+pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
     init(boot_info);
     test_main();
     hlt_loop();

@@ -1,7 +1,8 @@
-use common::{boot::BootInformation, toml::parser::TomlValue};
+use boot_cfg_parser::toml::parser::TomlValue;
+use bootbridge::{BootBridgeBuilder, PixelBitmask, PixelFormat};
 use uefi::{
     proto::console::{
-        gop::GraphicsOutput,
+        gop::{self, GraphicsOutput},
         text::{Color, OutputMode},
     },
     table::{
@@ -40,7 +41,7 @@ pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
 
 pub fn initialize_graphics_kernel(
     system_table: &mut SystemTable<Boot>,
-    boot_info: &mut BootInformation,
+    boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
     config: &TomlValue,
 ) {
     let handle = system_table
@@ -82,7 +83,25 @@ pub fn initialize_graphics_kernel(
         let (horizontal, vertical) = mode.info().resolution();
         let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
 
-        boot_info.init_graphics(mode.info().clone(), framebuffer, framebuffer_len);
+        let gop_info = mode.info();
+        boot_bridge.framebuffer_data(framebuffer, framebuffer_len * size_of::<u32>());
+        boot_bridge.graphics_info(
+            gop_info.resolution(),
+            gop_info.stride(),
+            match gop_info.pixel_format() {
+                gop::PixelFormat::Rgb => PixelFormat::Rgb,
+                gop::PixelFormat::Bgr => PixelFormat::Bgr,
+                gop::PixelFormat::Bitmask => PixelFormat::Bitmask({
+                    let bitmask = gop_info.pixel_bitmask().unwrap();
+                    PixelBitmask {
+                        red: bitmask.red,
+                        green: bitmask.green,
+                        blue: bitmask.blue,
+                    }
+                }),
+                gop::PixelFormat::BltOnly => PixelFormat::BltOnly,
+            },
+        );
     } else {
         panic!("Could not set to the target resolution");
     }

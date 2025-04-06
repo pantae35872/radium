@@ -1,7 +1,8 @@
 use core::fmt::Display;
 
 use alloc::fmt;
-use common::boot::BootInformation;
+use aml::{AmlContext, AmlHandle};
+use bootbridge::BootBridge;
 use fadt::Fadt;
 use madt::Madt;
 use rsdt::Xrsdt;
@@ -22,7 +23,7 @@ mod sdp;
 
 static ACPI: Once<Mutex<Acpi>> = Once::new();
 
-pub fn init(boot_info: &BootInformation) {
+pub fn init(boot_info: &BootBridge) {
     log!(Trace, "Initializing acpi");
     let acpi = unsafe { Acpi::new(boot_info.rsdp()) };
     ACPI.call_once(|| acpi.into());
@@ -32,6 +33,15 @@ pub fn init(boot_info: &BootInformation) {
 struct Acpi {
     xrsdp: Xrsdp,
     xrsdt: Xrsdt,
+    aml: AmlContext,
+}
+
+struct AcpiHandle;
+
+impl AmlHandle for AcpiHandle {
+    fn write_debug(&self, value: &str) {
+        todo!()
+    }
 }
 
 impl Acpi {
@@ -50,7 +60,22 @@ impl Acpi {
             &aml[0..32]
         );
         madt.iter().for_each(|e| log!(Debug, "{e:?}"));
-        Self { xrsdp, xrsdt }
+        let a = Self {
+            xrsdp,
+            xrsdt,
+            aml: AmlContext::new(AcpiHandle),
+        };
+        //a.aml_init();
+        a
+    }
+
+    fn aml_init(&mut self) {
+        let fadt = self
+            .xrsdt
+            .get::<Fadt>()
+            .expect("No dsdt found in acpi table");
+        let dsdt = fadt.dsdt();
+        aml::init(dsdt.aml(), &mut self.aml).unwrap();
     }
 }
 

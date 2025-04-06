@@ -1,10 +1,11 @@
 use core::{marker::PhantomData, ptr};
 
-use uefi::table::boot::{MemoryMap, MemoryType};
+use bootbridge::{MemoryDescriptor, MemoryMap};
 
 use crate::{
     direct_mapping,
     memory::{Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE},
+    serial_println,
     utils::NumberUtils,
 };
 
@@ -52,7 +53,7 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
         for area in areas.entries().filter(|e| {
             matches!(
                 e.ty,
-                MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE
+                MemoryDescriptor::CONVENTIONAL | MemoryDescriptor::BOOT_SERVICES_CODE
             )
         }) {
             if area.phys_start == 0 {
