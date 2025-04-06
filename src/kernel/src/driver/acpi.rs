@@ -60,12 +60,12 @@ impl Acpi {
             &aml[0..32]
         );
         madt.iter().for_each(|e| log!(Debug, "{e:?}"));
-        let a = Self {
+        let mut a = Self {
             xrsdp,
             xrsdt,
             aml: AmlContext::new(AcpiHandle),
         };
-        //a.aml_init();
+        a.aml_init();
         a
     }
 
@@ -75,7 +75,7 @@ impl Acpi {
             .get::<Fadt>()
             .expect("No dsdt found in acpi table");
         let dsdt = fadt.dsdt();
-        aml::init(dsdt.aml(), &mut self.aml).unwrap();
+        //aml::init(dsdt.aml(), &mut self.aml).unwrap();
     }
 }
 

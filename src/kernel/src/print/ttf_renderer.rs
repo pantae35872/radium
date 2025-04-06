@@ -32,6 +32,7 @@ pub struct TtfRenderer {
     pixel_size: usize,
 }
 
+// TODO: ts needs a rewrite
 impl TtfRenderer {
     pub fn new(boot_info: &BootBridge, foreground_color: Color, background_color: Color) -> Self {
         let font = boot_info.font_data();
@@ -80,7 +81,7 @@ impl TtfRenderer {
         let mut offset = 1;
         let mut y_offset = self.initial_offset;
         let (horizontal, vertical) = graphics.get_res();
-        let max_lines = vertical / self.pixel_size - 1; // Calculate maximum lines
+        let max_lines = vertical / self.pixel_size - 2; // Calculate maximum lines
         let mut iter = self.data.iter().peekable();
         let mut current_line = 0;
         while let Some(character) = iter.next() {

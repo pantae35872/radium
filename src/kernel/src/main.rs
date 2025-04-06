@@ -13,9 +13,9 @@ extern crate spin;
 
 use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
+use radium::println;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
-use radium::{log, println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -26,10 +26,6 @@ use radium::{log, println};
 pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!");
-    log!(Trace, "Hello, world!");
-    log!(Trace, "Hello, world!");
-    log!(Trace, "Hello, world!");
-    log!(Trace, "Hello, world!");
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(
