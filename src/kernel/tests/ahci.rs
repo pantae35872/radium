@@ -10,16 +10,17 @@ extern crate radium;
 use core::usize;
 
 use alloc::vec;
-use common::boot::BootInformation;
 use radium::{
     driver::storage::{ahci_driver::get_ahci, Drive},
     task::{executor::Executor, AwaitType, Task},
 };
 use x86_64::instructions::random;
 
+use bootbridge::RawBootBridge;
+
 #[no_mangle]
-pub extern "C" fn start(boot_info_address: *mut BootInformation) -> ! {
-    radium::init(boot_info_address);
+pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
+    radium::init(boot_bridge);
     test_main();
     loop {}
 }

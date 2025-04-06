@@ -9,11 +9,11 @@ extern crate radium;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use common::boot::BootInformation;
+use bootbridge::RawBootBridge;
 
 #[no_mangle]
-pub extern "C" fn start(boot_info_address: *mut BootInformation) -> ! {
-    radium::init(boot_info_address);
+pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
+    radium::init(boot_bridge);
     test_main();
     loop {}
 }

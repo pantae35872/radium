@@ -1,12 +1,14 @@
 [unstable]
 build-std-features = ["compiler-builtins-mem"]
 build-std = ["core", "alloc", "compiler_builtins"]
+panic-abort-tests = true
 
 [build]
-target = "../x86_64.json"
+target = "x86_64.json"
 rustflags = [
     "-Zthreads=1", "--emit=asm", "--cfg=getrandom_backend=\"rdrand\""
 ]
 
 [target.'cfg(target_os = "none")']
 runner = "../../build/os-runner"
+

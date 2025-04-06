@@ -74,7 +74,7 @@ test-run:
 
 $(OSRUNNER_BIN): $(OSRUNNER_SOURCES) $(BUILD_DIR) 
 	cd src/os-runner && cargo build --release --quiet
-	cp src/os-runner/target/release/os-runner $(OSRUNNER_BIN)
+	cp $(BUILD_DIR)/release/os-runner $(OSRUNNER_BIN)
 
 update:
 	cd src/bootloader && cargo update
