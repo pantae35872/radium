@@ -25,7 +25,7 @@ use radium::task::{AwaitType, Task};
 #[no_mangle]
 pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
     radium::init(boot_bridge);
-    println!("Hello, world!");
+    println!("Hello, world!!");
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(

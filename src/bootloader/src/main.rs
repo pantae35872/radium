@@ -61,6 +61,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let config: TomlValue = read_config(&mut system_table, "\\boot\\bootinfo.toml");
 
     let entrypoint = load_kernel(&mut system_table, &mut boot_bridge, &config);
+
     if config
         .get("any_key_boot")
         .expect("any_key_boot boot config not found")
