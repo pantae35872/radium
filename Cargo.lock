@@ -61,7 +61,8 @@ dependencies = [
 name = "bootbridge"
 version = "0.1.0"
 dependencies = [
- "elf_rs",
+ "c_enum",
+ "santa",
 ]
 
 [[package]]
@@ -80,6 +81,10 @@ dependencies = [
  "log",
  "winapi",
 ]
+
+[[package]]
+name = "c_enum"
+version = "0.1.0"
 
 [[package]]
 name = "cc"
@@ -145,16 +150,6 @@ checksum = "c3c7c73a2d1e9fc0886a08b93e98eb643461230d5f1925e4036204d5f2e261a8"
 dependencies = [
  "autocfg",
  "cfg-if 0.1.10",
-]
-
-[[package]]
-name = "elf_rs"
-version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "894d710b6b07dae25ce69f9227ec2ffa3a3f71dc7f071acea3e1928ab4aeafdf"
-dependencies = [
- "bitflags 2.9.0",
- "num-traits",
 ]
 
 [[package]]
@@ -256,15 +251,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12fcfa1bd49e0342ec1d07ed2be83b59963e7acbeb9310e1bb2c07b69dadd959"
 
 [[package]]
-name = "num-traits"
-version = "0.2.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
-dependencies = [
- "autocfg",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -336,12 +322,12 @@ dependencies = [
  "conquer-once",
  "crc",
  "crossbeam-queue",
- "elf_rs",
  "fontdue",
  "getrandom",
  "hashbrown 0.14.5",
  "lazy_static",
  "nasm-rs",
+ "santa",
  "spin",
  "uart_16550",
  "uguid",
@@ -356,7 +342,7 @@ version = "0.1.0"
 dependencies = [
  "boot_cfg_parser",
  "bootbridge",
- "elf_rs",
+ "santa",
  "uart_16550",
  "uefi",
  "uefi-raw",
@@ -378,6 +364,14 @@ name = "rustversion"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eded382c5f5f786b989652c49544c4877d9f015cc22e145a5ea8ea66c2921cd2"
+
+[[package]]
+name = "santa"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.9.0",
+ "c_enum",
+]
 
 [[package]]
 name = "scopeguard"

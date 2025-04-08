@@ -1,9 +1,9 @@
 [package]
-name = "bootbridge"
+name = "santa"
 version = "0.1.0"
 edition = "2024"
+description = "An 64 bit elf loader"
 
 [dependencies]
+bitflags = "2.9.0"
 c_enum = { path = "../c_enum" }
-santa = { path = "../santa"}
-

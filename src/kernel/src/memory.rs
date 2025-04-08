@@ -11,7 +11,7 @@ use x86_64::{
     PhysAddr, VirtAddr,
 };
 
-use crate::{log, serial_print};
+use crate::log;
 
 pub use self::paging::remap_the_kernel;
 

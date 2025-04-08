@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-elf_rs = "0.3.1"
 uefi = "0.27.0"
 uefi-raw = "0.5.1"
 uefi-services = "0.24.0"
@@ -16,3 +15,6 @@ path = "../boot_cfg_parser"
 
 [dependencies.bootbridge]
 path = "../bootbridge"
+
+[dependencies.santa]
+path = "../santa"

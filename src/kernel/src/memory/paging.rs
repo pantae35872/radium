@@ -3,11 +3,11 @@ use self::mapper::Mapper;
 use self::table::{Level4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use bootbridge::{BootBridge, MemoryDescriptor, RawBootBridge};
+use bootbridge::BootBridge;
 use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
-use elf_rs::{ElfFile, SectionHeaderEntry, SectionHeaderFlags};
+use santa::{SectionHeader, SectionHeaderFlags};
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
@@ -36,16 +36,16 @@ bitflags! {
 }
 
 impl EntryFlags {
-    pub fn from_elf_section_flags(section: &SectionHeaderEntry) -> EntryFlags {
+    pub fn from_elf_section_flags(section: &SectionHeader) -> EntryFlags {
         let mut flags = EntryFlags::empty();
 
-        if section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
+        if section.flags().contains(SectionHeaderFlags::Alloc) {
             flags = flags | EntryFlags::PRESENT;
         }
-        if section.flags().contains(SectionHeaderFlags::SHF_WRITE) {
+        if section.flags().contains(SectionHeaderFlags::Writeable) {
             flags = flags | EntryFlags::WRITABLE;
         }
-        if !section.flags().contains(SectionHeaderFlags::SHF_EXECINSTR) {
+        if !section.flags().contains(SectionHeaderFlags::Executeable) {
             flags = flags | EntryFlags::NO_EXECUTE;
         }
 
@@ -305,18 +305,18 @@ where
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         for section in boot_info.kernel_elf().section_header_iter() {
-            if !section.flags().contains(SectionHeaderFlags::SHF_ALLOC) {
+            if !section.flags().contains(SectionHeaderFlags::Alloc) {
                 continue;
             }
             assert!(
-                section.addr() % PAGE_SIZE == 0,
+                section.vaddr() % PAGE_SIZE == 0,
                 "sections need to be page aligned"
             );
 
             let flags = EntryFlags::from_elf_section_flags(&section);
 
-            let start_frame = Frame::containing_address(section.addr());
-            let end_frame = Frame::containing_address(section.addr() + section.size() - 1);
+            let start_frame = Frame::containing_address(section.vaddr());
+            let end_frame = Frame::containing_address(section.vaddr() + section.size() - 1);
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 mapper.identity_map(frame, flags, allocator);
             }

@@ -2,7 +2,8 @@
 
 use core::{cell::OnceCell, fmt::Debug};
 
-use elf_rs::Elf;
+use c_enum::c_enum;
+use santa::Elf;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {
@@ -18,11 +19,31 @@ pub struct KernelConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(C)]
 pub struct MemoryDescriptor {
-    pub ty: u32,
+    pub ty: MemoryType,
     pub phys_start: u64,
     pub virt_start: u64,
     pub page_count: u64,
     pub att: u64,
+}
+
+c_enum! {
+pub enum MemoryType: u32 {
+    RESERVED                = 0
+    LOADER_CODE             = 1
+    LOADER_DATA             = 2
+    BOOT_SERVICES_CODE      = 3
+    BOOT_SERVICES_DATA      = 4
+    RUNTIME_SERVICES_CODE   = 5
+    RUNTIME_SERVICES_DATA   = 6
+    CONVENTIONAL            = 7
+    UNUSABLE                = 8
+    ACPI_RECLAIM            = 9
+    ACPI_NON_VOLATILE       = 10
+    MMIO                    = 11
+    MMIO_PORT_SPACE         = 12
+    PAL_CODE                = 13
+    PERSISTENT_MEMORY       = 14
+}
 }
 
 #[derive(Debug, Clone)]
@@ -195,9 +216,9 @@ where
             .filter(|e| {
                 matches!(
                     e.ty,
-                    MemoryDescriptor::CONVENTIONAL
-                        | MemoryDescriptor::BOOT_SERVICES_CODE
-                        | MemoryDescriptor::BOOT_SERVICES_DATA
+                    MemoryType::CONVENTIONAL
+                        | MemoryType::BOOT_SERVICES_CODE
+                        | MemoryType::BOOT_SERVICES_DATA
                 )
             })
             .map(|e| e.phys_start + (e.page_count * 4096))
@@ -282,24 +303,6 @@ impl GraphicsInfo {
     pub fn resolution(&self) -> (usize, usize) {
         self.resolution
     }
-}
-
-impl MemoryDescriptor {
-    pub const RESERVED: u32 = 0;
-    pub const LOADER_CODE: u32 = 1;
-    pub const LOADER_DATA: u32 = 2;
-    pub const BOOT_SERVICES_CODE: u32 = 3;
-    pub const BOOT_SERVICES_DATA: u32 = 4;
-    pub const RUNTIME_SERVICES_CODE: u32 = 5;
-    pub const RUNTIME_SERVICES_DATA: u32 = 6;
-    pub const CONVENTIONAL: u32 = 7;
-    pub const UNUSABLE: u32 = 8;
-    pub const ACPI_RECLAIM: u32 = 9;
-    pub const ACPI_NON_VOLATILE: u32 = 10;
-    pub const MMIO: u32 = 11;
-    pub const MMIO_PORT_SPACE: u32 = 12;
-    pub const PAL_CODE: u32 = 13;
-    pub const PERSISTENT_MEMORY: u32 = 14;
 }
 
 impl<'a> Iterator for MemoryMapIter<'a> {
