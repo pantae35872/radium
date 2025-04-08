@@ -82,6 +82,7 @@ pub struct GraphicsInfo {
 }
 
 #[derive(Debug)]
+#[repr(C)]
 pub struct RawBootBridge {
     mem_capacity: u64,
     framebuffer_data: RawData,
