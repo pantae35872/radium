@@ -1,4 +1,3 @@
-use boot_cfg_parser::toml::parser::TomlValue;
 use bootbridge::{BootBridgeBuilder, PixelBitmask, PixelFormat};
 use uefi::{
     proto::console::{
@@ -10,6 +9,8 @@ use uefi::{
         Boot, SystemTable,
     },
 };
+
+use crate::config::BootConfig;
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     let mut largest_mode: Option<OutputMode> = None;
@@ -42,7 +43,7 @@ pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
 pub fn initialize_graphics_kernel(
     system_table: &mut SystemTable<Boot>,
     boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
-    config: &TomlValue,
+    config: &BootConfig,
 ) {
     let handle = system_table
         .boot_services()
@@ -61,19 +62,7 @@ pub fn initialize_graphics_kernel(
     };
     let mut gop = gop.unwrap();
 
-    let resolution = config
-        .get("screen_resolution")
-        .expect("screen_resolution not found in the config file");
-    let width = resolution
-        .get("width")
-        .expect("width not found in the config file")
-        .as_integer()
-        .expect("width is not an integer") as usize;
-    let height = resolution
-        .get("height")
-        .expect("height not found in the config file")
-        .as_integer()
-        .expect("height is not an integer") as usize;
+    let (width, height) = config.screen_resolution();
     if let Some(mode) = gop
         .modes(system_table.boot_services())
         .find(|mode| mode.info().resolution() == (width, height))

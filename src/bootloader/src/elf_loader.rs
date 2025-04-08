@@ -1,16 +1,12 @@
 use core::ptr::write_bytes;
 
 use elf_rs::{Elf, ElfFile, ProgramType};
-use uefi::table::{
-    boot::{AllocateType, MemoryType},
-    Boot, SystemTable,
-};
+use uefi::table::boot::{AllocateType, MemoryType};
+use uefi_services::system_table;
 
-pub fn load_elf(
-    system_table: &mut SystemTable<Boot>,
-    buffer: &'static [u8],
-) -> (u64, u64, u64, Elf<'static>) {
-    let elf = Elf::from_bytes(buffer).unwrap_or_else(|_| panic!("could not create an elf file"));
+pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
+    let elf =
+        Elf::from_bytes(buffer).expect("Failed to create elf file from the kernel file buffer");
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
     let mut mem_max: u64 = 0;
@@ -45,7 +41,7 @@ pub fn load_elf(
         (1 + (total_bytes >> 12)) as usize
     };
 
-    let program_ptr = match system_table.boot_services().allocate_pages(
+    let program_ptr = match system_table().boot_services().allocate_pages(
         AllocateType::Address(mem_min),
         MemoryType::LOADER_DATA,
         count,

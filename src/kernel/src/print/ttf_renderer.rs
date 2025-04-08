@@ -194,7 +194,7 @@ impl TtfRenderer {
                                     color.blend(self.background_color, *pixel as f32 / 255.0),
                                 );
                                 x -= 1;
-                                if x <= 0 {
+                                if x == 0 {
                                     y = y.saturating_sub(1);
                                     x = metrics.width;
                                 }

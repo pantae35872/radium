@@ -5,26 +5,26 @@
 
 use core::arch::asm;
 
-use alloc::vec;
-use alloc::vec::Vec;
 use boot_cfg_parser::toml::parser::TomlValue;
-use boot_services::read_config;
+use boot_services::LoaderFile;
 use bootbridge::BootBridgeBuilder;
+use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use uefi::{
     entry,
     table::{
-        boot::{self, MemoryDescriptor, MemoryMap, MemoryType},
+        boot::{self, MemoryDescriptor, MemoryType},
         Boot, SystemTable,
     },
     Handle, Status,
 };
 
-use uefi_services::{println, system_table};
+use uefi_services::println;
 extern crate alloc;
 
 pub mod boot_services;
+pub mod config;
 pub mod elf_loader;
 pub mod graphics;
 pub mod kernel_loader;
@@ -58,23 +58,19 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     initialize_graphics_bootloader(&mut system_table);
 
-    let config: TomlValue = read_config(&mut system_table, "\\boot\\bootinfo.toml");
+    let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
+    let config: BootConfig = BootConfig::parse(&config);
 
-    let entrypoint = load_kernel(&mut system_table, &mut boot_bridge, &config);
+    let entrypoint = load_kernel(&mut boot_bridge, &config);
 
-    if config
-        .get("any_key_boot")
-        .expect("any_key_boot boot config not found")
-        .as_bool()
-        .expect("any_key_boot is not a boolean")
-    {
+    if config.any_key_boot() {
         any_key_boot(&mut system_table);
     }
 
     initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
 
-    let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
+    let (_system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
     let len = entries.len() * core::mem::size_of::<boot::MemoryDescriptor>();
