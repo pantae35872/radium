@@ -15,7 +15,7 @@ else
 endif
 
 
-.PHONY: debug release clean run make-test-kernel test-run test disk update font ovmf dbg-run force_rebuild
+.PHONY: debug release clean run make-test-kernel test-run test update dbg-run force_rebuild
 .DEFAULT_GOAL := debug
 
 NAME := radium
@@ -23,6 +23,7 @@ BUILD_DIR := build
 ISO_DIR := $(BUILD_DIR)/iso
 ISO_FILE := $(BUILD_DIR)/os.iso
 FAT_IMG := $(BUILD_DIR)/fat.img
+DISK_FILE := disk.img
 
 # Dependency files
 KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
@@ -37,6 +38,8 @@ BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
 BOOT_INFO := bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
 
+OVMF := OVMF.fd
+
 ifeq ($(BUILD_MODE), $(shell cat $(BUILD_MODE_FILE) 2>/dev/null))
     BUILD_MODE_CHANGED := 0
 else
@@ -48,7 +51,7 @@ endif
 -include $(OSRUNNER_DEPS)
 
 QEMU_FLAGS := -m 1G -bios OVMF.fd -serial stdio \
-	-drive id=disk,file=disk.img,if=none,format=qcow2 -device ahci,id=ahci \
+	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-no-reboot
 
@@ -72,23 +75,21 @@ $(ISO_FILE): force_rebuild
 endif
 endif
 
-disk:
-	qemu-img create -f qcow2 disk.img 1G
+$(DISK_FILE):
+	qemu-img create -f qcow2 $(DISK_FILE) 1G
 
-font:
-	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
-	mv open-sans.regular.ttf kernel-font.ttf
+$(OVMF):
+	cd vendor/edk2 && source edksetup.sh
+	cd vendor/edk2 && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
-ovmf:
-	wget https://github.com/clearlinux/common/raw/master/OVMF.fd
-
-run: 
+run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso
 
-dbg-run:
+dbg-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -S -s -cdrom $(BUILD_DIR)/os.iso
 
-test-run:
+test-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none
 
 $(OSRUNNER_BIN): $(BUILD_DIR) 
@@ -104,6 +105,10 @@ make-test-kernel: $(FAT_IMG) $(ISO_DIR)
 	mmove -D o -i $(FAT_IMG) boot/test_bootinfo.toml boot/bootinfo.toml
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -quiet -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/test.iso $(ISO_DIR) > /dev/null
+
+$(KERNEL_FONT):
+	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
+	mv open-sans.regular.ttf kernel-font.ttf
 
 $(KERNEL_BIN): 
 	cd src/kernel && cargo build $(if $(RELEASE),--release,)
@@ -133,4 +138,6 @@ test: $(OSRUNNER_BIN)
 
 clean:
 	rm -rf $(BUILD_DIR)
-
+	rm -rf $(OVMF)
+	rm -rf $(DISK_FILE)
+	rm -rf $(KERNEL_FONT)

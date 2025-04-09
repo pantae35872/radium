@@ -16,25 +16,17 @@ Radium OS is currently in the very early stages of development and is no where n
 * ```wget```
 * ```make```
 ## Getting the source code
+This project uses sub modules
 ```bash
-git clone https://github.com/pantae35872/radium
+git clone --recursive https://github.com/pantae35872/radium
 cd radium
 ```
 ## Build and Run
 Before building the OS, you might want to choose a font. It is recommended to use default font.
-If you want to use custom font follow these step. 
+but if you want to use custom font follow these step. 
 1. Copy your font file (`.ttf`) to the project directory and 
 2. rename it to ```kernel-font.ttf```
 ```bash
-# if you use custom font skip this step Only Once!!
-make font
-
-# Create a virtual disk image. Only Once!!
-make disk
-
-# get OVMF.fd before running. Only Once!!
-make ovmf
-
 # build the os (release mode. if you want debug mode change the make argument to "debug")
 make release
 
