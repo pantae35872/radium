@@ -79,8 +79,7 @@ $(DISK_FILE):
 	qemu-img create -f qcow2 $(DISK_FILE) 1G
 
 $(OVMF):
-	cd vendor/edk2 && source edksetup.sh
-	cd vendor/edk2 && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE
+	bash -c 'cd vendor/edk2 && source edksetup.sh && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE'
 	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
 run: $(DISK_FILE) $(OVMF)
@@ -130,14 +129,13 @@ $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
-release: $(BUILD_MODE_FILE) $(ISO_FILE) 
-debug: $(BUILD_MODE_FILE) $(ISO_FILE) 
+release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
+debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
 
 test: $(OSRUNNER_BIN)
 	cd src/kernel && cargo test $(RUN_ARGS)
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -rf $(OVMF)
 	rm -rf $(DISK_FILE)
 	rm -rf $(KERNEL_FONT)
