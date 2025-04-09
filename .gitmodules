@@ -1,4 +1,0 @@
-[submodule "vendor/edk2"]
-	path = vendor/edk2
-	url = https://github.com/pantae35872/edk2.git
-	branch = no-terminaldxe
