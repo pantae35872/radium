@@ -18,7 +18,7 @@ Radium OS is currently in the very early stages of development and is no where n
 ## Getting the source code
 This project uses sub modules
 ```bash
-git clone --recursive https://github.com/pantae35872/radium
+git clone --recurse-submodules https://github.com/pantae35872/radium
 cd radium
 ```
 ## Build and Run
