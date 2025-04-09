@@ -322,6 +322,8 @@ where
             }
         }
 
+        // TODO: Maybe create a helper that automatically detect overlap between mapped pages bc
+        // some of them can overlap pages
         boot_info.map_self(|start, size| {
             let start_frame = Frame::containing_address(start);
             let end_frame = Frame::containing_address(start + size - 1);
@@ -333,31 +335,6 @@ where
                 );
             }
         });
-
-        //let bootinfo_start = Frame::containing_address(boot_info.0 as u64);
-        //let bootinfo_end =
-        //    Frame::containing_address(boot_info.0 as u64 + size_of::<RawBootBridge>() as u64);
-
-        //let memory_map_start = Frame::containing_address(
-        //    boot_info.memory_map().entries().next().unwrap() as *const MemoryDescriptor as u64,
-        //);
-        //let memory_map_end = Frame::containing_address(
-        //    boot_info.memory_map().entries().last().unwrap() as *const MemoryDescriptor as u64,
-        //);
-        //for frame in Frame::range_inclusive(memory_map_start, memory_map_end) {
-        //    if frame >= bootinfo_start && frame <= bootinfo_end {
-        //        continue;
-        //    }
-        //    mapper.identity_map(
-        //        frame,
-        //        EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
-        //        allocator,
-        //    );
-        //}
-
-        //for frame in Frame::range_inclusive(bootinfo_start, bootinfo_end) {
-        //    mapper.identity_map(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE, allocator)
-        //}
     });
 
     active_table.switch(new_table);
