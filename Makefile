@@ -30,6 +30,8 @@ KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
 BOOTLOADER_DEPS := $(wildcard $(BUILD_DIR)/x86_64-unknown-uefi/$(BUILD_MODE)/*.d)
 OSRUNNER_DEPS := $(wildcard $(BUILD_DIR)/release/*.d)
 
+KERNEL_OPTS_DEPS := src/kernel/src/boot/boot.asm
+
 # Binaries
 KERNEL_BIN := $(abspath $(BUILD_DIR)/x86_64/$(BUILD_MODE)/$(NAME))
 OSRUNNER_BIN := $(abspath $(BUILD_DIR)/release/os-runner)
@@ -109,7 +111,7 @@ $(KERNEL_FONT):
 	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
 	mv open-sans.regular.ttf kernel-font.ttf
 
-$(KERNEL_BIN): 
+$(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
 	cd src/kernel && cargo build $(if $(RELEASE),--release,)
 	cp $(KERNEL_BIN) $(BUILD_DIR)/kernel.bin
 
