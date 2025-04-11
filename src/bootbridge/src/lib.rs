@@ -3,7 +3,7 @@
 use core::{cell::OnceCell, fmt::Debug};
 
 use c_enum::c_enum;
-use santa::Elf;
+use santa::{Elf, PAGE_SIZE};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {
@@ -119,6 +119,10 @@ impl BootBridge {
         self.deref().rsdp
     }
 
+    pub fn mem_capacity(&self) -> u64 {
+        self.deref().mem_capacity
+    }
+
     pub fn graphics_info(&self) -> GraphicsInfo {
         self.deref().graphics_info
     }
@@ -150,6 +154,8 @@ impl BootBridge {
         let mem_map = self.deref().memory_map.memory_map;
         let map_start = mem_map as *const [u8] as *const u8 as u64;
         mapper(map_start, mem_map.len() as u64);
+
+        self.kernel_elf().map_buffer(mapper);
     }
 }
 
@@ -303,6 +309,23 @@ impl GraphicsInfo {
 
     pub fn resolution(&self) -> (usize, usize) {
         self.resolution
+    }
+}
+
+impl MemoryDescriptor {
+    pub fn phys_align(&self, align: u64) -> Option<Self> {
+        if !align.is_power_of_two() {
+            return None;
+        }
+        let mut aligned_self = *self;
+        let ptr = self.phys_start as *const u8;
+        aligned_self.phys_start += ptr.align_offset(align as usize) as u64;
+        aligned_self.page_count =
+            self.page_count - (aligned_self.phys_start - self.phys_start) / PAGE_SIZE - 1;
+        if aligned_self.phys_start >= self.page_count * PAGE_SIZE + self.phys_start {
+            return None;
+        }
+        return Some(aligned_self);
     }
 }
 

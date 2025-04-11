@@ -1,13 +1,63 @@
 use crate::memory::FrameAllocator;
+use crate::serial_println;
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
+use core::ptr::Unique;
 
 use super::{Entry, EntryFlags, ENTRY_COUNT};
 
-pub const P4: *mut Table<Level4> = 0xffffffff_fffff000 as *mut _;
+macro_rules! impl_level_recurse {
+    // Base case: nothing more to implement
+    ($last:ty) => {
+        impl TableLevel for $last {
+            type Marker = RecurseHierarchicalLevelMarker;
+        }
+    };
+
+    // Recursive case
+    ($current:ty => $next:ty $(=> $rest:ty)*) => {
+        impl HierarchicalLevel for $current {
+            type NextLevel = $next;
+        }
+
+        impl TableLevel for $current {
+            type Marker = RecurseHierarchicalLevelMarker;
+        }
+
+        impl_level_recurse!($next $(=> $rest)*);
+    };
+}
+
+macro_rules! impl_level_direct {
+    // Base case: nothing more to implement
+    ($last:ty) => {
+        impl TableLevel for $last {
+            type Marker = DirectHierarchicalLevelMarker;
+        }
+    };
+
+    // Recursive case
+    ($current:ty => $next:ty $(=> $rest:ty)*) => {
+        impl HierarchicalLevel for $current {
+            type NextLevel = $next;
+        }
+
+        impl TableLevel for $current {
+            type Marker = DirectHierarchicalLevelMarker;
+        }
+
+        impl_level_direct!($next $(=> $rest)*);
+    };
+}
+
+pub trait NextTableAddress {
+    fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
+    where
+        L: TableLevel;
+}
 
 pub struct Table<L: TableLevel> {
-    entries: [Entry; ENTRY_COUNT as usize],
+    pub entries: [Entry; ENTRY_COUNT as usize],
     level: PhantomData<L>,
 }
 
@@ -25,16 +75,10 @@ where
 impl<L> Table<L>
 where
     L: HierarchicalLevel,
+    L::Marker: NextTableAddress,
 {
     fn next_table_address(&self, index: u64) -> Option<u64> {
-        let entry_flags = self[index as usize].flags();
-        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE)
-        {
-            let table_address = self as *const _ as u64;
-            Some((table_address << 9) | (index << 12))
-        } else {
-            None
-        }
+        <L::Marker as NextTableAddress>::next_table_address_impl(self, index)
     }
 
     pub fn next_table(&self, index: u64) -> Option<&Table<L::NextLevel>> {
@@ -70,6 +114,39 @@ where
     }
 }
 
+impl NextTableAddress for RecurseHierarchicalLevelMarker {
+    fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
+    where
+        L: TableLevel,
+    {
+        let entry_flags = table[index as usize].flags();
+        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE)
+        {
+            let table_address = table as *const _ as u64;
+            Some((table_address << 9) | (index << 12))
+        } else {
+            None
+        }
+    }
+}
+
+impl NextTableAddress for DirectHierarchicalLevelMarker {
+    fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
+    where
+        L: TableLevel,
+    {
+        let entry_flags = table[index as usize].flags();
+        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE)
+        {
+            Some(table[index as usize].0 & !0xfff)
+        } else {
+            None
+        }
+    }
+}
+
+impl DirectP4Marker {}
+
 impl<L> Index<usize> for Table<L>
 where
     L: TableLevel,
@@ -90,30 +167,62 @@ where
     }
 }
 
-pub trait TableLevel {}
+pub struct DirectHierarchicalLevelMarker;
+pub struct RecurseHierarchicalLevelMarker;
+pub struct RecurseP4Marker;
+pub struct DirectP4Marker;
+pub trait RecurseP4Create<T>
+where
+    T: TableLevel,
+{
+    unsafe fn create() -> Unique<Table<T>> {
+        Unique::new_unchecked(0xffffffff_fffff000 as *mut _)
+    }
+}
+pub trait DirectP4Create<T>
+where
+    T: TableLevel,
+{
+    unsafe fn create(p4: *mut Table<T>) -> Unique<Table<T>> {
+        Unique::new_unchecked(p4)
+    }
+}
 
-pub enum Level4 {}
-pub enum Level3 {}
-pub enum Level2 {}
-pub enum Level1 {}
+impl<T> RecurseP4Create<T> for RecurseP4Marker where T: TableLevel4 {}
+impl<T> DirectP4Create<T> for DirectP4Marker where T: TableLevel4 {}
 
-impl TableLevel for Level4 {}
-impl TableLevel for Level3 {}
-impl TableLevel for Level2 {}
-impl TableLevel for Level1 {}
+pub enum RecurseLevel4 {}
+pub enum RecurseLevel3 {}
+pub enum RecurseLevel2 {}
+pub enum RecurseLevel1 {}
+
+pub enum DirectLevel4 {}
+pub enum DirectLevel3 {}
+pub enum DirectLevel2 {}
+pub enum DirectLevel1 {}
+
+pub trait TableLevel {
+    type Marker: NextTableAddress;
+}
+
+pub trait TableLevel4: TableLevel
+where
+    Self: Sized,
+{
+    type CreateMarker;
+}
+
+impl TableLevel4 for RecurseLevel4 {
+    type CreateMarker = RecurseP4Marker;
+}
+
+impl TableLevel4 for DirectLevel4 {
+    type CreateMarker = DirectP4Marker;
+}
 
 pub trait HierarchicalLevel: TableLevel {
     type NextLevel: TableLevel;
 }
 
-impl HierarchicalLevel for Level4 {
-    type NextLevel = Level3;
-}
-
-impl HierarchicalLevel for Level3 {
-    type NextLevel = Level2;
-}
-
-impl HierarchicalLevel for Level2 {
-    type NextLevel = Level1;
-}
+impl_level_direct!(DirectLevel4 => DirectLevel3 => DirectLevel2 => DirectLevel1);
+impl_level_recurse!(RecurseLevel4 => RecurseLevel3 => RecurseLevel2 => RecurseLevel1);

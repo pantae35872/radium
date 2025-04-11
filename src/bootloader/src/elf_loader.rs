@@ -2,7 +2,7 @@ use core::ptr::write_bytes;
 
 use santa::{Elf, ProgramType};
 use uefi::table::boot::{AllocateType, MemoryType};
-use uefi_services::{println, system_table};
+use uefi_services::system_table;
 
 pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
     let elf = Elf::new(buffer).expect("Failed to create elf file from the kernel file buffer");
@@ -40,10 +40,9 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
         (1 + (total_bytes >> 12)) as usize
     };
 
-    println!("mem_min: {mem_min:#x}, mem_max: {mem_max:#x}, pages_needed: {page_count}, mem_needed: {max_memory_needed:#x}");
     let program_ptr = match system_table().boot_services().allocate_pages(
         AllocateType::Address(mem_min),
-        MemoryType::LOADER_DATA,
+        MemoryType::RUNTIME_SERVICES_CODE,
         page_count,
     ) {
         Ok(ptr) => ptr as *mut u8,

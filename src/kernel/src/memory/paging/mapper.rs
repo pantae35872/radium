@@ -1,26 +1,59 @@
 use x86_64::{PhysAddr, VirtAddr};
 
-use super::table::{self, Level4, Table};
+use super::table::{
+    self, DirectP4Create, DirectP4Marker, HierarchicalLevel, NextTableAddress, RecurseLevel4,
+    RecurseP4Create, Table, TableLevel, TableLevel4,
+};
 use super::{EntryFlags, Page, ENTRY_COUNT};
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
+use crate::{serial_print, serial_println};
+use core::ops::Index;
 use core::ptr::Unique;
 
-pub struct Mapper {
-    p4: Unique<Table<Level4>>,
+pub struct Mapper<P4: TableLevel4> {
+    p4: Unique<Table<P4>>,
 }
 
-impl Mapper {
-    pub unsafe fn new() -> Mapper {
+impl<P4> Mapper<P4>
+where
+    P4: TableLevel4,
+    P4::CreateMarker: RecurseP4Create<P4>,
+{
+    pub unsafe fn new() -> Mapper<P4> {
         Mapper {
-            p4: Unique::new_unchecked(table::P4),
+            p4: P4::CreateMarker::create(),
         }
     }
+}
 
-    pub fn p4(&self) -> &Table<Level4> {
+impl<P4> Mapper<P4>
+where
+    P4: TableLevel4,
+    P4::CreateMarker: DirectP4Create<P4>,
+{
+    pub unsafe fn new_custom(p4: *mut Table<P4>) -> Mapper<P4> {
+        Mapper {
+            p4: P4::CreateMarker::create(p4),
+        }
+    }
+}
+
+/// Zero-cost ahhh abstraction
+impl<P4> Mapper<P4>
+where
+    P4: HierarchicalLevel + TableLevel4,
+    P4::Marker: NextTableAddress,
+    P4::NextLevel: HierarchicalLevel,
+    <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
+    <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
+    <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
+        NextTableAddress,
+{
+    pub fn p4(&self) -> &Table<P4> {
         unsafe { self.p4.as_ref() }
     }
 
-    pub fn p4_mut(&mut self) -> &mut Table<Level4> {
+    pub fn p4_mut(&mut self) -> &mut Table<P4> {
         unsafe { self.p4.as_mut() }
     }
 
@@ -78,8 +111,10 @@ impl Mapper {
         let p3 = p4.next_table_create(page.p4_index(), allocator);
         let p2 = p3.next_table_create(page.p3_index(), allocator);
         let p1 = p2.next_table_create(page.p2_index(), allocator);
-
-        assert!(p1[page.p1_index() as usize].is_unused());
+        assert!(
+            p1[page.p1_index() as usize].is_unused()
+                || p1[page.p1_index() as usize].overwriteable()
+        );
         p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
     }
     pub fn map<A>(&mut self, page: Page, flags: EntryFlags, allocator: &mut A)
@@ -96,6 +131,20 @@ impl Mapper {
     {
         let page = Page::containing_address(frame.start_address().as_u64());
         self.map_to(page, frame, flags, allocator)
+    }
+
+    pub fn identity_map_range<A>(
+        &mut self,
+        start_frame: Frame,
+        end_frame: Frame,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) where
+        A: FrameAllocator,
+    {
+        for frame in Frame::range_inclusive(start_frame, end_frame) {
+            self.identity_map(frame, flags, allocator);
+        }
     }
 
     pub fn unmap_addr(&mut self, page: Page) -> Frame {

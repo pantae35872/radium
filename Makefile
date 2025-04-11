@@ -88,7 +88,7 @@ run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso
 
 dbg-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -S -s -cdrom $(BUILD_DIR)/os.iso
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -d int -S -s
 
 test-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none

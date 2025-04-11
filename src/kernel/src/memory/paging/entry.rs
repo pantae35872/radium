@@ -2,11 +2,16 @@ use crate::memory::Frame;
 
 use super::EntryFlags;
 
-pub struct Entry(u64);
+#[derive(Debug)]
+pub struct Entry(pub u64);
 
 impl Entry {
     pub fn is_unused(&self) -> bool {
         self.0 == 0
+    }
+
+    pub fn overwriteable(&self) -> bool {
+        self.flags().contains(EntryFlags::OVERWRITEABLE)
     }
 
     pub fn set_unused(&mut self) {

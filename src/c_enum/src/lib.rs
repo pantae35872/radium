@@ -14,7 +14,7 @@ macro_rules! c_enum {
     ) => {
         $(
             #[repr(transparent)]
-            #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
+            #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Hash)]
             $vis struct $name($type);
 
             #[allow(unused)]
@@ -28,6 +28,18 @@ macro_rules! c_enum {
             impl From<$name> for $type {
                 fn from(value: $name) -> Self {
                     value.0
+                }
+            }
+
+            impl Debug for $name {
+                fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                    let value = match self {
+                        $(
+                            $name($expr) => stringify!($element_name),
+                        )*
+                        _ => unreachable!()
+                    };
+                    write!(f, "{name}({value})", name = stringify!($name))
                 }
             }
         )*

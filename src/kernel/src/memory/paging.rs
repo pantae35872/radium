@@ -1,26 +1,33 @@
 pub use self::entry::*;
 use self::mapper::Mapper;
-use self::table::{Level4, Table};
+use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
+use crate::{hlt_loop, serial_println};
 use bootbridge::BootBridge;
 use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
-use santa::{SectionHeader, SectionHeaderFlags};
+use santa::SectionHeaderFlags;
+use table::{
+    DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, TableLevel,
+    TableLevel4,
+};
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
 
+use super::allocator::linear_allocator::LinearAllocator;
+
 mod entry;
 mod mapper;
-mod table;
+pub mod table;
 mod temporary_page;
 
 const ENTRY_COUNT: u64 = 512;
 
 bitflags! {
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct EntryFlags: u64 {
         const PRESENT =         1 << 0;
         const WRITABLE =        1 << 1;
@@ -31,22 +38,24 @@ bitflags! {
         const DIRTY =           1 << 6;
         const HUGE_PAGE =       1 << 7;
         const GLOBAL =          1 << 8;
+        const OVERWRITEABLE =   1 << 62; // Custom flags. This flags mean the mapped address can be
+                                         // overwrite when mapping
         const NO_EXECUTE =      1 << 63;
     }
 }
 
 impl EntryFlags {
-    pub fn from_elf_section_flags(section: &SectionHeader) -> EntryFlags {
+    pub fn from_elf_section_flags(section: &SectionHeaderFlags) -> EntryFlags {
         let mut flags = EntryFlags::empty();
 
-        if section.flags().contains(SectionHeaderFlags::Alloc) {
-            flags = flags | EntryFlags::PRESENT;
+        if section.contains(SectionHeaderFlags::Alloc) {
+            flags |= EntryFlags::PRESENT;
         }
-        if section.flags().contains(SectionHeaderFlags::Writeable) {
-            flags = flags | EntryFlags::WRITABLE;
+        if section.contains(SectionHeaderFlags::Writeable) {
+            flags |= EntryFlags::WRITABLE;
         }
-        if !section.flags().contains(SectionHeaderFlags::Executeable) {
-            flags = flags | EntryFlags::NO_EXECUTE;
+        if !section.contains(SectionHeaderFlags::Executeable) {
+            flags |= EntryFlags::NO_EXECUTE;
         }
 
         flags
@@ -122,34 +131,68 @@ impl Iterator for PageIter {
     }
 }
 
-pub struct ActivePageTable {
-    p4: Unique<Table<Level4>>,
-    mapper: Mapper,
+pub struct ActivePageTable<P4: TableLevel4> {
+    p4: Unique<Table<P4>>,
+    mapper: Mapper<P4>,
 }
 
-impl Deref for ActivePageTable {
-    type Target = Mapper;
+impl<P4> ActivePageTable<P4>
+where
+    P4: TableLevel4,
+    P4::CreateMarker: RecurseP4Create<P4>,
+{
+    pub unsafe fn new() -> ActivePageTable<P4> {
+        ActivePageTable {
+            p4: P4::CreateMarker::create(),
+            mapper: Mapper::new(),
+        }
+    }
+}
 
-    fn deref(&self) -> &Mapper {
+impl<P4> ActivePageTable<P4>
+where
+    P4: TableLevel4,
+    P4::CreateMarker: DirectP4Create<P4>,
+{
+    pub unsafe fn new_custom(p4: *mut Table<P4>) -> ActivePageTable<P4> {
+        ActivePageTable {
+            p4: P4::CreateMarker::create(p4),
+            mapper: Mapper::new_custom(p4),
+        }
+    }
+}
+
+impl<P4> Deref for ActivePageTable<P4>
+where
+    P4: TableLevel4,
+{
+    type Target = Mapper<P4>;
+
+    fn deref(&self) -> &Mapper<P4> {
         &self.mapper
     }
 }
 
-impl DerefMut for ActivePageTable {
-    fn deref_mut(&mut self) -> &mut Mapper {
+impl<P4> DerefMut for ActivePageTable<P4>
+where
+    P4: TableLevel4,
+{
+    fn deref_mut(&mut self) -> &mut Mapper<P4> {
         &mut self.mapper
     }
 }
 
-impl ActivePageTable {
-    pub unsafe fn new() -> ActivePageTable {
-        ActivePageTable {
-            p4: Unique::new_unchecked(table::P4),
-            mapper: Mapper::new(),
-        }
-    }
-
-    fn p4_mut(&mut self) -> &mut Table<Level4> {
+impl<P4> ActivePageTable<P4>
+where
+    P4: HierarchicalLevel + TableLevel4,
+    P4::Marker: NextTableAddress,
+    P4::NextLevel: HierarchicalLevel,
+    <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
+    <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
+    <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
+        NextTableAddress,
+{
+    fn p4_mut(&mut self) -> &mut Table<P4> {
         unsafe { self.p4.as_mut() }
     }
 
@@ -159,7 +202,7 @@ impl ActivePageTable {
         temporary_page: &mut temporary_page::TemporaryPage,
         f: F,
     ) where
-        F: FnOnce(&mut Mapper),
+        F: FnOnce(&mut Mapper<P4>),
     {
         use x86_64::instructions::tlb;
         {
@@ -196,7 +239,7 @@ impl ActivePageTable {
         old_table
     }
 
-    fn p4(&self) -> &Table<Level4> {
+    fn p4(&self) -> &Table<P4> {
         unsafe { self.p4.as_ref() }
     }
 
@@ -243,28 +286,6 @@ impl ActivePageTable {
             .and_then(|p1| p1[page.p1_index() as usize].pointed_frame())
             .or_else(huge_page)
     }
-
-    fn unmap<A>(&mut self, page: Page, allocator: &mut A)
-    where
-        A: FrameAllocator,
-    {
-        use x86_64::instructions::tlb;
-
-        assert!(self
-            .translate(VirtAddr::new(page.start_address()))
-            .is_some());
-
-        let p1 = self
-            .p4_mut()
-            .next_table_mut(page.p4_index())
-            .and_then(|p3| p3.next_table_mut(page.p3_index()))
-            .and_then(|p2| p2.next_table_mut(page.p2_index()))
-            .expect("mapping code does not support huge pages");
-        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
-        p1[page.p1_index() as usize].set_unused();
-        tlb::flush(VirtAddr::new(page.start_address() as u64));
-        allocator.deallocate_frame(frame);
-    }
 }
 
 pub struct InactivePageTable {
@@ -272,11 +293,20 @@ pub struct InactivePageTable {
 }
 
 impl InactivePageTable {
-    pub fn new(
+    pub fn new<P4>(
         frame: Frame,
-        active_table: &mut ActivePageTable,
+        active_table: &mut ActivePageTable<P4>,
         temporary_page: &mut TemporaryPage,
-    ) -> InactivePageTable {
+    ) -> InactivePageTable
+    where
+        P4: HierarchicalLevel + TableLevel4,
+        P4::Marker: NextTableAddress,
+        P4::NextLevel: HierarchicalLevel,
+        <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
+        <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
+        <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
+            NextTableAddress,
+    {
         {
             let table = temporary_page.map_table_frame(frame.clone(), active_table);
             table.zero();
@@ -292,7 +322,89 @@ impl InactivePageTable {
     }
 }
 
-pub fn remap_the_kernel<A>(allocator: &mut A, boot_info: &BootBridge) -> ActivePageTable
+pub unsafe fn early_map_kernel<A>(
+    bootbridge: &BootBridge,
+    allocator: &mut A,
+    linear_allocator: &LinearAllocator,
+) where
+    A: FrameAllocator,
+{
+    let p4_table = allocator
+        .allocate_frame()
+        .expect("Failed to allocate frame for temporary early boot");
+    let mut active_table = ActivePageTable::<DirectLevel4>::new_custom(
+        p4_table.start_address().as_u64() as *mut Table<DirectLevel4>,
+    );
+    bootbridge.kernel_elf().map_self(|start, end, flags| {
+        active_table.identity_map_range(
+            start.into(),
+            end.into(),
+            EntryFlags::from_elf_section_flags(&flags),
+            allocator,
+        )
+    });
+
+    // Map the boot-info
+    bootbridge.map_self(|start, size| {
+        let start_frame = Frame::containing_address(start);
+        let end_frame = Frame::containing_address(start + size - 1);
+        for frame in Frame::range_inclusive(start_frame, end_frame) {
+            active_table.identity_map(
+                frame,
+                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::OVERWRITEABLE,
+                allocator,
+            );
+        }
+    });
+
+    // Do a recursive map
+    active_table.p4_mut()[511] = Entry(
+        p4_table.start_address().as_u64() | (EntryFlags::PRESENT | EntryFlags::WRITABLE).bits(),
+    );
+
+    // Map the allocator memories (used by the next boot strap process)
+    active_table.identity_map_range(
+        (linear_allocator.original_start() as u64).into(),
+        Frame::containing_address(
+            linear_allocator.original_start() as u64 + linear_allocator.size() as u64 - 1,
+        ),
+        EntryFlags::PRESENT | EntryFlags::WRITABLE,
+        allocator,
+    );
+
+    // Unsafely change the cr3 bc we have no recursive map on the uefi table
+    // TODO: If we want to do this safely and by design, we need huge pages support for both L3 and
+    // L2 huge pages bc we can't work with the uefi table without huge pages support
+    Cr3::write(
+        PhysFrame::from_start_address(p4_table.start_address()).unwrap(),
+        Cr3Flags::PAGE_LEVEL_WRITETHROUGH,
+    );
+}
+
+pub fn create_mappings<F, A>(f: F, allocator: &mut A) -> InactivePageTable
+where
+    F: FnOnce(&mut Mapper<RecurseLevel4>, &mut A),
+    A: FrameAllocator,
+{
+    let mut temporary_page = TemporaryPage::new(Page { number: 0xdeadbeef }, allocator);
+    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+
+    let mut new_table = {
+        let frame = allocator.allocate_frame().expect("no more frames");
+        InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
+    };
+
+    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
+        f(mapper, allocator);
+    });
+
+    new_table
+}
+
+pub fn remap_the_kernel<A>(
+    allocator: &mut A,
+    bootbridge: &BootBridge,
+) -> ActivePageTable<RecurseLevel4>
 where
     A: FrameAllocator,
 {
@@ -304,33 +416,22 @@ where
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        for section in boot_info.kernel_elf().section_header_iter() {
-            if !section.flags().contains(SectionHeaderFlags::Alloc) {
-                continue;
-            }
-            assert!(
-                section.vaddr() % PAGE_SIZE == 0,
-                "sections need to be page aligned"
-            );
+        bootbridge.kernel_elf().map_self(|start, end, flags| {
+            mapper.identity_map_range(
+                start.into(),
+                end.into(),
+                EntryFlags::from_elf_section_flags(&flags),
+                allocator,
+            )
+        });
 
-            let flags = EntryFlags::from_elf_section_flags(&section);
-
-            let start_frame = Frame::containing_address(section.vaddr());
-            let end_frame = Frame::containing_address(section.vaddr() + section.size() - 1);
-            for frame in Frame::range_inclusive(start_frame, end_frame) {
-                mapper.identity_map(frame, flags, allocator);
-            }
-        }
-
-        // TODO: Maybe create a helper that automatically detect overlap between mapped pages bc
-        // some of them can overlap pages
-        boot_info.map_self(|start, size| {
+        bootbridge.map_self(|start, size| {
             let start_frame = Frame::containing_address(start);
             let end_frame = Frame::containing_address(start + size - 1);
             for frame in Frame::range_inclusive(start_frame, end_frame) {
                 mapper.identity_map(
                     frame,
-                    EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE,
+                    EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::OVERWRITEABLE,
                     allocator,
                 );
             }

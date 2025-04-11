@@ -1,5 +1,5 @@
 use super::{
-    paging::{ActivePageTable, EntryFlags, Page, PageIter},
+    paging::{table::RecurseLevel4, ActivePageTable, EntryFlags, Page, PageIter},
     FrameAllocator, PAGE_SIZE,
 };
 
@@ -16,7 +16,7 @@ impl StackAllocator {
 impl StackAllocator {
     pub fn alloc_stack<FA: FrameAllocator>(
         &mut self,
-        active_table: &mut ActivePageTable,
+        active_table: &mut ActivePageTable<RecurseLevel4>,
         frame_allocator: &mut FA,
         size_in_pages: usize,
     ) -> Option<Stack> {

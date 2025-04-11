@@ -52,7 +52,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let mut boot_bridge = BootBridgeBuilder::new(|size: usize| {
         uefi_services::system_table()
             .boot_services()
-            .allocate_pool(MemoryType::LOADER_CODE, size)
+            .allocate_pool(MemoryType::RUNTIME_SERVICES_DATA, size)
             .unwrap_or_else(|e| panic!("Failed to allocate memory for the boot information {}", e))
     });
 
@@ -70,7 +70,8 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
 
-    let (_system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_CODE);
+    let (_system_table, memory_map) =
+        system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
     let len = entries.len() * core::mem::size_of::<boot::MemoryDescriptor>();

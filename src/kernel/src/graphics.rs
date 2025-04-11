@@ -10,7 +10,6 @@ use spin::mutex::Mutex;
 use crate::{
     log,
     memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
-    serial_println,
 };
 
 pub mod color;

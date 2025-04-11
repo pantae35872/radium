@@ -77,6 +77,7 @@ pub trait Testable {
 }
 
 #[panic_handler]
+// TODO: Better logging system
 fn panic(info: &PanicInfo) -> ! {
     log!(Critical, "{}", info);
     LOGGER.flush_all();

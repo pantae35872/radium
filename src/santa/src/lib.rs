@@ -1,68 +1,108 @@
 #![no_std]
 #![feature(custom_test_frameworks)]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
 use bitflags::bitflags;
 use c_enum::c_enum;
+use core::ffi::CStr;
+use core::fmt::Debug;
 use core::iter::Iterator;
 use core::option::Option;
 
+pub const PAGE_SIZE: u64 = 4096;
+
 // TODO: Add testing
-// TODO: Proper debug print
-#[derive(Debug)]
 pub struct Elf<'a> {
     buffer: &'a [u8],
 }
 
 //  Reference from https://wiki.osdev.org/ELF
 #[repr(C)]
+#[derive(Debug)]
 struct ElfHeader {
-    magic_bytes: [u8; 4],             // Magic bytes - 0x7F, then 'ELF' in ASCII
-    bits: ElfBits,                    // How many Bits???
-    endian: ElfEndian,                // Endian of this elf
-    header_version: u8,               // Header version
-    abi: u8,                          // OS ABI - usually 0 for System V
-    _unused: [u8; 8],                 // Unused (Use for padding)
-    ty: ElfType,                      // Type of the elf
-    instruction_set: InstructionSet,  // Instruction set
-    elf_version: u32,                 // Elf version (currently 1)
-    program_entry_offset: u64,        // Offset to the program entrypoint
-    program_header_table_offset: u64, // Offset to the program headers
-    section_header_table_offset: u64, // Offset to the section headers
-    flags: u32,                       // Flags, unused in x86_64 (which we're targeting)
-    header_size: u16,                 // ELF Header size
-    program_entry_size: u16,          // Size of an entry in the program header table
-    program_entries_len: u16,         // Number of entries in the program header table
-    section_entry_size: u16,          // Size of an entry in the section header table
-    section_entries_len: u16,         // Number of entries in the section header table
-    section_index: u16,               // Section index to the section header string table
+    /// Magic bytes - 0x7F, then 'ELF' in ASCII
+    magic_bytes: [u8; 4],
+    /// How many Bits???
+    bits: ElfBits,
+    /// Endian of this elf
+    endian: ElfEndian,
+    /// Header version
+    header_version: u8,
+    /// OS ABI - usually 0 for System V
+    abi: u8,
+    /// Unused (Use for padding)
+    _unused: [u8; 8],
+    /// Type of the elf
+    ty: ElfType,
+    /// Instruction set
+    instruction_set: InstructionSet,
+    /// Elf version (currently 1)
+    elf_version: u32,
+    /// Offset to the program entrypoint
+    program_entry_offset: u64,
+    /// Offset to the program headers
+    program_header_table_offset: u64,
+    /// Offset to the section headers
+    section_header_table_offset: u64,
+    /// Flags, unused in x86_64 (which we're targeting)
+    flags: u32,
+    /// ELF Header size
+    header_size: u16,
+    /// Size of each entry in the program header table
+    program_entry_size: u16,
+    /// Number of entries in the program header table
+    program_entries_len: u16,
+    /// Size of each entry in the section header table
+    section_entry_size: u16,
+    /// Number of entries in the section header table
+    section_entries_len: u16,
+    /// Section index to the section header string table
+    string_table_index: u16,
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct ProgramHeader {
     program_type: ProgramType,
     flags: ProgramHeaderFlags,
-    program_offset: u64, // The offset in the file that the data for this segment can be found (p_offset)
-    program_vaddr: u64,  // Where you should start to put this segment in virtual memory (p_vaddr)
-    reserved: u64,       // Reserved for segment's physical address (p_paddr)
-    program_filesize: u64, // Size of the segment in the file (p_filesz)
-    program_memsize: u64, // Size of the segment in memory (p_memsz, at least as big as p_filesz)
-    alignment: u64,      //The required alignment for this section (usually a power of 2)
+    /// The offset in the file that the data for this segment can be found (p_offset)
+    program_offset: u64,
+    /// Where you should start to put this segment in virtual memory (p_vaddr)
+    program_vaddr: u64,
+    /// Reserved for segment's physical address (p_paddr)
+    reserved: u64,
+    /// Size of the segment in the file (p_filesz)
+    program_filesize: u64,
+    /// Size of the segment in memory (p_memsz, at least as big as p_filesz)
+    program_memsize: u64,
+    /// The required alignment for this section (usually a power of 2)
+    alignment: u64,
 }
 
 #[repr(C)]
 pub struct SectionHeader {
-    name: u32,                 // Offset to the section name in the section header string table.
-    typ: SectionType,          // SectionType
-    flags: SectionHeaderFlags, // Flags
-    vaddr: u64,                // Virtual address where the section should be loaded in memory.
-    offset: u64,               // Offset of the section's data in the file.
-    size: u64,                 // Size of the section in bytes
-    link: u32,                 // Section index of an associated section.
-    info: u32,                 // Extra information; interpretation depends on the section type.
-    addralign: u64,            // Address alignment constraints for the section.
-    entry_size: u64, // Size of each entry if the section holds a table of fixed-size entries
+    // Offset to the section name in the section header string table.
+    name: u32,
+    /// Section type
+    typ: SectionType,
+    flags: SectionHeaderFlags,
+    /// Virtual address where the section should be loaded in memory.
+    vaddr: u64,
+    /// Offset of the section's data in the file.
+    offset: u64,
+    /// Size of the section in bytes
+    size: u64,
+    /// Section index of an associated section.
+    link: u32,
+    /// Extra information; interpretation depends on the section type.
+    info: u32,
+    /// Address alignment constraints for the section.
+    addralign: u64,
+    /// Size of each entry if the section holds a table of fixed-size entries
+    entry_size: u64,
 }
-
 c_enum! {
     pub(crate) enum ElfBits: u8 {
         B32 = 1
@@ -117,13 +157,13 @@ c_enum! {
 }
 
 bitflags! {
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct ProgramHeaderFlags: u32 {
         const Executeable = 0x1;
         const Writeable = 0x2;
         const Readable = 0x4;
     }
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct SectionHeaderFlags: u64 {
         const Writeable = 0x1;
         const Alloc = 0x2;
@@ -134,7 +174,13 @@ bitflags! {
 #[derive(Debug)]
 pub enum ElfError {
     InvalidHeader,
-    InvalidMagic { magic: [u8; 4] },
+    /// The index into the string table is not valid from the ElfHeader
+    InvalidStringTableIndex(usize),
+    /// The string table in the elf file is not valid
+    InvalidStringTable,
+    InvalidMagic {
+        magic: [u8; 4],
+    },
 }
 
 pub struct ProgramHeaderIter<'a> {
@@ -225,6 +271,23 @@ impl<'a> Elf<'a> {
             })
     }
 
+    pub fn string_table_index(&self, _index: usize) -> Result<&CStr, ElfError> {
+        let header = self.header();
+        let string_table = self
+            .section_entry(header.string_table_index as usize)
+            .ok_or(ElfError::InvalidStringTableIndex(
+                header.string_table_index as usize,
+            ))?;
+        let _string_table = self
+            .buffer
+            .get(
+                string_table.offset as usize
+                    ..string_table.offset as usize + string_table.size as usize,
+            )
+            .ok_or(ElfError::InvalidStringTable)?;
+        todo!("Use somesort of buffer because we don't want to iterate through a cstring, it's ineffecient")
+    }
+
     pub fn program_entries_len(&self) -> usize {
         self.header().program_entries_len as usize
     }
@@ -245,6 +308,38 @@ impl<'a> Elf<'a> {
 
     pub fn entry_point(&self) -> u64 {
         self.header().program_entry_offset
+    }
+
+    /// Warning: these two function are different
+    /// this function map the file buffer not the loaded elf
+    pub fn map_buffer<M>(&self, mut mapper: M)
+    where
+        M: FnMut(u64, u64),
+    {
+        let buffer_start = self.buffer as *const [u8] as *const u8 as u64;
+        mapper(buffer_start, self.buffer.len() as u64);
+    }
+
+    /// this map the loaded elf not the elf file itself
+    pub fn map_self<M>(&self, mut mapper: M)
+    where
+        M: FnMut(u64, u64, SectionHeaderFlags),
+    {
+        for section in self.section_header_iter() {
+            if !section.flags().contains(SectionHeaderFlags::Alloc) {
+                continue;
+            }
+            assert!(
+                section.vaddr() % PAGE_SIZE == 0,
+                "sections need to be page aligned"
+            );
+
+            mapper(
+                section.vaddr(),
+                section.vaddr() + section.size() - 1,
+                section.flags(),
+            );
+        }
     }
 }
 
@@ -293,6 +388,24 @@ impl SectionHeader {
 
     pub fn alignment(&self) -> u64 {
         self.addralign
+    }
+}
+
+impl Debug for Elf<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Elf {{ {header:?}, ProgramHeaders: {program_headers:?}, SectionHeaders: {section_headers:?} }}",
+            header = self.header(),
+            program_headers = self.program_header_iter().collect::<Vec<_>>(),
+            section_headers = self.section_header_iter().collect::<Vec<_>>()
+        )
+    }
+}
+
+impl Debug for SectionHeader {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SectionHeader: {{ name: }}")
     }
 }
 

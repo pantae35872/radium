@@ -1,9 +1,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use allocator::buddy_allocator::BuddyAllocator;
+use allocator::{buddy_allocator::BuddyAllocator, linear_allocator::LinearAllocator};
 use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
-use paging::{ActivePageTable, EntryFlags, Page};
+use paging::{early_map_kernel, table::RecurseLevel4, ActivePageTable, EntryFlags, Page};
 use spin::Mutex;
 use stack_allocator::{Stack, StackAllocator};
 use x86_64::{
@@ -22,11 +22,27 @@ pub mod stack_allocator;
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ALIGN: usize = 8192;
 
-pub fn init(boot_info: &BootBridge) {
-    let mut allocator = unsafe { BuddyAllocator::new(boot_info.memory_map()) };
+extern "C" {
+    pub static early_alloc: u8;
+}
+
+pub fn init(bootbridge: &BootBridge) {
+    let linear_allocator = unsafe { LinearAllocator::new(bootbridge.memory_map()) };
+    let mut early_boot_alloc =
+        unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    let active_table = remap_the_kernel(&mut allocator, boot_info);
+    unsafe {
+        early_map_kernel(bootbridge, &mut early_boot_alloc, &linear_allocator);
+    }
+    let mut allocator = unsafe {
+        BuddyAllocator::new(
+            bootbridge.memory_map(),
+            bootbridge.kernel_elf(),
+            linear_allocator,
+        )
+    };
+    let active_table = remap_the_kernel(&mut allocator, bootbridge);
 
     let stack_allocator = {
         let stack_alloc_start = Page::containing_address(virt_addr_alloc(409600));
@@ -34,6 +50,7 @@ pub fn init(boot_info: &BootBridge) {
         let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
         StackAllocator::new(stack_alloc_range)
     };
+
     MEMORY_CONTROLLER.init_once(|| {
         MemoryController {
             active_table,
@@ -42,12 +59,16 @@ pub fn init(boot_info: &BootBridge) {
         }
         .into()
     });
+
     allocator::init();
+
     log!(
         Info,
         "Usable memory: {:.2} GB",
         memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
     );
+
+    log!(Info, "Detected memory: {} GB", bootbridge.mem_capacity());
 }
 
 fn enable_write_protect_bit() {
@@ -70,82 +91,12 @@ fn enable_nxe_bit() {
     }
 }
 
-/// Switch the current scope to use a page table that is identity-mapped (1:1) with physical memory.
-///
-/// This macro temporarily switches the page table in the current scope to one where virtual addresses
-/// directly map to the corresponding physical addresses. The identity mapping bypasses the standard virtual
-/// memory translation, giving direct access to physical memory for the duration of the current scope.
-///
-/// ## Important Notes:
-/// - **Heap allocation causes *undefined behavior*:** While the heap allocator is technically still accessible,
-///   any attempt to allocate memory or deallocating memory in this mode will lead to *undefined behavior*. Avoid any operations that
-///   require dynamic memory allocation.
-/// - **No printing:** Functions that rely on virtual memory, such as printing to the console, will not work in this mode.
-/// - **Limited OS features:** Many OS features that depend on virtual memory translation will be unavailable
-///   while this macro is active.
-///
-/// ## Usage:
-/// When invoked, this macro alters the memory mapping of the current scope. Upon exiting the scope, the page table
-/// is restored to its previous state. All code within the scope will operate with the identity-mapped memory.
-///
-/// ### Safety:
-/// This macro should only be used when you fully understand the implications of bypassing
-/// the memory protection mechanisms provided by virtual memory.
-///
-/// Example:
-/// ```rust
-/// direct_mapping!({
-///     // All memory access in this block is identity-mapped
-/// });
-/// ```
-///
-/// **Warning:** Ensure that code in this scope does not rely on heap allocation or other
-/// features that depend on virtual memory.
-#[macro_export]
-macro_rules! direct_mapping {
-    ($body:block) => {
-        extern "C" {
-            static p4_table: u8;
-        }
-
-        let current_table;
-
-        x86_64::instructions::interrupts::disable();
-        unsafe {
-            let mut active_table = {
-                use $crate::memory::paging::ActivePageTable;
-
-                ActivePageTable::new()
-            };
-            let old_table = {
-                use $crate::memory::paging::InactivePageTable;
-                use $crate::memory::Frame;
-
-                InactivePageTable::from_raw_frame(Frame::containing_address(
-                    &p4_table as *const u8 as u64,
-                ))
-            };
-            current_table = active_table.switch(old_table);
-        }
-        $crate::defer!(unsafe {
-            let mut active_table = {
-                use $crate::memory::paging::ActivePageTable;
-
-                ActivePageTable::new()
-            };
-            active_table.switch(current_table);
-            x86_64::instructions::interrupts::enable();
-        });
-        $body
-    };
-}
-
 static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController<64>>> = OnceCell::uninit();
 
 pub fn memory_controller() -> &'static Mutex<MemoryController<64>> {
-    return MEMORY_CONTROLLER
+    MEMORY_CONTROLLER
         .get()
-        .expect("Memory controller not initialized");
+        .expect("Memory controller not initialized")
 }
 
 const VIRT_BASE_ADDR: u64 = 0xFFFFFFFF00000000;
@@ -172,7 +123,7 @@ pub fn virt_addr_alloc(size: u64) -> u64 {
 }
 
 pub struct MemoryController<const ORDER: usize> {
-    active_table: ActivePageTable,
+    active_table: ActivePageTable<RecurseLevel4>,
     allocator: BuddyAllocator<'static, ORDER>,
     stack_allocator: StackAllocator,
 }
@@ -295,6 +246,7 @@ impl UnalignPhysicalMapGuard {
     }
 
     /// Apply the provided virtual address to the required offset, consuming this in the process.
+    #[must_use]
     pub fn apply(mut self, virt_addr: u64) -> u64 {
         self.used = true;
         virt_addr + self.offset
@@ -325,6 +277,12 @@ impl Frame {
     }
     pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
         FrameIter { start, end }
+    }
+}
+
+impl From<u64> for Frame {
+    fn from(value: u64) -> Self {
+        Self::containing_address(value)
     }
 }
 

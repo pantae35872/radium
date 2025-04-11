@@ -1,18 +1,33 @@
 use core::{marker::PhantomData, ptr};
 
-use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
+use bootbridge::{MemoryMap, MemoryType};
+use santa::Elf;
 
 use crate::{
-    direct_mapping,
-    memory::{Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE},
+    memory::{
+        paging::{
+            create_mappings, table::RecurseLevel4, ActivePageTable, EntryFlags, InactivePageTable,
+            Page,
+        },
+        Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE,
+    },
+    serial_println,
     utils::NumberUtils,
 };
+
+use super::linear_allocator::LinearAllocator;
+
+struct AllocationContext {
+    linear_allocator: LinearAllocator,
+    map_access: Option<InactivePageTable>,
+}
 
 pub struct BuddyAllocator<'a, const ORDER: usize> {
     free_lists: [FreeList; ORDER],
     max_mem: usize,
     allocated: usize,
     areas: Option<&'a MemoryMap<'a>>,
+    allocation_context: AllocationContext,
 }
 
 impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
@@ -31,12 +46,45 @@ impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
 }
 
 impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
-    pub unsafe fn new(areas: &'a MemoryMap<'a>) -> Self {
+    pub unsafe fn new(
+        memory_map: &'a MemoryMap<'a>,
+        elf: &Elf<'a>,
+        mut allocator: LinearAllocator,
+    ) -> Self {
+        let map_access = Some(create_mappings(
+            |mapper, allocator| {
+                elf.map_self(|start, end, flags| {
+                    let start_frame = Frame::containing_address(start);
+                    let end_frame = Frame::containing_address(end);
+
+                    for frame in Frame::range_inclusive(start_frame, end_frame) {
+                        mapper.identity_map(
+                            frame,
+                            EntryFlags::from_elf_section_flags(&flags),
+                            allocator,
+                        );
+                    }
+                });
+                mapper.identity_map_range(
+                    (allocator.original_start() as u64).into(),
+                    Frame::containing_address(
+                        allocator.original_start() as u64 + allocator.size() as u64 - 1,
+                    ),
+                    EntryFlags::PRESENT | EntryFlags::WRITABLE,
+                    allocator,
+                );
+            },
+            &mut allocator,
+        ));
         let mut init = Self {
             free_lists: [const { FreeList::new() }; ORDER],
             max_mem: 0,
             allocated: 0,
-            areas: Some(areas),
+            areas: Some(memory_map),
+            allocation_context: AllocationContext {
+                linear_allocator: allocator,
+                map_access,
+            },
         };
 
         init.add_memory_map_to_area();
@@ -55,9 +103,13 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE
             )
         }) {
-            if area.phys_start == 0 {
+            if area.phys_start == 0
+                || area.phys_start
+                    == self.allocation_context.linear_allocator.original_start() as u64
+            {
                 continue;
             }
+
             self.add_area(
                 area.phys_start as usize,
                 area.page_count as usize * PAGE_SIZE as usize,
@@ -85,8 +137,15 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             }
 
             let node = &mut *((start_addr + offset) as *mut usize);
-            *node = 0;
-            self.free_lists[order.trailing_zeros() as usize - 1].push(node);
+            direct_access(
+                start_addr as u64 + offset as u64,
+                &mut self.allocation_context,
+                || {
+                    *node = 0;
+                },
+            );
+            self.free_lists[order.trailing_zeros() as usize - 1]
+                .push(node, &mut self.allocation_context);
             offset += order;
             self.max_mem += order;
             size -= order;
@@ -97,48 +156,51 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
         if !size.is_power_of_two() {
             size = size.next_power_of_two();
         }
-        direct_mapping!({
-            let order = size.trailing_zeros() as usize;
+        let order = size.trailing_zeros() as usize;
 
-            let mut current_order = order;
+        let mut current_order = order;
 
-            let mut some_mem = false;
+        let mut some_mem = false;
 
-            for (i, node) in self.free_lists[order - 1..].iter_mut().enumerate() {
-                current_order = i + order;
-                match node.is_empty() {
-                    false => {
-                        if current_order == order {
-                            self.allocated += size;
-                            return unsafe { node.pop().map(|e| e as *mut u8) };
-                        } else {
-                            some_mem = true;
-                            break;
-                        }
+        for (i, node) in self.free_lists[order - 1..].iter_mut().enumerate() {
+            current_order = i + order;
+            match node.is_empty() {
+                false => {
+                    if current_order == order {
+                        self.allocated += size;
+                        return unsafe {
+                            node.pop(&mut self.allocation_context).map(|e| e as *mut u8)
+                        };
+                    } else {
+                        some_mem = true;
+                        break;
                     }
-                    true => continue,
                 }
+                true => continue,
             }
+        }
 
-            if !some_mem {
-                return None;
-            }
+        if !some_mem {
+            return None;
+        }
 
-            for i in (order..current_order).rev() {
-                let (next_node, current_node) = {
-                    let (left, right) = self.free_lists.split_at_mut(i);
-                    (&mut left[i - 1], &mut right[0])
-                };
-                match unsafe { current_node.pop() } {
-                    Some(o_node) => unsafe {
-                        next_node.push(o_node);
-                        next_node.push((o_node as usize + (1 << i)) as *mut usize);
-                    },
-                    None => continue,
-                }
+        for i in (order..current_order).rev() {
+            let (next_node, current_node) = {
+                let (left, right) = self.free_lists.split_at_mut(i);
+                (&mut left[i - 1], &mut right[0])
+            };
+            match unsafe { current_node.pop(&mut self.allocation_context) } {
+                Some(o_node) => unsafe {
+                    next_node.push(o_node, &mut self.allocation_context);
+                    next_node.push(
+                        (o_node as usize + (1 << i)) as *mut usize,
+                        &mut self.allocation_context,
+                    );
+                },
+                None => continue,
             }
-            return self.allocate(size);
-        });
+        }
+        return self.allocate(size);
     }
 
     pub fn max_mem(&self) -> usize {
@@ -146,42 +208,41 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
     }
 
     pub fn dealloc(&mut self, ptr: *mut u8, size: usize) {
-        direct_mapping!({
-            let mut order = size.trailing_zeros() as usize;
-            let mut ptr = ptr as usize;
+        let mut order = size.trailing_zeros() as usize;
+        let mut ptr = ptr as usize;
 
-            unsafe {
-                self.free_lists[order - 1].push(ptr as *mut usize);
-            }
+        unsafe {
+            self.free_lists[order - 1].push(ptr as *mut usize, &mut self.allocation_context);
+        }
 
-            while order <= ORDER {
-                let buddy = ptr ^ (1 << order);
-                let mut found_buddy = false;
+        while order <= ORDER {
+            let buddy = ptr ^ (1 << order);
+            let mut found_buddy = false;
 
-                for block in self.free_lists[order - 1].iter_mut() {
-                    if block.value() as usize == buddy {
-                        block.pop();
-                        found_buddy = true;
-                        break;
-                    }
-                }
-
-                if found_buddy {
-                    unsafe {
-                        self.free_lists[order - 1].pop();
-                    }
-                    ptr = ptr.min(buddy);
-                    order += 1;
-                    unsafe {
-                        self.free_lists[order - 1].push(ptr as *mut usize);
-                    }
-                } else {
+            for block in self.free_lists[order - 1].iter_mut() {
+                if block.value() as usize == buddy {
+                    block.pop();
+                    found_buddy = true;
                     break;
                 }
             }
 
-            self.allocated -= size;
-        });
+            if found_buddy {
+                unsafe {
+                    self.free_lists[order - 1].pop(&mut self.allocation_context);
+                }
+                ptr = ptr.min(buddy);
+                order += 1;
+                unsafe {
+                    self.free_lists[order - 1]
+                        .push(ptr as *mut usize, &mut self.allocation_context);
+                }
+            } else {
+                break;
+            }
+        }
+
+        self.allocated -= size;
     }
 }
 
@@ -209,6 +270,22 @@ impl FreeNode {
     }
 }
 
+fn direct_access(address: u64, ctx: &mut AllocationContext, f: impl FnOnce()) {
+    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+    // Switch to the mapping
+    let current_table = active_table.switch(ctx.map_access.take().unwrap());
+    active_table.identity_map(
+        Frame::containing_address(address),
+        EntryFlags::WRITABLE,
+        &mut ctx.linear_allocator,
+    );
+    f();
+    active_table.unmap_addr(Page::containing_address(address));
+    // Switch back
+    let inactive_page_table = active_table.switch(current_table);
+    ctx.map_access = Some(inactive_page_table);
+}
+
 impl FreeList {
     const unsafe fn new() -> FreeList {
         FreeList {
@@ -216,17 +293,21 @@ impl FreeList {
         }
     }
 
-    unsafe fn push(&mut self, item: *mut usize) {
-        *item = self.head as usize;
+    unsafe fn push(&mut self, item: *mut usize, ctx: &mut AllocationContext) {
+        direct_access(item as u64, ctx, || {
+            *item = self.head as usize;
+        });
         self.head = item;
     }
 
-    unsafe fn pop(&mut self) -> Option<*mut usize> {
+    unsafe fn pop(&mut self, ctx: &mut AllocationContext) -> Option<*mut usize> {
         match self.is_empty() {
             true => None,
             false => {
                 let item = self.head;
-                self.head = *item as *mut usize;
+                direct_access(item as u64, ctx, || {
+                    self.head = *item as *mut usize;
+                });
                 Some(item)
             }
         }
