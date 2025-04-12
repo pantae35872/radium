@@ -88,10 +88,10 @@ run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso
 
 dbg-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -d int -S -s
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso 
 
 test-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none 
 
 $(OSRUNNER_BIN): $(BUILD_DIR) 
 	cd src/os-runner && cargo build --release --quiet
@@ -112,20 +112,26 @@ $(KERNEL_FONT):
 	mv open-sans.regular.ttf kernel-font.ttf
 
 $(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
+ifneq ($(STILL_TESTING),1)
 	cd src/kernel && cargo build $(if $(RELEASE),--release,)
 	cp $(KERNEL_BIN) $(BUILD_DIR)/kernel.bin
+endif
 
 $(BOOTLOADER_BIN):
+ifneq ($(STILL_TESTING),1)
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
+endif
 
 $(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(KERNEL_BIN) $(BOOTLOADER_BIN) 	
-	@dd if=/dev/zero of=$(FAT_IMG) bs=1M count=16 status=none
-	@mkfs.vfat $(FAT_IMG)
-	@mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
-	@mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) ::/boot
-	@mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
-	@mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
+ifneq ($(STILL_TESTING),1)
+	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=16 status=none
+	mkfs.vfat $(FAT_IMG)
+	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
+	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) ::/boot
+	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
+	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
+endif
 
 $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
