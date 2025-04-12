@@ -10,7 +10,7 @@ extern crate radium;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::memory::memory_controller;
+use radium::{memory::memory_controller, serial_println};
 
 #[no_mangle]
 pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
@@ -70,6 +70,7 @@ fn alloc_free() {
 
     for &size in sizes.iter() {
         let ptr = memory_controller().lock().physical_alloc(size);
+        serial_println!("{}", size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
         allocations.push((ptr.unwrap(), size));
     }
