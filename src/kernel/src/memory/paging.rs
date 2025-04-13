@@ -417,7 +417,6 @@ where
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         bootbridge.kernel_elf().map_self(|start, end, flags| {
-            log!(Info, "Kernel memory ranges: {:#x} - {:#x}", start, end);
             mapper.identity_map_range(
                 start.into(),
                 end.into(),

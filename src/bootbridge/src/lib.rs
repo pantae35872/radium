@@ -55,7 +55,7 @@ pub struct MemoryMapIter<'buf> {
 /// A reimplementation of the uefi memory map
 #[derive(Debug)]
 pub struct MemoryMap<'a> {
-    pub memory_map: &'a [u8],
+    memory_map: &'a [u8],
     entry_size: usize,
 }
 

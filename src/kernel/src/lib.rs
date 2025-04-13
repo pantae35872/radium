@@ -46,11 +46,11 @@ use logger::LOGGER;
 pub fn init(boot_bridge: *const RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
     memory::init(&boot_bridge);
-    graphics::init(&boot_bridge);
-    print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();
     interrupt::init();
     x86_64::instructions::interrupts::enable();
+    graphics::init(&boot_bridge);
+    print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);
     userland::init();
 }

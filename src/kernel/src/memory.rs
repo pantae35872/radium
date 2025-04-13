@@ -1,7 +1,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use allocator::{buddy_allocator::BuddyAllocator, linear_allocator::LinearAllocator};
-use bootbridge::BootBridge;
+use bootbridge::{BootBridge, MemoryType};
 use conquer_once::spin::OnceCell;
 use paging::{early_map_kernel, table::RecurseLevel4, ActivePageTable, EntryFlags, Page};
 use spin::Mutex;
@@ -30,9 +30,21 @@ pub fn init(bootbridge: &BootBridge) {
     let linear_allocator = unsafe { LinearAllocator::new(bootbridge.memory_map()) };
     let mut early_boot_alloc =
         unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
-    log!(Debug, "Test before memory: {}", bootbridge.mem_capacity());
     enable_nxe_bit();
     enable_write_protect_bit();
+    log!(Info, "UEFI memory map usable:");
+    bootbridge
+        .memory_map()
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+        .for_each(|descriptor| {
+            log!(
+                Info,
+                "Range: Phys: [{:#x}-{:#x}]",
+                descriptor.phys_start,
+                descriptor.phys_start + descriptor.page_count * PAGE_SIZE,
+            );
+        });
     unsafe {
         early_map_kernel(bootbridge, &mut early_boot_alloc, &linear_allocator);
     }
