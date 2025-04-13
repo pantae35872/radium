@@ -3,7 +3,7 @@ use self::mapper::Mapper;
 use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{hlt_loop, serial_println};
+use crate::{hlt_loop, log, serial_println};
 use bootbridge::BootBridge;
 use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
@@ -417,6 +417,7 @@ where
     };
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         bootbridge.kernel_elf().map_self(|start, end, flags| {
+            log!(Info, "Kernel memory ranges: {:#x} - {:#x}", start, end);
             mapper.identity_map_range(
                 start.into(),
                 end.into(),

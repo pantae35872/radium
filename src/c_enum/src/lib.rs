@@ -31,7 +31,7 @@ macro_rules! c_enum {
                 }
             }
 
-            impl Debug for $name {
+            impl core::fmt::Debug for $name {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     let value = match self {
                         $(

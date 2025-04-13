@@ -141,7 +141,7 @@ release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
 debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
 
 test: $(OSRUNNER_BIN)
-	cd src/kernel && cargo test $(RUN_ARGS)
+	cd src/kernel && cargo test --features testing $(RUN_ARGS)
 
 clean:
 	rm -rf $(BUILD_DIR)

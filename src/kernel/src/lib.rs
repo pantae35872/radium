@@ -1,10 +1,10 @@
 #![no_std]
-#![cfg_attr(test, no_main)]
-#![feature(custom_test_frameworks)]
+#![no_main]
 #![test_runner(crate::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 #![feature(abi_x86_interrupt)]
 #![feature(ptr_internals)]
+#![feature(custom_test_frameworks)]
 #![feature(core_intrinsics)]
 #![feature(str_from_utf16_endian)]
 #![feature(naked_functions)]
@@ -46,16 +46,13 @@ use logger::LOGGER;
 pub fn init(boot_bridge: *const RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
     memory::init(&boot_bridge);
-    LOGGER.add_target(|msg| {
-        serial_println!("{}", msg);
-    });
     graphics::init(&boot_bridge);
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     gdt::init_gdt();
     interrupt::init();
+    x86_64::instructions::interrupts::enable();
     driver::init(&boot_bridge);
     userland::init();
-    x86_64::instructions::interrupts::enable();
 }
 
 #[cfg(test)]
@@ -76,13 +73,29 @@ pub trait Testable {
     fn run(&self);
 }
 
+pub const TESTING: bool = cfg!(test) | cfg!(feature = "testing");
+
 #[panic_handler]
-// TODO: Better logging system
 fn panic(info: &PanicInfo) -> ! {
     log!(Critical, "{}", info);
-    LOGGER.flush_all();
-    test_panic_handler(info);
-    hlt_loop();
+
+    LOGGER.flush_all(if print::DRIVER.get().is_none() {
+        log!(
+            Warning,
+            "Screen print not avaiable logging into serial ports"
+        );
+        &[|s| serial_print!("{s}")]
+    } else if TESTING {
+        &[|s| serial_print!("{s}")]
+    } else {
+        &[|s| serial_print!("{s}"), |s| print!("{s}")]
+    });
+
+    if TESTING {
+        test_panic_handler(info);
+    } else {
+        hlt_loop();
+    }
 }
 
 impl<T> Testable for T
@@ -104,9 +117,8 @@ pub fn test_runner(_tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
-pub fn test_panic_handler(info: &PanicInfo) {
-    serial_println!("[failed]\n");
-    serial_println!("Error: {}\n", info);
+pub fn test_panic_handler(info: &PanicInfo) -> ! {
+    serial_println!("[failed]");
     exit_qemu(QemuExitCode::Failed);
 }
 
@@ -117,11 +129,14 @@ pub enum QemuExitCode {
     Failed = 0x11,
 }
 
-pub fn exit_qemu(exit_code: QemuExitCode) {
+pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     use x86_64::instructions::port::Port;
 
     unsafe {
         let mut port = Port::new(0xf4);
         port.write(exit_code as u32);
     }
+
+    // Wait for qemu to exit
+    hlt_loop();
 }

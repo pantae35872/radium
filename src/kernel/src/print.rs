@@ -42,9 +42,6 @@ macro_rules! println {
 pub fn init(bootinfo: &BootBridge, foreground_color: Color, background: Color) {
     log!(Trace, "Initializing text output");
     DRIVER.init_once(|| Mutex::new(Print::new(bootinfo, foreground_color, background)));
-    //LOGGER.add_target(|msg| {
-    //    println!("{msg}");
-    //});
 }
 
 pub struct Print {

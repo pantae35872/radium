@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 #![feature(custom_test_frameworks)]
-#![deny(warnings)]
 #![test_runner(radium::test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -13,9 +12,9 @@ extern crate spin;
 
 use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
-use radium::println;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
+use radium::{print, println};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -26,6 +25,8 @@ use radium::task::{AwaitType, Task};
 pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!!");
+    #[cfg(not(feature = "testing"))]
+    LOGGER.flush_all(&[|s| print!("{s}")]);
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(
@@ -55,12 +56,6 @@ pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
             //.expect("Error");
             //let partition1 = gpt.read_partition(1).await.expect("Error");
             //log!(Debug, "{}", partition1.get_partition_name());
-        },
-        AwaitType::Poll,
-    ));
-    executor.spawn(Task::new(
-        async {
-            LOGGER.log_async().await;
         },
         AwaitType::Poll,
     ));

@@ -318,6 +318,7 @@ dependencies = [
  "bitflags 2.9.0",
  "bootbridge",
  "buildid",
+ "c_enum",
  "cc",
  "conquer-once",
  "crc",

@@ -1,139 +1,96 @@
-use core::{
-    fmt::{Display, Formatter, Result},
-    future::Future,
-    pin::Pin,
-    sync::atomic::{AtomicUsize, Ordering},
-    task::{Context, Poll},
-};
+use core::fmt::{Arguments, Display, Formatter, Result, Write};
 
-use alloc::{format, string::String};
-use spin::RwLock;
+use c_enum::c_enum;
+use static_log::StaticLog;
 
-use crate::utils::circular_ring_buffer::CircularRingBuffer;
+mod static_log;
 
-pub static LOGGER: Logger = Logger::new();
-const LOG_BUFFER_SIZE: usize = 128;
-const LOG_SUBSCRIBERS_SIZE: usize = 16;
+pub static LOGGER: MainLogger = MainLogger::new();
 
 #[macro_export]
 macro_rules! log {
-    ($level:ident, $fmt:expr $(, $args:expr)*) => {
-        {
-            let message = alloc::format!($fmt, $($args),*);
-            $crate::logger::LOGGER.write($crate::logger::Log::new($crate::logger::LogLevel::$level, message));
-        }
-    };
+    ($level:ident, $($arg:tt)*) => {{
+        $crate::logger::LOGGER.write($crate::logger::LogLevel::$level, format_args!("{}\n", format_args!($($arg)*)));
+    }};
 }
 
-pub enum LogLevel {
-    Trace,
-    Debug,
-    Info,
-    Warning,
-    Error,
-    Critical,
-}
-
-pub struct Log {
-    level: LogLevel,
-    message: String,
-}
-
-struct LoggerSubscriber {
-    display: fn(msg: &str),
-}
-
-pub struct Logger {
-    main_buffer: CircularRingBuffer<Log, LOG_BUFFER_SIZE>,
-    subscribers: RwLock<[Option<LoggerSubscriber>; LOG_SUBSCRIBERS_SIZE]>,
-    subscribers_index: AtomicUsize,
-}
-
-impl Log {
-    pub fn new(level: LogLevel, message: String) -> Self {
-        Self { level, message }
+c_enum! {
+    #[derive(Debug)]
+    pub enum LogLevel: u64 {
+        Trace       = 1
+        Debug       = 2
+        Info        = 3
+        Warning     = 4
+        Error       = 5
+        Critical    = 6
     }
 }
 
-impl Display for Log {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        write!(f, "{}: {}", self.level, self.message)
+impl Default for LogLevel {
+    fn default() -> Self {
+        Self::Debug
     }
 }
 
 impl Display for LogLevel {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match self {
+        match *self {
             Self::Debug => write!(f, "\x1b[92mDEBUG\x1b[0m"),
             Self::Info => write!(f, "\x1b[92mINFO\x1b[0m"),
             Self::Trace => write!(f, "\x1b[94mTRACE\x1b[0m"),
             Self::Error => write!(f, "\x1b[91mERROR\x1b[0m"),
             Self::Warning => write!(f, "\x1b[93mWARNING\x1b[0m"),
             Self::Critical => write!(f, "\x1b[31mCRITICAL\x1b[0m"),
+            _ => unreachable!(),
         }
     }
 }
 
-struct LoggerAsync<'a> {
-    buffer: &'a CircularRingBuffer<Log, LOG_BUFFER_SIZE>,
+struct CallbackFormatter<C: FnMut(&str)> {
+    callback: C,
 }
 
-impl<'a> LoggerAsync<'a> {
-    fn new(buffer: &'a CircularRingBuffer<Log, LOG_BUFFER_SIZE>) -> Self {
-        Self { buffer }
+impl<C: FnMut(&str)> CallbackFormatter<C> {
+    pub fn new(callback: C) -> Self {
+        Self { callback }
     }
 }
 
-impl<'a> Future for LoggerAsync<'a> {
-    type Output = Log;
-    fn poll(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match self.buffer.read() {
-            Some(log) => Poll::Ready(log),
-            None => Poll::Pending,
-        }
+impl<C: FnMut(&str)> Write for CallbackFormatter<C> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        (self.callback)(s);
+        Ok(())
     }
 }
 
-impl Logger {
+pub struct MainLogger {
+    logger: StaticLog,
+}
+
+impl MainLogger {
     pub const fn new() -> Self {
         Self {
-            main_buffer: CircularRingBuffer::new(),
-            subscribers: RwLock::new([const { None }; LOG_SUBSCRIBERS_SIZE]),
-            subscribers_index: AtomicUsize::new(0),
+            logger: StaticLog::new(),
         }
     }
 
-    pub fn write(&self, log: Log) {
-        self.main_buffer.write(log);
+    pub fn write(&self, level: LogLevel, formatter: Arguments) {
+        self.logger.write_log(&formatter, level);
     }
 
-    pub fn add_target(&self, display: fn(&str)) {
-        self.subscribers.write()[self.subscribers_index.load(Ordering::Acquire)] =
-            Some(LoggerSubscriber { display });
-        self.subscribers_index.fetch_add(1, Ordering::Release);
-    }
-
-    fn log_msg(&self, msg: Log) {
-        let msg = format!("{}", msg);
-        for subscriber in self.subscribers.read().iter() {
-            let subscriber = match subscriber {
-                Some(subscriber) => subscriber,
-                None => break,
-            };
-            (subscriber.display)(&msg);
-        }
-    }
-
-    pub async fn log_async(&self) {
-        loop {
-            let msg = LoggerAsync::new(&self.main_buffer).await;
-            self.log_msg(msg);
-        }
-    }
-
-    pub fn flush_all(&self) {
-        while let Some(msg) = self.main_buffer.read() {
-            self.log_msg(msg);
+    pub fn flush_all(&self, displays: &[fn(&str)]) {
+        while let Some(losts) = self.logger.read(CallbackFormatter::new(|s| {
+            displays.iter().for_each(|d| (d)(s));
+        })) {
+            if losts == 0 {
+                continue;
+            }
+            let _ = CallbackFormatter::new(|s| {
+                displays.iter().for_each(|d| (d)(s));
+            })
+            .write_fmt(format_args!(
+                "\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes"
+            ));
         }
     }
 }

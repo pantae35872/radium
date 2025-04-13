@@ -30,6 +30,7 @@ pub fn init(bootbridge: &BootBridge) {
     let linear_allocator = unsafe { LinearAllocator::new(bootbridge.memory_map()) };
     let mut early_boot_alloc =
         unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
+    log!(Debug, "Test before memory: {}", bootbridge.mem_capacity());
     enable_nxe_bit();
     enable_write_protect_bit();
     unsafe {

@@ -3,6 +3,8 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+/// Lock free circular ring buffer
+/// this buffer if overflowed will overwrite the oldest data
 pub struct CircularRingBuffer<T, const N: usize> {
     buffer: [Slot<T>; N],
     head: AtomicUsize,

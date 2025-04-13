@@ -68,17 +68,17 @@ macro_rules! defer {
     };
 }
 
-pub struct Defer<F: FnOnce()> {
+pub struct Defer<F: FnOnce() -> T, T> {
     func: Option<F>,
 }
 
-impl<F: FnOnce()> Defer<F> {
+impl<F: FnOnce() -> T, T> Defer<F, T> {
     pub fn new(func: F) -> Self {
         Defer { func: Some(func) }
     }
 }
 
-impl<F: FnOnce()> Drop for Defer<F> {
+impl<F: FnOnce() -> T, T> Drop for Defer<F, T> {
     fn drop(&mut self) {
         if let Some(func) = self.func.take() {
             func();

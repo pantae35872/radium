@@ -3,6 +3,9 @@ name = "radium"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+testing = []
+
 [dependencies.lazy_static]
 version = "1.4.0"
 features = ["spin_no_std"]
@@ -19,6 +22,7 @@ hashbrown = "0.14.5"
 getrandom = "0.3.1"
 bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
+c_enum = { path = "../c_enum"}
 
 [dependencies.fontdue]
 version = "0.9.2"

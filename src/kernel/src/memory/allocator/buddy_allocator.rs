@@ -136,6 +136,8 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 break;
             }
 
+            //serial_println!("Add ranges, Order: {}", order);
+
             let node = &mut *((start_addr + offset) as *mut usize);
             direct_access(
                 start_addr as u64 + offset as u64,
