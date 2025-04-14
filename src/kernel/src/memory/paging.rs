@@ -2,16 +2,17 @@ pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
+use crate::logger::LOGGER;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
 use crate::{hlt_loop, log, serial_println};
 use bootbridge::BootBridge;
-use core::fmt::Display;
+use core::fmt::{self, Display};
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
 use santa::SectionHeaderFlags;
 use table::{
-    DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, TableLevel,
-    TableLevel4,
+    AnyLevel, DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create,
+    TableLevel, TableLevel4,
 };
 use x86_64::registers::control::{self, Cr3, Cr3Flags};
 use x86_64::structures::paging::PhysFrame;
@@ -250,6 +251,83 @@ where
             .map(|frame| PhysAddr::new(frame.number * PAGE_SIZE + offset));
     }
 
+    pub fn log_all(&self)
+    where
+        Table<P4>: AnyLevel,
+    {
+        log_dyn_recursive(self.p4(), 4);
+
+        fn log_dyn_recursive(table: &dyn AnyLevel, level: u8) {
+            struct CompressedEntries {
+                entries: [Entry; ENTRY_COUNT as usize],
+            }
+
+            impl fmt::Display for CompressedEntries {
+                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                    let mut first = true;
+                    let mut zero_count = 0;
+
+                    write!(f, "[")?;
+
+                    for val in self.entries.clone().map(|e| e.0) {
+                        if val == 0 {
+                            zero_count += 1;
+                            continue;
+                        }
+
+                        if zero_count > 0 {
+                            if !first {
+                                write!(f, ", ")?;
+                            }
+                            if zero_count == 1 {
+                                write!(f, "0")?;
+                            } else {
+                                write!(f, "0 /* repeated {} times */", zero_count)?;
+                            }
+                            first = false;
+                            zero_count = 0;
+                        }
+
+                        if !first {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{:#x}", val)?;
+                        first = false;
+                    }
+
+                    if zero_count > 0 {
+                        if !first {
+                            write!(f, ", ")?;
+                        }
+                        if zero_count == 1 {
+                            write!(f, "0")?;
+                        } else {
+                            write!(f, "0 /* repeated {} times */", zero_count)?;
+                        }
+                    }
+
+                    write!(f, "]")
+                }
+            }
+
+            if level == 1 {
+                log!(
+                    Debug,
+                    "{}",
+                    CompressedEntries {
+                        entries: table.entries(),
+                    }
+                );
+            } else {
+                log!(Debug, "Page level: {level}");
+            }
+
+            for table in (0..ENTRY_COUNT).filter_map(|i| table.next(i)) {
+                log_dyn_recursive(table, level - 1);
+            }
+        }
+    }
+
     fn translate_page(&self, page: Page) -> Option<Frame> {
         let p3 = self.p4().next_table(page.p4_index());
 
@@ -415,6 +493,7 @@ where
         let frame = allocator.allocate_frame().expect("no more frames");
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
+    active_table.log_all();
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         bootbridge.kernel_elf().map_self(|start, end, flags| {
             mapper.identity_map_range(

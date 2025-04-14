@@ -12,6 +12,15 @@ macro_rules! impl_level_recurse {
         impl TableLevel for $last {
             type Marker = RecurseHierarchicalLevelMarker;
         }
+
+        impl AnyLevel for Table<$last> {
+            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
+                self.entries.clone()
+            }
+            fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
+                None
+            }
+        }
     };
 
     // Recursive case
@@ -24,6 +33,16 @@ macro_rules! impl_level_recurse {
             type Marker = RecurseHierarchicalLevelMarker;
         }
 
+
+        impl AnyLevel for Table<$current> {
+            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
+                self.entries.clone()
+            }
+            fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
+                self.next_table(index).map(|t| t as &dyn AnyLevel)
+            }
+        }
+
         impl_level_recurse!($next $(=> $rest)*);
     };
 }
@@ -33,6 +52,15 @@ macro_rules! impl_level_direct {
     ($last:ty) => {
         impl TableLevel for $last {
             type Marker = DirectHierarchicalLevelMarker;
+        }
+
+        impl AnyLevel for Table<$last> {
+            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
+                self.entries.clone()
+            }
+            fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
+                None
+            }
         }
     };
 
@@ -44,6 +72,15 @@ macro_rules! impl_level_direct {
 
         impl TableLevel for $current {
             type Marker = DirectHierarchicalLevelMarker;
+        }
+
+        impl AnyLevel for Table<$current> {
+            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
+                self.entries.clone()
+            }
+            fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
+                self.next_table(index).map(|t| t as &dyn AnyLevel)
+            }
         }
 
         impl_level_direct!($next $(=> $rest)*);
@@ -222,6 +259,11 @@ impl TableLevel4 for DirectLevel4 {
 
 pub trait HierarchicalLevel: TableLevel {
     type NextLevel: TableLevel;
+}
+
+pub trait AnyLevel {
+    fn entries(&self) -> [Entry; ENTRY_COUNT as usize];
+    fn next(&self, index: u64) -> Option<&dyn AnyLevel>;
 }
 
 impl_level_direct!(DirectLevel4 => DirectLevel3 => DirectLevel2 => DirectLevel1);

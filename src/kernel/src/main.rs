@@ -26,7 +26,7 @@ pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!!");
     #[cfg(not(feature = "testing"))]
-    LOGGER.flush_all(&[|s| print!("{s}"), |s| serial_print!("{s}")]);
+    LOGGER.flush_all(&[/*|s| print!("{s}"),*/ |s| serial_print!("{s}")]);
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(

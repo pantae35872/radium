@@ -2,7 +2,7 @@ use crate::memory::Frame;
 
 use super::EntryFlags;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Entry(pub u64);
 
 impl Entry {
