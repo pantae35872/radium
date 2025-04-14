@@ -332,14 +332,12 @@ pub fn init(boot_bridge: &BootBridge) {
     DRIVER.init_once(|| {
         let framebuffer = boot_bridge.framebuffer_data();
         let virt = virt_addr_alloc(framebuffer.size() as u64);
+        log!(Trace, "Framebuffer addr: {:#016x}", framebuffer.start());
         let guard = memory_controller().lock().phy_map(
             framebuffer.size() as u64,
             framebuffer.start(),
             virt,
-            EntryFlags::WRITABLE
-                | EntryFlags::NO_CACHE
-                | EntryFlags::PRESENT
-                | EntryFlags::WRITE_THROUGH,
+            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
         );
         Mutex::new(Graphic::new(boot_bridge.graphics_info(), unsafe {
             core::slice::from_raw_parts_mut(

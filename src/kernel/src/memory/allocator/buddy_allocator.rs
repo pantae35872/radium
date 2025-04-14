@@ -2,8 +2,10 @@ use core::{marker::PhantomData, ptr};
 
 use bootbridge::{MemoryMap, MemoryType};
 use santa::Elf;
+use x86_64::{instructions::tlb, VirtAddr};
 
 use crate::{
+    log,
     memory::{
         paging::{
             create_mappings, table::RecurseLevel4, ActivePageTable, EntryFlags, InactivePageTable,
@@ -136,8 +138,6 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 break;
             }
 
-            //serial_println!("Add ranges, Order: {}", order);
-
             let node = &mut *((start_addr + offset) as *mut usize);
             direct_access(
                 start_addr as u64 + offset as u64,
@@ -170,9 +170,9 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                 false => {
                     if current_order == order {
                         self.allocated += size;
-                        return unsafe {
-                            node.pop(&mut self.allocation_context).map(|e| e as *mut u8)
-                        };
+                        let addr =
+                            unsafe { node.pop(&mut self.allocation_context).map(|e| e as *mut u8) };
+                        return addr;
                     } else {
                         some_mem = true;
                         break;
@@ -273,6 +273,7 @@ impl FreeNode {
 }
 
 fn direct_access(address: u64, ctx: &mut AllocationContext, f: impl FnOnce()) {
+    //log!(Trace, "Buddy allocator is accessing: {address:#016x}");
     let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
     // Switch to the mapping
     let current_table = active_table.switch(ctx.map_access.take().unwrap());

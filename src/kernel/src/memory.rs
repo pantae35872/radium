@@ -32,15 +32,15 @@ pub fn init(bootbridge: &BootBridge) {
         unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    log!(Info, "UEFI memory map usable:");
+    log!(Trace, "UEFI memory map usable:");
     bootbridge
         .memory_map()
         .entries()
         .filter(|e| e.ty == MemoryType::CONVENTIONAL)
         .for_each(|descriptor| {
             log!(
-                Info,
-                "Range: Phys: [{:#x}-{:#x}]",
+                Trace,
+                "Range: Phys: [{:#016x}-{:#016x}]",
                 descriptor.phys_start,
                 descriptor.phys_start + descriptor.page_count * PAGE_SIZE,
             );
@@ -128,6 +128,12 @@ pub fn virt_addr_alloc(size: u64) -> u64 {
             Ordering::Acquire,
         ) {
             Ok(_) => {
+                log!(
+                    Trace,
+                    "Allocating vaddr ranges: [{:#016x}-{:#016x}]",
+                    addr,
+                    addr + size
+                );
                 return addr;
             }
             Err(updated) => addr = updated,
@@ -155,14 +161,17 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         let start_page = Page::containing_address(start);
         let end_page = Page::containing_address(start + size - 1);
 
+        log!(
+            Trace,
+            "Allocate: [{:#016x}-{:#016x}], Actual Allocate (aligned): [{:#016x}-{:#016x}]",
+            start,
+            start + size - 1,
+            start_page.start_address(),
+            end_page.start_address() + PAGE_SIZE,
+        );
+
         for page in Page::range_inclusive(start_page, end_page) {
-            self.map(
-                page,
-                EntryFlags::WRITABLE
-                    | EntryFlags::PRESENT
-                    | EntryFlags::WRITE_THROUGH
-                    | EntryFlags::NO_CACHE,
-            );
+            self.map(page, EntryFlags::WRITABLE | EntryFlags::PRESENT);
         }
     }
 
@@ -179,6 +188,19 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         let start_frame = Frame::containing_address(phy_start);
         let end_page = Page::containing_address(virt_start + size - 1);
         let end_frame = Frame::containing_address(phy_start + size - 1);
+        log!(
+            Trace,
+            "Mapping: [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}], Actual Map (aligned): [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}], Flags: {}",
+            virt_start,
+            virt_start + size - 1,
+            phy_start,
+            phy_start + size - 1,
+            start_page.start_address(),
+            end_page.start_address() + PAGE_SIZE,
+            start_frame.start_address(),
+            end_frame.start_address() + PAGE_SIZE,
+            flags
+        );
         for (page, frame) in Page::range_inclusive(start_page, end_page)
             .zip(Frame::range_inclusive(start_frame, end_frame))
         {
@@ -190,6 +212,15 @@ impl<const ORDER: usize> MemoryController<ORDER> {
     pub fn ident_map(&mut self, size: u64, phy_start: u64, flags: EntryFlags) {
         let start = Frame::containing_address(phy_start);
         let end = Frame::containing_address(phy_start + size - 1);
+        log!(
+            Trace,
+            "Identity map: [{:#016x}-{:#016x}], Actual Identity map: [{:#016x}-{:#016x}], Flags: {}",
+            phy_start,
+            phy_start + size - 1,
+            start.start_address(),
+            end.start_address() + PAGE_SIZE,
+            flags,
+        );
         Frame::range_inclusive(start, end).for_each(|frame| {
             self.active_table
                 .identity_map(frame, flags, &mut self.allocator)

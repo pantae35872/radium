@@ -45,6 +45,7 @@ use logger::LOGGER;
 
 pub fn init(boot_bridge: *const RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
+    log!(Trace, "Logging start");
     memory::init(&boot_bridge);
     gdt::init_gdt();
     interrupt::init();
@@ -74,6 +75,7 @@ pub trait Testable {
 }
 
 pub const TESTING: bool = cfg!(test) | cfg!(feature = "testing");
+pub const QEMU_EXIT_PANIC: bool = cfg!(feature = "panic_exit");
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -93,6 +95,8 @@ fn panic(info: &PanicInfo) -> ! {
 
     if TESTING {
         test_panic_handler(info);
+    } else if QEMU_EXIT_PANIC {
+        exit_qemu(QemuExitCode::Failed);
     } else {
         hlt_loop();
     }

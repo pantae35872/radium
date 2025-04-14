@@ -1,6 +1,7 @@
 use bootbridge::{MemoryMap, MemoryType};
 
 use crate::{
+    log,
     memory::{FrameAllocator, PAGE_SIZE},
     serial_println,
 };
@@ -57,6 +58,12 @@ impl LinearAllocator {
 
 impl FrameAllocator for LinearAllocator {
     fn allocate_frame(&mut self) -> Option<crate::memory::Frame> {
+        log!(
+            Trace,
+            "Linear allocator giving: {:#08x}, size: {:#x}",
+            self.current,
+            self.size
+        );
         if self.current >= self.current + self.size {
             return None;
         }

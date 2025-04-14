@@ -7,10 +7,7 @@ use hashbrown::HashMap;
 
 use crate::{
     graphics::{color::Color, graphic},
-    log,
-    logger::LOGGER,
     memory::{memory_controller, paging::EntryFlags},
-    serial_println,
 };
 
 #[derive(Hash, PartialEq, Eq)]

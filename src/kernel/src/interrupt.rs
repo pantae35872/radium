@@ -120,19 +120,19 @@ pub fn init() {
     //memory_controller()
     //    .lock()
     //    .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
-    LAPICS.init_once(|| {
-        let mut lapic = LocalApicBuilder::new()
-            .timer_vector(32)
-            .error_vector(34)
-            .spurious_vector(33)
-            .set_xapic_base(*LAPIC_VADDR)
-            .build()
-            .expect("Could not create lapic");
-        unsafe {
-            lapic.enable();
-        }
-        Mutex::new(lapic)
-    });
+    //LAPICS.init_once(|| {
+    //    let mut lapic = LocalApicBuilder::new()
+    //        .timer_vector(32)
+    //        .error_vector(34)
+    //        .spurious_vector(33)
+    //        .set_xapic_base(*LAPIC_VADDR)
+    //        .build()
+    //        .expect("Could not create lapic");
+    //    unsafe {
+    //        lapic.enable();
+    //    }
+    //    Mutex::new(lapic)
+    //});
     //IOAPICS.init_once(|| unsafe {
     //    let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
     //    let mut entry = RedirectionTableEntry::default();

@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 testing = []
+panic_exit = []
 
 [dependencies.lazy_static]
 version = "1.4.0"

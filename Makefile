@@ -15,7 +15,7 @@ else
 endif
 
 
-.PHONY: debug release clean run make-test-kernel test-run test update dbg-run force_rebuild
+.PHONY: debug release clean run make-test-kernel test-run test update dbg-run force_rebuild dbg-run-no-dbg
 .DEFAULT_GOAL := debug
 
 NAME := radium
@@ -85,13 +85,16 @@ $(OVMF):
 	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
 run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial stdio 
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial file:klog.txt 
 
 dbg-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial file:klog.txt
 
+dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial file:klog.txt
+
 test-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio 
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio 
 
 $(OSRUNNER_BIN): $(BUILD_DIR) 
 	cd src/os-runner && cargo build --release --quiet
@@ -113,7 +116,7 @@ $(KERNEL_FONT):
 
 $(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
 ifneq ($(STILL_TESTING),1)
-	cd src/kernel && cargo build $(if $(RELEASE),--release,)
+	cd src/kernel && cargo build $(if $(RELEASE),--release,) --features panic_exit
 	cp $(KERNEL_BIN) $(BUILD_DIR)/kernel.bin
 endif
 
@@ -125,7 +128,7 @@ endif
 
 $(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(KERNEL_BIN) $(BOOTLOADER_BIN) 	
 ifneq ($(STILL_TESTING),1)
-	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=16 status=none
+	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=32 status=none
 	mkfs.vfat $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
 	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) ::/boot
