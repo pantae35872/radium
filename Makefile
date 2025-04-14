@@ -52,7 +52,7 @@ endif
 -include $(BOOTLOADER_DEPS)
 -include $(OSRUNNER_DEPS)
 
-QEMU_FLAGS := -m 1G -bios OVMF.fd -serial stdio \
+QEMU_FLAGS := -m 1G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-no-reboot
@@ -85,13 +85,13 @@ $(OVMF):
 	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
 run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial stdio 
 
 dbg-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso 
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial file:klog.txt
 
 test-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none 
+	qemu-system-x86_64 $(QEMU_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio 
 
 $(OSRUNNER_BIN): $(BUILD_DIR) 
 	cd src/os-runner && cargo build --release --quiet

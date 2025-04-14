@@ -2,7 +2,7 @@ file_root = "\\boot"
 kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
 screen_resolution = { width = 1920, height = 1080 }
-any_key_boot = true
+any_key_boot = false
 
 [kernel_config]
 font_size = 15
