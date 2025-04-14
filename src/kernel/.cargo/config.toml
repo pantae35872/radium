@@ -1,12 +1,11 @@
 [unstable]
 build-std-features = ["compiler-builtins-mem"]
 build-std = ["core", "alloc", "compiler_builtins"]
-panic-abort-tests = true
 
 [build]
 target = "x86_64.json"
 rustflags = [
-    "-Zthreads=1", "--cfg=getrandom_backend=\"rdrand\""
+    "-Zthreads=1", "--cfg=getrandom_backend=\"rdrand\"", "-Cdebuginfo=2"
 ]
 
 [target.'cfg(target_os = "none")']

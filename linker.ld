@@ -20,6 +20,7 @@ SECTIONS {
     . = ALIGN(4K);
   } :rodata
   
+  PROVIDE(__eh_frame = .);
   .eh_frame ALIGN(4K):
   {
     *(.eh_frame .eh_frame.*)
@@ -35,6 +36,7 @@ SECTIONS {
   .text ALIGN(4K):
   {
     *(.text .text.*)
+    __etext = .;
     . = ALIGN(4K);
   } :text
 

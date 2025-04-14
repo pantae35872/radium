@@ -85,7 +85,7 @@ $(OVMF):
 	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
 run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial file:klog.txt 
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial stdio 
 
 dbg-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial file:klog.txt
@@ -116,7 +116,7 @@ $(KERNEL_FONT):
 
 $(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
 ifneq ($(STILL_TESTING),1)
-	cd src/kernel && cargo build $(if $(RELEASE),--release,) --features panic_exit
+	cd src/kernel && RUST_BACKTRACE=1 cargo build $(if $(RELEASE),--release,) --features panic_exit
 	cp $(KERNEL_BIN) $(BUILD_DIR)/kernel.bin
 endif
 

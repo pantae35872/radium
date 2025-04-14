@@ -323,10 +323,10 @@ impl<'a> Elf<'a> {
     /// this map the loaded elf not the elf file itself
     pub fn map_self<M>(&self, mut mapper: M)
     where
-        M: FnMut(u64, u64, SectionHeaderFlags),
+        M: FnMut(u64, u64, ProgramHeaderFlags),
     {
-        for section in self.section_header_iter() {
-            if !section.flags().contains(SectionHeaderFlags::Alloc) {
+        for section in self.program_header_iter() {
+            if section.segment_type() != ProgramType::Load {
                 continue;
             }
             assert!(
@@ -336,7 +336,7 @@ impl<'a> Elf<'a> {
 
             mapper(
                 section.vaddr(),
-                section.vaddr() + section.size() - 1,
+                section.vaddr() + section.memsize() - 1,
                 section.flags(),
             );
         }

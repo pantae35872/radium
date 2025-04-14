@@ -1,13 +1,13 @@
 [workspace]
-members = ["src/boot_cfg_parser", "src/kernel", "src/bootloader", "src/os-runner", "src/bootbridge", "src/santa", "src/c_enum", "src/test_driver"]
+members = ["src/boot_cfg_parser", "src/kernel", "src/bootloader", "src/os-runner", "src/bootbridge", "src/santa", "src/c_enum", "src/test_driver", "src/baker"]
 resolver = "2"
 
 [profile.dev]
-panic = "abort"
+panic = "unwind"
 opt-level = 0
 
 [profile.release]
-panic = "abort"
+panic = "unwind"
 opt-level = 3 
 
 [workspace.dependencies]

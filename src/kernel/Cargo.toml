@@ -25,6 +25,11 @@ bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
 
+[dependencies.unwinding]
+version = "0.2.5"
+default-features = false
+features = ["unwinder", "fde-static", "personality", "panic", "dwarf-expr", "hide-trace"]
+
 [dependencies.fontdue]
 version = "0.9.2"
 default-features = false

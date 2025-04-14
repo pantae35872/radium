@@ -62,7 +62,7 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                     for frame in Frame::range_inclusive(start_frame, end_frame) {
                         mapper.identity_map(
                             frame,
-                            EntryFlags::from_elf_section_flags(&flags),
+                            EntryFlags::from_elf_program_flags(&flags),
                             allocator,
                         );
                     }

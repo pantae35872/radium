@@ -36,12 +36,16 @@ pub mod task;
 pub mod userland;
 pub mod utils;
 
+use core::ffi::c_void;
 use core::panic::PanicInfo;
 
 use bootbridge::{BootBridge, RawBootBridge};
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
+use unwinding::abi::{
+    UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP, _Unwind_GetTextRelBase,
+};
 
 pub fn init(boot_bridge: *const RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
@@ -80,6 +84,27 @@ pub const QEMU_EXIT_PANIC: bool = cfg!(feature = "panic_exit");
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     log!(Critical, "{}", info);
+
+    struct CallbackData {
+        counter: usize,
+    }
+    extern "C" fn callback(unwind_ctx: &UnwindContext<'_>, arg: *mut c_void) -> UnwindReasonCode {
+        let data = unsafe { &mut *(arg as *mut CallbackData) };
+        data.counter += 1;
+        log!(
+            Info,
+            "{:4}:{:#19x} - <unknown>",
+            data.counter,
+            _Unwind_GetIP(unwind_ctx)
+        );
+        UnwindReasonCode::NO_REASON
+    }
+    let mut data = CallbackData { counter: 0 };
+    log!(
+        Debug,
+        "{}",
+        _Unwind_Backtrace(callback, &mut data as *mut _ as _).0
+    );
 
     LOGGER.flush_all(if print::DRIVER.get().is_none() {
         log!(

@@ -9,7 +9,7 @@ use bootbridge::BootBridge;
 use core::fmt::{self, Display};
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
-use santa::SectionHeaderFlags;
+use santa::{ProgramHeaderFlags, SectionHeaderFlags};
 use table::{
     AnyLevel, DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create,
     TableLevel, TableLevel4,
@@ -46,16 +46,16 @@ bitflags! {
 }
 
 impl EntryFlags {
-    pub fn from_elf_section_flags(section: &SectionHeaderFlags) -> EntryFlags {
+    pub fn from_elf_program_flags(section: &ProgramHeaderFlags) -> EntryFlags {
         let mut flags = EntryFlags::empty();
 
-        if section.contains(SectionHeaderFlags::Alloc) {
+        if section.contains(ProgramHeaderFlags::Readable) {
             flags |= EntryFlags::PRESENT;
         }
-        if section.contains(SectionHeaderFlags::Writeable) {
+        if section.contains(ProgramHeaderFlags::Writeable) {
             flags |= EntryFlags::WRITABLE;
         }
-        if !section.contains(SectionHeaderFlags::Executeable) {
+        if !section.contains(ProgramHeaderFlags::Executeable) {
             flags |= EntryFlags::NO_EXECUTE;
         }
 
@@ -417,7 +417,7 @@ pub unsafe fn early_map_kernel<A>(
         active_table.identity_map_range(
             start.into(),
             end.into(),
-            EntryFlags::from_elf_section_flags(&flags),
+            EntryFlags::from_elf_program_flags(&flags),
             allocator,
         )
     });
@@ -499,7 +499,7 @@ where
             mapper.identity_map_range(
                 start.into(),
                 end.into(),
-                EntryFlags::from_elf_section_flags(&flags),
+                EntryFlags::from_elf_program_flags(&flags),
                 allocator,
             )
         });
