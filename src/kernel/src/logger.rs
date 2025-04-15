@@ -6,6 +6,7 @@ use static_log::StaticLog;
 mod static_log;
 
 pub static LOGGER: MainLogger = MainLogger::new();
+const BUFFER_SIZE: usize = 0x2000;
 
 #[macro_export]
 macro_rules! log {
@@ -64,7 +65,7 @@ impl<C: FnMut(&str)> Write for CallbackFormatter<C> {
 }
 
 pub struct MainLogger {
-    logger: StaticLog,
+    logger: StaticLog<BUFFER_SIZE>,
 }
 
 impl MainLogger {

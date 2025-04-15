@@ -110,12 +110,10 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             Some(areas) => areas,
             None => return,
         };
-        for area in areas.entries().filter(|e| {
-            matches!(
-                e.ty,
-                MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE
-            )
-        }) {
+        for area in areas
+            .entries()
+            .filter(|e| matches!(e.ty, MemoryType::CONVENTIONAL))
+        {
             if area.phys_start == 0
                 || area.phys_start
                     == self.allocation_context.linear_allocator.original_start() as u64

@@ -14,7 +14,6 @@ use crate::{defer, serial_println, utils::circular_ring_buffer::lockfree::Circul
 use super::{CallbackFormatter, LogLevel};
 
 const CHUNK_SIZE: usize = 128;
-const BUFFER_SIZE: usize = 0x2000;
 const DATA_SIZE_PER_CHUNK: usize = CHUNK_SIZE - size_of::<ChunkHeader>();
 const HEADER_MAGIC: u64 = u64::from_le_bytes(*b"LogrMagi");
 
@@ -39,7 +38,7 @@ const HEADER_MAGIC: u64 = u64::from_le_bytes(*b"LogrMagi");
 ///
 /// # Warning
 /// This when the log is readed, it'll **consume** the log
-pub struct StaticLog {
+pub struct StaticLog<const BUFFER_SIZE: usize> {
     buffer: CircularRingBuffer<[u8; CHUNK_SIZE], BUFFER_SIZE>,
     id_count: AtomicU64,
 }
@@ -138,7 +137,7 @@ impl<F: FnMut(&[u8; DATA_SIZE_PER_CHUNK])> BufferFiller<F> {
     }
 }
 
-impl StaticLog {
+impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
     pub const fn new() -> Self {
         Self {
             buffer: CircularRingBuffer::new(),
@@ -328,9 +327,7 @@ impl StaticLog {
 mod tests {
     use core::fmt::Write;
 
-    use alloc::string::ToString;
-
-    use crate::{logger::LogLevel, serial_println};
+    use crate::logger::LogLevel;
 
     use super::StaticLog;
 
@@ -366,13 +363,12 @@ mod tests {
 
     #[test_case]
     fn simple_write() {
-        // TODO: Bring this back currently this overflowed the stack
-        //let buffer = StaticLog::new();
-        //buffer.write_log(&format_args!("Hello World!!"), LogLevel::Trace);
-        //buffer.write_log(
-        //    &format_args!("1234567890abcdefghijklmnopqrstuvwxyz"),
-        //    LogLevel::Trace,
-        //);
-        //buffer.write_log(&format_args!("1234567890qwertyuiopasdf"), LogLevel::Trace);
+        let buffer = StaticLog::<64>::new();
+        buffer.write_log(&format_args!("Hello World!!"), LogLevel::Trace);
+        buffer.write_log(
+            &format_args!("1234567890abcdefghijklmnopqrstuvwxyz"),
+            LogLevel::Trace,
+        );
+        buffer.write_log(&format_args!("1234567890qwertyuiopasdf"), LogLevel::Trace);
     }
 }
