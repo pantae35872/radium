@@ -25,6 +25,11 @@ bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
 
+[dependencies.bakery]
+path = "../bakery"
+default-features = false
+features = ["alloc"]
+
 [dependencies.unwinding]
 version = "0.2.5"
 default-features = false

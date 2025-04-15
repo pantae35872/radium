@@ -1,3 +1,4 @@
+use bakery::DwarfBaker;
 use bootbridge::BootBridgeBuilder;
 use uefi::table::cfg::ConfigTableEntry;
 use uefi_services::system_table;
@@ -31,12 +32,14 @@ pub fn load_kernel(
     let system_table = system_table();
     let kernel_font = config.font_file().permanent();
     let kernel_file = config.kernel_file().permanent();
+    let dwarf_file = config.dwarf_file().permanent();
 
     let (entrypoint, _kern_start, _kern_end, elf) = load_elf(kernel_file);
 
     boot_bridge
         .kernel_elf(elf)
         .font_data(kernel_font.as_ptr() as u64, kernel_font.len())
+        .dwarf_data(DwarfBaker::new(dwarf_file))
         .kernel_config(config.kernel_config())
         .rsdp(find_rsdp(system_table.config_table()).expect("Failed to find RSDP"));
 

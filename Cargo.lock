@@ -52,10 +52,15 @@ name = "baker"
 version = "0.1.0"
 dependencies = [
  "addr2line",
+ "bakery",
  "gimli 0.27.3",
  "object",
  "rustc-demangle",
 ]
+
+[[package]]
+name = "bakery"
+version = "0.1.0"
 
 [[package]]
 name = "bit"
@@ -92,6 +97,7 @@ dependencies = [
 name = "bootbridge"
 version = "0.1.0"
 dependencies = [
+ "bakery",
  "c_enum",
  "santa",
 ]
@@ -480,6 +486,7 @@ checksum = "74765f6d916ee2faa39bc8e68e4f3ed8949b48cccdac59983d287a7cb71ce9c5"
 name = "radium"
 version = "0.1.0"
 dependencies = [
+ "bakery",
  "bit_field",
  "bitflags 2.9.0",
  "bootbridge",
@@ -508,6 +515,7 @@ dependencies = [
 name = "radium-bootloader"
 version = "0.1.0"
 dependencies = [
+ "bakery",
  "boot_cfg_parser",
  "bootbridge",
  "santa",

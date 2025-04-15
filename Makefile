@@ -24,6 +24,7 @@ ISO_DIR := $(BUILD_DIR)/iso
 ISO_FILE := $(BUILD_DIR)/os.iso
 FAT_IMG := $(BUILD_DIR)/fat.img
 DISK_FILE := disk.img
+DWARF_FILE := $(abspath $(BUILD_DIR)/dwarf.baker)
 
 # Dependency files
 KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
@@ -114,6 +115,9 @@ $(KERNEL_FONT):
 	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
 	mv open-sans.regular.ttf kernel-font.ttf
 
+$(DWARF_FILE): $(KERNEL_BIN)
+	cd src/baker && cargo run --release -- $(KERNEL_BIN) $(DWARF_FILE)
+
 $(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
 ifneq ($(STILL_TESTING),1)
 	cd src/kernel && RUST_BACKTRACE=1 cargo build $(if $(RELEASE),--release,) --features panic_exit
@@ -126,12 +130,12 @@ ifneq ($(STILL_TESTING),1)
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
 endif
 
-$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(KERNEL_BIN) $(BOOTLOADER_BIN) 	
+$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(KERNEL_BIN) $(BOOTLOADER_BIN) $(DWARF_FILE)	
 ifneq ($(STILL_TESTING),1)
 	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=32 status=none
 	mkfs.vfat $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
-	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) ::/boot
+	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
 endif

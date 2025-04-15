@@ -39,16 +39,19 @@ pub mod utils;
 use core::ffi::c_void;
 use core::panic::PanicInfo;
 
+use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
+use conquer_once::spin::OnceCell;
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
-use unwinding::abi::{
-    UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP, _Unwind_GetTextRelBase,
-};
+use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
-pub fn init(boot_bridge: *const RawBootBridge) {
-    let boot_bridge = BootBridge::new(boot_bridge);
+static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
+
+pub fn init(boot_bridge: *mut RawBootBridge) {
+    let mut boot_bridge = BootBridge::new(boot_bridge);
+    DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
     log!(Trace, "Logging start");
     memory::init(&boot_bridge);
     gdt::init_gdt();
@@ -58,6 +61,10 @@ pub fn init(boot_bridge: *const RawBootBridge) {
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);
     userland::init();
+}
+
+pub fn dwarf_data() -> &'static DwarfBaker<'static> {
+    DWARF_DATA.get().expect("How could this happen")
 }
 
 #[cfg(test)]
@@ -85,26 +92,23 @@ pub const QEMU_EXIT_PANIC: bool = cfg!(feature = "panic_exit");
 fn panic(info: &PanicInfo) -> ! {
     log!(Critical, "{}", info);
 
+    log!(Info, "Backtrace:");
     struct CallbackData {
         counter: usize,
     }
     extern "C" fn callback(unwind_ctx: &UnwindContext<'_>, arg: *mut c_void) -> UnwindReasonCode {
         let data = unsafe { &mut *(arg as *mut CallbackData) };
         data.counter += 1;
-        log!(
-            Info,
-            "{:4}:{:#19x} - <unknown>",
-            data.counter,
-            _Unwind_GetIP(unwind_ctx)
-        );
+        let ip = _Unwind_GetIP(unwind_ctx);
+        let (line_num, name, location) = dwarf_data()
+            .by_addr(ip as u64)
+            .unwrap_or((0, "unknown", "unknown"));
+        log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
+        log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
         UnwindReasonCode::NO_REASON
     }
     let mut data = CallbackData { counter: 0 };
-    log!(
-        Debug,
-        "{}",
-        _Unwind_Backtrace(callback, &mut data as *mut _ as _).0
-    );
+    _Unwind_Backtrace(callback, &mut data as *mut _ as _);
 
     LOGGER.flush_all(if print::DRIVER.get().is_none() {
         log!(

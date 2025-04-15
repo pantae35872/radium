@@ -14,8 +14,8 @@ macro_rules! impl_level_recurse {
         }
 
         impl AnyLevel for Table<$last> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries.clone()
+            fn entries(&self) -> &[Entry; ENTRY_COUNT as usize] {
+                &self.entries
             }
             fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
                 None
@@ -35,8 +35,8 @@ macro_rules! impl_level_recurse {
 
 
         impl AnyLevel for Table<$current> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries.clone()
+            fn entries(&self) -> &[Entry; ENTRY_COUNT as usize] {
+                &self.entries
             }
             fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
                 self.next_table(index).map(|t| t as &dyn AnyLevel)
@@ -55,8 +55,8 @@ macro_rules! impl_level_direct {
         }
 
         impl AnyLevel for Table<$last> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries.clone()
+            fn entries(&self) -> &[Entry; ENTRY_COUNT as usize] {
+                &self.entries
             }
             fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
                 None
@@ -75,8 +75,8 @@ macro_rules! impl_level_direct {
         }
 
         impl AnyLevel for Table<$current> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries.clone()
+            fn entries(&self) -> &[Entry; ENTRY_COUNT as usize] {
+                &self.entries
             }
             fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
                 self.next_table(index).map(|t| t as &dyn AnyLevel)
@@ -262,7 +262,7 @@ pub trait HierarchicalLevel: TableLevel {
 }
 
 pub trait AnyLevel {
-    fn entries(&self) -> [Entry; ENTRY_COUNT as usize];
+    fn entries(&self) -> &[Entry; ENTRY_COUNT as usize];
     fn next(&self, index: u64) -> Option<&dyn AnyLevel>;
 }
 

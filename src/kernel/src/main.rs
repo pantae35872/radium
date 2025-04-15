@@ -22,7 +22,7 @@ use radium::{print, println, serial_print};
 // TODO: Impelemnts kernel services executor
 
 #[no_mangle]
-pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
+pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!!");
     #[cfg(not(feature = "testing"))]

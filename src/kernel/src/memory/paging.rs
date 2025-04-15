@@ -4,7 +4,7 @@ use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
 use crate::logger::LOGGER;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{hlt_loop, log, serial_println};
+use crate::{dwarf_data, hlt_loop, log, serial_println, DWARF_DATA};
 use bootbridge::BootBridge;
 use core::fmt::{self, Display};
 use core::ops::{Add, Deref, DerefMut};
@@ -258,18 +258,18 @@ where
         log_dyn_recursive(self.p4(), 4);
 
         fn log_dyn_recursive(table: &dyn AnyLevel, level: u8) {
-            struct CompressedEntries {
-                entries: [Entry; ENTRY_COUNT as usize],
+            struct CompressedEntries<'a> {
+                entries: &'a [Entry; ENTRY_COUNT as usize],
             }
 
-            impl fmt::Display for CompressedEntries {
+            impl<'a> fmt::Display for CompressedEntries<'a> {
                 fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                     let mut first = true;
                     let mut zero_count = 0;
 
                     write!(f, "[")?;
 
-                    for val in self.entries.clone().map(|e| e.0) {
+                    for val in self.entries.iter().map(|e| e.0) {
                         if val == 0 {
                             zero_count += 1;
                             continue;
@@ -423,7 +423,7 @@ pub unsafe fn early_map_kernel<A>(
     });
 
     // Map the boot-info
-    bootbridge.map_self(|start, size| {
+    let mut mapper = |start, size| {
         let start_frame = Frame::containing_address(start);
         let end_frame = Frame::containing_address(start + size - 1);
         for frame in Frame::range_inclusive(start_frame, end_frame) {
@@ -433,7 +433,9 @@ pub unsafe fn early_map_kernel<A>(
                 allocator,
             );
         }
-    });
+    };
+    bootbridge.map_self(&mut mapper);
+    dwarf_data().map_self(&mut mapper);
 
     // Do a recursive map
     active_table.p4_mut()[511] = Entry(
@@ -504,7 +506,7 @@ where
             )
         });
 
-        bootbridge.map_self(|start, size| {
+        let mut mapper = |start, size| {
             let start_frame = Frame::containing_address(start);
             let end_frame = Frame::containing_address(start + size - 1);
             for frame in Frame::range_inclusive(start_frame, end_frame) {
@@ -514,7 +516,10 @@ where
                     allocator,
                 );
             }
-        });
+        };
+
+        bootbridge.map_self(&mut mapper);
+        dwarf_data().map_self(&mut mapper);
     });
 
     active_table.switch(new_table);

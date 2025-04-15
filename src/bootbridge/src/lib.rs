@@ -2,6 +2,7 @@
 
 use core::{cell::OnceCell, fmt::Debug};
 
+use bakery::DwarfBaker;
 use c_enum::c_enum;
 use santa::{Elf, PAGE_SIZE};
 
@@ -87,6 +88,7 @@ pub struct RawBootBridge {
     mem_capacity: u64,
     framebuffer_data: RawData,
     font_data: RawData,
+    dwarf_data: Option<DwarfBaker<'static>>,
     kernel_elf: Elf<'static>,
     kernel_config: KernelConfig,
     memory_map: MemoryMap<'static>,
@@ -104,15 +106,19 @@ where
     boot_bridge: OnceCell<*mut RawBootBridge>,
 }
 
-pub struct BootBridge(pub *const RawBootBridge);
+pub struct BootBridge(pub *mut RawBootBridge);
 
 impl BootBridge {
-    pub fn new(ptr: *const RawBootBridge) -> Self {
+    pub fn new(ptr: *mut RawBootBridge) -> Self {
         BootBridge(ptr)
     }
 
     pub(crate) fn deref(&self) -> &'static RawBootBridge {
         unsafe { &*self.0 }
+    }
+
+    pub(crate) fn deref_mut(&mut self) -> &'static mut RawBootBridge {
+        unsafe { &mut *self.0 }
     }
 
     pub fn rsdp(&self) -> u64 {
@@ -145,6 +151,10 @@ impl BootBridge {
 
     pub fn kernel_elf(&self) -> &Elf<'static> {
         &self.deref().kernel_elf
+    }
+
+    pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
+        self.deref_mut().dwarf_data.take().unwrap()
     }
 
     pub fn map_self(&self, mut mapper: impl FnMut(u64, u64)) {
@@ -200,6 +210,12 @@ where
     pub fn font_data(&mut self, start: u64, size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.font_data = RawData { start, size };
+        self
+    }
+
+    pub fn dwarf_data(&mut self, dwarf: DwarfBaker<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.dwarf_data = Some(dwarf);
         self
     }
 

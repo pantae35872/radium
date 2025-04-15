@@ -16,5 +16,11 @@ path = "../boot_cfg_parser"
 [dependencies.bootbridge]
 path = "../bootbridge"
 
+[dependencies.bakery]
+path = "../bakery"
+default-features = false
+features = ["alloc"]
+
 [dependencies.santa]
 path = "../santa"
+

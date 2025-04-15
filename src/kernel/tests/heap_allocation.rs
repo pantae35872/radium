@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
 
 #[no_mangle]
-pub extern "C" fn start(boot_bridge: *const RawBootBridge) -> ! {
+pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     test_main();
     loop {}

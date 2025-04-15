@@ -9,3 +9,4 @@ object = "0.32"
 addr2line = "0.21"
 gimli = "0.27" 
 rustc-demangle = "0.1"
+bakery = { path = "../bakery" }

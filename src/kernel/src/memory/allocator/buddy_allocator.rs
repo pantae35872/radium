@@ -5,7 +5,7 @@ use santa::Elf;
 use x86_64::{instructions::tlb, VirtAddr};
 
 use crate::{
-    log,
+    dwarf_data, log,
     memory::{
         paging::{
             create_mappings, table::RecurseLevel4, ActivePageTable, EntryFlags, InactivePageTable,
@@ -63,6 +63,17 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                         mapper.identity_map(
                             frame,
                             EntryFlags::from_elf_program_flags(&flags),
+                            allocator,
+                        );
+                    }
+                });
+                dwarf_data().map_self(|start, size| {
+                    let start_frame = Frame::containing_address(start);
+                    let end_frame = Frame::containing_address(start + size - 1);
+                    for frame in Frame::range_inclusive(start_frame, end_frame) {
+                        mapper.identity_map(
+                            frame,
+                            EntryFlags::PRESENT | EntryFlags::OVERWRITEABLE,
                             allocator,
                         );
                     }
