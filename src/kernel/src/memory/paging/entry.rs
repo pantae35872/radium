@@ -1,8 +1,10 @@
+use core::fmt::Debug;
+
 use crate::memory::Frame;
 
 use super::EntryFlags;
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Copy)]
 pub struct Entry(pub u64);
 
 impl Entry {
@@ -12,6 +14,10 @@ impl Entry {
 
     pub fn overwriteable(&self) -> bool {
         self.flags().contains(EntryFlags::OVERWRITEABLE)
+    }
+
+    pub fn mask_flags(&self) -> u64 {
+        self.0 & 0x000fffff_fffff000
     }
 
     pub fn set_unused(&mut self) {
@@ -30,5 +36,17 @@ impl Entry {
     pub fn set(&mut self, frame: Frame, flags: EntryFlags) {
         assert!(frame.start_address().as_u64() & !0x000fffff_fffff000 == 0);
         self.0 = frame.start_address().as_u64() | flags.bits();
+    }
+}
+
+impl Debug for Entry {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{frame} : {flags:?}",
+            flags = self.flags(),
+            frame = self.mask_flags()
+        )?;
+        Ok(())
     }
 }

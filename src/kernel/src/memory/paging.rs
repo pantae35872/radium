@@ -28,7 +28,7 @@ mod temporary_page;
 const ENTRY_COUNT: u64 = 512;
 
 bitflags! {
-    #[derive(Clone, Copy, Debug)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct EntryFlags: u64 {
         const PRESENT =         1 << 0;
         const WRITABLE =        1 << 1;
@@ -255,75 +255,63 @@ where
     where
         Table<P4>: AnyLevel,
     {
-        log_dyn_recursive(self.p4(), 4);
+        log!(Debug, "Current mappings: ");
+        log_dyn_recursive(self.p4(), 4, 0);
 
-        fn log_dyn_recursive(table: &dyn AnyLevel, level: u8) {
-            struct CompressedEntries<'a> {
-                entries: &'a [Entry; ENTRY_COUNT as usize],
-            }
-
-            impl<'a> fmt::Display for CompressedEntries<'a> {
-                fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    let mut first = true;
-                    let mut zero_count = 0;
-
-                    write!(f, "[")?;
-
-                    for val in self.entries.iter().map(|e| e.0) {
-                        if val == 0 {
-                            zero_count += 1;
-                            continue;
+        fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
+            if level == 1 {
+                let (mut last_phys, mut last_virt, mut last_flags) =
+                    (0u64, 0u64, EntryFlags::empty());
+                let mut is_first = true;
+                for (index, entry) in table
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
+                {
+                    let virt = base_addr as usize | (index << 12);
+                    if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
+                        == (entry.mask_flags(), virt as u64, entry.flags())
+                    {
+                        if is_first
+                            && (last_phys, last_virt, last_flags)
+                                != (0u64, 0u64, EntryFlags::empty())
+                        {
+                            log!(Debug, "-----------------------------------------");
+                            log!(
+                                Debug,
+                                "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
+                            );
+                            log!(Debug, "..........................................");
+                            is_first = false;
                         }
 
-                        if zero_count > 0 {
-                            if !first {
-                                write!(f, ", ")?;
-                            }
-                            if zero_count == 1 {
-                                write!(f, "0")?;
-                            } else {
-                                write!(f, "0 /* repeated {} times */", zero_count)?;
-                            }
-                            first = false;
-                            zero_count = 0;
-                        }
-
-                        if !first {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{:#x}", val)?;
-                        first = false;
+                        (last_phys, last_virt, last_flags) =
+                            (entry.mask_flags(), virt as u64, entry.flags());
+                        continue;
+                    } else if (last_phys, last_virt, last_flags)
+                        != (0u64, 0u64, EntryFlags::empty())
+                    {
+                        log!(
+                            Debug,
+                            "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
+                        );
+                        log!(Debug, "-----------------------------------------");
+                        is_first = true;
                     }
-
-                    if zero_count > 0 {
-                        if !first {
-                            write!(f, ", ")?;
-                        }
-                        if zero_count == 1 {
-                            write!(f, "0")?;
-                        } else {
-                            write!(f, "0 /* repeated {} times */", zero_count)?;
-                        }
-                    }
-
-                    write!(f, "]")
+                    (last_phys, last_virt, last_flags) =
+                        (entry.mask_flags(), virt as u64, entry.flags());
                 }
             }
 
-            if level == 1 {
-                log!(
-                    Debug,
-                    "{}",
-                    CompressedEntries {
-                        entries: table.entries(),
-                    }
+            for (index, table) in
+                (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table)))
+            {
+                log_dyn_recursive(
+                    table,
+                    level - 1,
+                    base_addr | (index << ((level - 1) * 9 + 12)),
                 );
-            } else {
-                log!(Debug, "Page level: {level}");
-            }
-
-            for table in (0..ENTRY_COUNT).filter_map(|i| table.next(i)) {
-                log_dyn_recursive(table, level - 1);
             }
         }
     }
@@ -495,7 +483,6 @@ where
         let frame = allocator.allocate_frame().expect("no more frames");
         InactivePageTable::new(frame, &mut active_table, &mut temporary_page)
     };
-    active_table.log_all();
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         bootbridge.kernel_elf().map_self(|start, end, flags| {
             mapper.identity_map_range(

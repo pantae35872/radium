@@ -106,7 +106,8 @@ $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
 make-test-kernel: $(FAT_IMG) $(ISO_DIR)
 	@echo test > $(BUILD_MODE_FILE)
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot
-	mcopy -D o -i $(FAT_IMG) test_bootinfo.toml $(KERNEL_FONT) ::/boot
+	cd src/baker && cargo run --release -- $(abspath $(BUILD_DIR)/kernel.bin) $(DWARF_FILE)
+	mcopy -D o -i $(FAT_IMG) test_bootinfo.toml $(KERNEL_FONT) $(DWARF_FILE) ::/boot
 	mmove -D o -i $(FAT_IMG) boot/test_bootinfo.toml boot/bootinfo.toml
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -quiet -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/test.iso $(ISO_DIR) > /dev/null

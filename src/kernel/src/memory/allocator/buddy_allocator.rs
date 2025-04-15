@@ -232,9 +232,9 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             let buddy = ptr ^ (1 << order);
             let mut found_buddy = false;
 
-            for block in self.free_lists[order - 1].iter_mut() {
+            for block in self.free_lists[order - 1].iter_mut(&mut self.allocation_context) {
                 if block.value() as usize == buddy {
-                    block.pop();
+                    block.pop(&mut self.allocation_context);
                     found_buddy = true;
                     break;
                 }
@@ -271,10 +271,9 @@ struct FreeList {
 }
 
 impl FreeNode {
-    fn pop(self) -> *mut usize {
-        unsafe {
-            *(self.prev) = *(self.curr);
-        }
+    fn pop(self, ctx: &mut AllocationContext) -> *mut usize {
+        let addr = direct_access(self.curr as u64, ctx, || unsafe { *(self.curr) });
+        direct_access(self.prev as u64, ctx, || unsafe { *(self.prev) = addr });
         self.curr
     }
 
@@ -283,7 +282,7 @@ impl FreeNode {
     }
 }
 
-fn direct_access(address: u64, ctx: &mut AllocationContext, f: impl FnOnce()) {
+fn direct_access<T>(address: u64, ctx: &mut AllocationContext, f: impl FnOnce() -> T) -> T {
     //log!(Trace, "Buddy allocator is accessing: {address:#016x}");
     let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
     // Switch to the mapping
@@ -293,11 +292,15 @@ fn direct_access(address: u64, ctx: &mut AllocationContext, f: impl FnOnce()) {
         EntryFlags::WRITABLE,
         &mut ctx.linear_allocator,
     );
-    f();
+    if active_table.translate(VirtAddr::new(address)).is_none() {
+        panic!("Failed to map address to the buddy allocator");
+    }
+    let result = f();
     active_table.unmap_addr(Page::containing_address(address));
     // Switch back
     let inactive_page_table = active_table.switch(current_table);
     ctx.map_access = Some(inactive_page_table);
+    result
 }
 
 impl FreeList {
@@ -331,21 +334,23 @@ impl FreeList {
         self.head.is_null()
     }
 
-    fn iter_mut(&mut self) -> FreeListIterMut {
+    fn iter_mut<'a, 'c>(&'a mut self, ctx: &'c mut AllocationContext) -> FreeListIterMut<'a, 'c> {
         FreeListIterMut {
             list: PhantomData,
             previous: &mut self.head as *mut *mut usize as *mut usize,
             current: self.head,
+            ctx,
         }
     }
 }
 
-struct FreeListIterMut<'a> {
+struct FreeListIterMut<'a, 'c> {
     list: PhantomData<&'a mut FreeList>,
     previous: *mut usize,
     current: *mut usize,
+    ctx: &'c mut AllocationContext,
 }
-impl<'a> Iterator for FreeListIterMut<'a> {
+impl<'a, 'c> Iterator for FreeListIterMut<'a, 'c> {
     type Item = FreeNode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -357,7 +362,9 @@ impl<'a> Iterator for FreeListIterMut<'a> {
                 curr: self.current,
             };
             self.previous = self.current;
-            self.current = unsafe { *self.current as *mut usize };
+            direct_access(self.current as u64, self.ctx, || {
+                self.current = unsafe { *self.current as *mut usize };
+            });
             Some(res)
         }
     }
