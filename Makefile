@@ -89,10 +89,11 @@ run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -serial stdio 
 
 dbg-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial file:klog.txt
+	@echo $$$$ > /tmp/dbg_make_pid.txt; \
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial stdio 
 
 dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial file:klog.txt
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio 
 
 test-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio 
