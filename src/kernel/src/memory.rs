@@ -32,14 +32,14 @@ pub fn init(bootbridge: &BootBridge) {
         unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    log!(Trace, "UEFI memory map usable:");
+    log!(Info, "UEFI memory map usable:");
     bootbridge
         .memory_map()
         .entries()
         .filter(|e| e.ty == MemoryType::CONVENTIONAL)
         .for_each(|descriptor| {
             log!(
-                Trace,
+                Info,
                 "Range: Phys: [{:#016x}-{:#016x}]",
                 descriptor.phys_start,
                 descriptor.phys_start + descriptor.page_count * PAGE_SIZE,

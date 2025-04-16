@@ -3,7 +3,6 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::log;
-use crate::logger::LOGGER;
 use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use spin::Mutex;

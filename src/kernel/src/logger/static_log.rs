@@ -1,7 +1,7 @@
 use core::{
     fmt::{Arguments, Write},
     mem::offset_of,
-    sync::atomic::{AtomicU16, AtomicU64, AtomicUsize, Ordering},
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crc::{
@@ -9,7 +9,7 @@ use crc::{
     Hasher64,
 };
 
-use crate::{defer, serial_println, utils::circular_ring_buffer::lockfree::CircularRingBuffer};
+use crate::utils::circular_ring_buffer::lockfree::CircularRingBuffer;
 
 use super::{CallbackFormatter, LogLevel};
 

@@ -2,14 +2,13 @@ pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
-use crate::logger::LOGGER;
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{dwarf_data, hlt_loop, log, serial_println, DWARF_DATA};
+use crate::{dwarf_data, log};
 use bootbridge::BootBridge;
-use core::fmt::{self, Display};
+use core::fmt::Display;
 use core::ops::{Add, Deref, DerefMut};
 use core::ptr::Unique;
-use santa::{ProgramHeaderFlags, SectionHeaderFlags};
+use santa::ProgramHeaderFlags;
 use table::{
     AnyLevel, DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create,
     TableLevel, TableLevel4,

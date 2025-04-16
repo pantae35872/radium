@@ -1,10 +1,6 @@
 use bootbridge::{MemoryMap, MemoryType};
 
-use crate::{
-    log,
-    memory::{FrameAllocator, PAGE_SIZE},
-    serial_println,
-};
+use crate::memory::{FrameAllocator, PAGE_SIZE};
 
 pub struct LinearAllocator {
     orginal_start: usize,

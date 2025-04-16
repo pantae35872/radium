@@ -3,7 +3,7 @@ use core::{marker::PhantomData, ptr};
 use bootbridge::{MemoryMap, MemoryType};
 use santa::Elf;
 use x86_64::{
-    instructions::{self, interrupts},
+    instructions::interrupts,
     VirtAddr,
 };
 

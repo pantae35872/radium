@@ -66,8 +66,6 @@ macro_rules! parser_err {
     };
 }
 
-pub(crate) use parser_err;
-pub(crate) use parser_ok;
 
 macro try_with_context($context: expr, $expr: expr) {
     match $expr {

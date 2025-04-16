@@ -1,5 +1,4 @@
 use crate::memory::FrameAllocator;
-use crate::serial_println;
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 use core::ptr::Unique;

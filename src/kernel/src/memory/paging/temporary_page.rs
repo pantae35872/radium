@@ -6,7 +6,6 @@ use super::table::{
 use super::{ActivePageTable, Page};
 use crate::memory::paging::EntryFlags;
 use crate::memory::{Frame, FrameAllocator};
-use crate::serial_println;
 
 pub struct TemporaryPage {
     page: Page,

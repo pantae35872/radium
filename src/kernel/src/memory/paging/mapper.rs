@@ -1,13 +1,11 @@
 use x86_64::{PhysAddr, VirtAddr};
 
 use super::table::{
-    self, DirectP4Create, DirectP4Marker, HierarchicalLevel, NextTableAddress, RecurseLevel4,
+    DirectP4Create, HierarchicalLevel, NextTableAddress,
     RecurseP4Create, Table, TableLevel, TableLevel4,
 };
 use super::{EntryFlags, Page, ENTRY_COUNT};
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
-use crate::{serial_print, serial_println};
-use core::ops::Index;
 use core::ptr::Unique;
 
 pub struct Mapper<P4: TableLevel4> {

@@ -10,7 +10,7 @@ extern crate radium;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::{memory::memory_controller, serial_println};
+use radium::memory::memory_controller;
 
 #[no_mangle]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
