@@ -80,8 +80,6 @@ pub fn init(bootbridge: &BootBridge) {
         "Usable memory: {:.2} GB",
         memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
     );
-
-    log!(Info, "Detected memory: {} GB", bootbridge.mem_capacity());
 }
 
 fn enable_write_protect_bit() {

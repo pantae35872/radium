@@ -2,7 +2,7 @@ ifeq (test,$(firstword $(MAKECMDGOALS)))
   RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
   $(eval $(RUN_ARGS):;@:)
 endif
-ifeq (make-test-kernel,$(firstword $(MAKECMDGOALS)))
+ifeq (test-run,$(firstword $(MAKECMDGOALS)))
 	STILL_TESTING := 1
 else 
 	STILL_TESTING := 0
@@ -15,7 +15,7 @@ else
 endif
 
 
-.PHONY: debug release clean run make-test-kernel test-run test update dbg-run force_rebuild dbg-run-no-dbg
+.PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg
 .DEFAULT_GOAL := debug
 
 NAME := radium
@@ -28,15 +28,16 @@ DWARF_FILE := $(abspath $(BUILD_DIR)/dwarf.baker)
 
 # Dependency files
 KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
+BAKER_DEPS := $(wildcard $(BUILD_DIR)/release/baker.d)
 BOOTLOADER_DEPS := $(wildcard $(BUILD_DIR)/x86_64-unknown-uefi/$(BUILD_MODE)/*.d)
-OSRUNNER_DEPS := $(wildcard $(BUILD_DIR)/release/*.d)
 
 KERNEL_OPTS_DEPS := src/kernel/src/boot/boot.asm
 
 # Binaries
 KERNEL_BIN := $(abspath $(BUILD_DIR)/x86_64/$(BUILD_MODE)/$(NAME))
-OSRUNNER_BIN := $(abspath $(BUILD_DIR)/release/os-runner)
 BOOTLOADER_BIN := $(abspath $(BUILD_DIR)/x86_64-unknown-uefi/$(BUILD_MODE)/$(NAME)-bootloader.efi)
+BAKER_BIN := $(abspath $(BUILD_DIR)/release/baker)
+KERNEL_BUILD_BIN := $(abspath $(BUILD_DIR)/kernel.bin)
 BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
 BOOT_INFO := bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
@@ -51,7 +52,7 @@ endif
 
 -include $(KERNEL_DEPS)
 -include $(BOOTLOADER_DEPS)
--include $(OSRUNNER_DEPS)
+-include $(BAKER_DEPS)
 
 QEMU_FLAGS := -m 1G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
@@ -72,6 +73,8 @@ ifeq ($(BUILD_MODE_CHANGED),1)
 force_rebuild:
 
 $(KERNEL_BIN): force_rebuild
+$(KERNEL_BUILD_BIN): force_rebuild
+$(DWARF_FILE): force_rebuild
 $(BOOTLOADER_BIN): force_rebuild
 $(FAT_IMG): force_rebuild
 $(ISO_FILE): force_rebuild
@@ -95,52 +98,40 @@ dbg-run: $(DISK_FILE) $(OVMF)
 dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio 
 
-test-run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/test.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio 
-
-$(OSRUNNER_BIN): $(BUILD_DIR) 
-	cd src/os-runner && cargo build --release --quiet
-
 $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
 	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
-
-make-test-kernel: $(FAT_IMG) $(ISO_DIR)
-	@echo test > $(BUILD_MODE_FILE)
-	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot
-	cd src/baker && cargo run --release -- $(abspath $(BUILD_DIR)/kernel.bin) $(DWARF_FILE)
-	mcopy -D o -i $(FAT_IMG) test_bootinfo.toml $(KERNEL_FONT) $(DWARF_FILE) ::/boot
-	mmove -D o -i $(FAT_IMG) boot/test_bootinfo.toml boot/bootinfo.toml
-	cp $(FAT_IMG) $(ISO_DIR)
-	xorriso -as mkisofs -quiet -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/test.iso $(ISO_DIR) > /dev/null
 
 $(KERNEL_FONT):
 	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
 	mv open-sans.regular.ttf kernel-font.ttf
 
-$(DWARF_FILE): $(KERNEL_BIN)
-	cd src/baker && cargo run --release -- $(KERNEL_BIN) $(DWARF_FILE)
+$(DWARF_FILE): $(KERNEL_BUILD_BIN) $(BAKER_BIN)
+	$(BAKER_BIN) $(KERNEL_BUILD_BIN) $(DWARF_FILE)
 
 $(KERNEL_BIN): $(KERNEL_OPTS_DEPS)
 ifneq ($(STILL_TESTING),1)
 	cd src/kernel && RUST_BACKTRACE=1 cargo build $(if $(RELEASE),--release,) --features panic_exit
-	cp $(KERNEL_BIN) $(BUILD_DIR)/kernel.bin
+endif
+
+$(KERNEL_BUILD_BIN): $(KERNEL_BIN)
+ifneq ($(STILL_TESTING),1)
+	cp $(KERNEL_BIN) $(KERNEL_BUILD_BIN)
 endif
 
 $(BOOTLOADER_BIN):
-ifneq ($(STILL_TESTING),1)
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
-endif
 
-$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(KERNEL_BIN) $(BOOTLOADER_BIN) $(DWARF_FILE)	
-ifneq ($(STILL_TESTING),1)
-	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=32 status=none
+$(BAKER_BIN):
+	cd src/baker && cargo build --release
+
+$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(BOOTLOADER_BIN)
+	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=24 status=none
 	mkfs.vfat $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
 	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
-	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/kernel.bin ::/boot 
+	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
-endif
 
 $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
@@ -149,7 +140,14 @@ $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
 debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
 
-test: $(OSRUNNER_BIN)
+# Get called by test_run.sh
+test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
+	@echo test > $(BUILD_MODE_FILE)
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio ; \
+		status=$$?; \
+		if [ $$status -ne 33 ]; then exit $$status; else exit 0; fi
+
+test: 
 	cd src/kernel && cargo test --features testing $(RUN_ARGS)
 
 clean:

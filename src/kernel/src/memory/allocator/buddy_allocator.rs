@@ -2,10 +2,13 @@ use core::{marker::PhantomData, ptr};
 
 use bootbridge::{MemoryMap, MemoryType};
 use santa::Elf;
-use x86_64::{instructions::tlb, VirtAddr};
+use x86_64::{
+    instructions::{self, interrupts},
+    VirtAddr,
+};
 
 use crate::{
-    dwarf_data, log,
+    dwarf_data,
     memory::{
         paging::{
             create_mappings, table::RecurseLevel4, ActivePageTable, EntryFlags, InactivePageTable,
@@ -13,7 +16,6 @@ use crate::{
         },
         Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE,
     },
-    serial_println,
     utils::NumberUtils,
 };
 
@@ -281,24 +283,26 @@ impl FreeNode {
 }
 
 fn direct_access<T>(address: u64, ctx: &mut AllocationContext, f: impl FnOnce() -> T) -> T {
-    //log!(Trace, "Buddy allocator is accessing: {address:#016x}");
-    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
-    // Switch to the mapping
-    let current_table = active_table.switch(ctx.map_access.take().unwrap());
-    active_table.identity_map(
-        Frame::containing_address(address),
-        EntryFlags::WRITABLE,
-        &mut ctx.linear_allocator,
-    );
-    if active_table.translate(VirtAddr::new(address)).is_none() {
-        panic!("Failed to map address to the buddy allocator");
-    }
-    let result = f();
-    active_table.unmap_addr(Page::containing_address(address));
-    // Switch back
-    let inactive_page_table = active_table.switch(current_table);
-    ctx.map_access = Some(inactive_page_table);
-    result
+    // Without interrupts because we didn't have the mappings for the device and apic
+    interrupts::without_interrupts(|| {
+        let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+        // Switch to the mapping
+        let current_table = active_table.switch(ctx.map_access.take().unwrap());
+        active_table.identity_map(
+            Frame::containing_address(address),
+            EntryFlags::WRITABLE,
+            &mut ctx.linear_allocator,
+        );
+        if active_table.translate(VirtAddr::new(address)).is_none() {
+            panic!("Failed to map address to the buddy allocator");
+        }
+        let result = f();
+        active_table.unmap_addr(Page::containing_address(address));
+        // Switch back
+        let inactive_page_table = active_table.switch(current_table);
+        ctx.map_access = Some(inactive_page_table);
+        result
+    })
 }
 
 impl FreeList {

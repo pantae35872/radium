@@ -7,3 +7,5 @@ any_key_boot = false
 
 [kernel_config]
 font_size = 15
+log_level = 3
+

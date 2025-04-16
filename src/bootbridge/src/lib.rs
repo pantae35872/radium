@@ -15,6 +15,7 @@ pub struct RawData {
 #[derive(Debug)]
 pub struct KernelConfig {
     pub font_pixel_size: usize,
+    pub log_level: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -85,7 +86,6 @@ pub struct GraphicsInfo {
 #[derive(Debug)]
 #[repr(C)]
 pub struct RawBootBridge {
-    mem_capacity: u64,
     framebuffer_data: RawData,
     font_data: RawData,
     dwarf_data: Option<DwarfBaker<'static>>,
@@ -125,10 +125,6 @@ impl BootBridge {
         self.deref().rsdp
     }
 
-    pub fn mem_capacity(&self) -> u64 {
-        self.deref().mem_capacity
-    }
-
     pub fn graphics_info(&self) -> GraphicsInfo {
         self.deref().graphics_info
     }
@@ -147,6 +143,10 @@ impl BootBridge {
 
     pub fn font_size(&self) -> usize {
         self.deref().kernel_config.font_pixel_size
+    }
+
+    pub fn log_level(&self) -> u64 {
+        self.deref().kernel_config.log_level
     }
 
     pub fn kernel_elf(&self) -> &Elf<'static> {
@@ -233,22 +233,6 @@ where
     pub fn memory_map(&mut self, memory_map: &'static [u8], entry_size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.memory_map = MemoryMap::new(memory_map, entry_size);
-        boot_bridge.mem_capacity = (boot_bridge
-            .memory_map
-            .entries()
-            .filter(|e| {
-                matches!(
-                    e.ty,
-                    MemoryType::CONVENTIONAL
-                        | MemoryType::BOOT_SERVICES_CODE
-                        | MemoryType::BOOT_SERVICES_DATA
-                )
-            })
-            .map(|e| e.phys_start + (e.page_count * 4096))
-            .max()
-            .expect("Failed to get max memory")
-            >> 30)
-            + 1;
         self
     }
 
@@ -362,13 +346,12 @@ impl Debug for BootBridge {
         let boot_bridge = self.deref();
         write!(
             f,
-            "BootBridge {{ framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {}, mem_capacity: {} }}",
+            "BootBridge {{ framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {} }}",
             boot_bridge.framebuffer_data,
             boot_bridge.font_data,
             boot_bridge.kernel_elf,
             boot_bridge.kernel_config,
             boot_bridge.rsdp,
-            boot_bridge.mem_capacity
         )
     }
 }

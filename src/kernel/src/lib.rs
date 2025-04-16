@@ -52,7 +52,7 @@ static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 pub fn init(boot_bridge: *mut RawBootBridge) {
     let mut boot_bridge = BootBridge::new(boot_bridge);
     DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
-    log!(Trace, "Logging start");
+    logger::init(&boot_bridge);
     memory::init(&boot_bridge);
     gdt::init_gdt();
     interrupt::init();

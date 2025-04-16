@@ -14,6 +14,7 @@ pub struct BootConfig<'a> {
     screen_resolution: (usize, usize),
     any_key_boot: bool,
     font_size: usize,
+    log_level: u64,
 }
 
 impl<'a> BootConfig<'a> {
@@ -57,13 +58,17 @@ impl<'a> BootConfig<'a> {
             .expect("any_key_boot boot config not found")
             .as_bool()
             .expect("any_key_boot is not a boolean");
-        let font_size = toml
-            .get("kernel_config")
-            .expect("kernel_config not found")
+        let kconfig = toml.get("kernel_config").expect("kernel_config not found");
+        let font_size = kconfig
             .get("font_size")
             .expect("font_size not found in the config file")
             .as_integer()
             .expect("font_size is not an integer") as usize;
+        let log_level = kconfig
+            .get("log_level")
+            .expect("font_size not found in the config file")
+            .as_integer()
+            .expect("font_size is not an integer") as u64;
         Self {
             file_root,
             kernel_file,
@@ -72,6 +77,7 @@ impl<'a> BootConfig<'a> {
             screen_resolution: (width, height),
             any_key_boot,
             font_size,
+            log_level,
         }
     }
 
@@ -110,6 +116,7 @@ impl<'a> BootConfig<'a> {
     pub fn kernel_config(&self) -> KernelConfig {
         KernelConfig {
             font_pixel_size: self.font_size,
+            log_level: self.log_level,
         }
     }
 }

@@ -1,15 +1,10 @@
-use core::arch::naked_asm;
-
-use crate::defer;
 use crate::gdt;
 use crate::hlt_loop;
 use crate::log;
 use crate::memory::memory_controller;
 use crate::memory::paging::EntryFlags;
 use crate::memory::virt_addr_alloc;
-use crate::print;
 use crate::println;
-use alloc::ffi::CString;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
 use spin::Mutex;
@@ -60,38 +55,28 @@ lazy_static! {
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
         unsafe {
-            idt[InterruptIndex::Timer.as_usize()].set_handler_addr(VirtAddr::new(timer as u64));
-        }
-        idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
-        idt[InterruptIndex::PrimaryATA.as_usize()].set_handler_fn(primary_ata_interrupt_handler);
-        idt[InterruptIndex::SecondaryATA.as_usize()]
-            .set_handler_fn(secondary_ata_interrupt_handler);
-        unsafe {
-            idt[0x80].set_handler_addr(VirtAddr::new(syscall as u64));
+            idt[InterruptIndex::TimerVector.as_usize()]
+                .set_handler_addr(VirtAddr::new(timer as u64));
         }
         idt
     };
 }
 
-pub const PIC_1_OFFSET: u8 = 32;
-pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+pub const LOCAL_APIC_OFFSET: u8 = 32;
 
+pub const LAPIC_SIZE: u64 = 0x1000;
 lazy_static! {
-    pub static ref LAPIC_VADDR: u64 = virt_addr_alloc(0xFFF);
-    pub static ref IO_APIC_MMIO_VADDR: u64 = virt_addr_alloc(0xFFF);
+    pub static ref LAPIC_VADDR: u64 = virt_addr_alloc(0x1000);
 }
-pub const LAPIC_SIZE: u64 = 0xFFF;
-pub const IO_APIC_MMIO_SIZE: u64 = 0x1000;
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
 pub static IOAPICS: OnceCell<Mutex<IoApic>> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {
-    Timer = PIC_1_OFFSET,
-    Keyboard,
-    PrimaryATA = PIC_1_OFFSET + 14,
-    SecondaryATA = PIC_1_OFFSET + 15,
+    TimerVector = LOCAL_APIC_OFFSET,
+    ErrorVector,
+    SpuriousInterruptsVector = 0xFF,
 }
 
 impl InterruptIndex {
@@ -117,22 +102,19 @@ pub fn init() {
             | EntryFlags::WRITABLE
             | EntryFlags::WRITE_THROUGH,
     );
-    //memory_controller()
-    //    .lock()
-    //    .phy_map(IO_APIC_MMIO_SIZE, 0xFEC00000, IO_APIC_MMIO_VADDR);
-    //LAPICS.init_once(|| {
-    //    let mut lapic = LocalApicBuilder::new()
-    //        .timer_vector(32)
-    //        .error_vector(34)
-    //        .spurious_vector(33)
-    //        .set_xapic_base(*LAPIC_VADDR)
-    //        .build()
-    //        .expect("Could not create lapic");
-    //    unsafe {
-    //        lapic.enable();
-    //    }
-    //    Mutex::new(lapic)
-    //});
+    LAPICS.init_once(|| {
+        let mut lapic = LocalApicBuilder::new()
+            .timer_vector(InterruptIndex::TimerVector.as_usize())
+            .error_vector(InterruptIndex::ErrorVector.as_usize())
+            .spurious_vector(InterruptIndex::SpuriousInterruptsVector.as_usize())
+            .set_xapic_base(*LAPIC_VADDR)
+            .build()
+            .expect("Could not create lapic");
+        unsafe {
+            lapic.enable();
+        }
+        Mutex::new(lapic)
+    });
     //IOAPICS.init_once(|| unsafe {
     //    let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
     //    let mut entry = RedirectionTableEntry::default();
@@ -145,6 +127,12 @@ pub fn init() {
     //    Mutex::new(ioapic)
     //});
     IDT.load();
+}
+
+fn eoi() {
+    unsafe {
+        LAPICS.get().unwrap().lock().end_of_interrupt();
+    }
 }
 
 extern "x86-interrupt" fn simd_floating_point_handler(_stack_frame: InterruptStackFrame) {}
@@ -232,153 +220,8 @@ extern "x86-interrupt" fn double_fault_handler(
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
 }
 
-#[naked]
-#[no_mangle]
-fn timer() {
-    unsafe {
-        naked_asm!(
-            r#"
-        push r11
-        push r10
-        push r9
-        push r8
-        push rdi
-        push rsi
-        push rdx
-        push rcx
-        push rax
-        
-        mov rdi, rsp
-        call inner_timer
-        pop rax
-        pop rcx
-        pop rdx
-        pop rsi
-        pop rdi
-        pop r8
-        pop r9
-        pop r10
-        pop r11
-        iretq
-        "#,
-        );
-    }
-}
-
-#[no_mangle]
-extern "C" fn inner_timer(_stack_frame: &mut FullInterruptStackFrame) {
-    defer!(unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
-    });
-    //let mut process = match SCHEDULER.get() {
-    //    Some(scheduler) => scheduler.lock(),
-    //    None => {
-    //        return;
-    //    }
-    //};
-    //match process.schedule_next() {
-    //    Some(_process) => {
-    //        //println!("Running: {}", process.get_name());
-    //    }
-    //    None => {
-    //        //println!("No process ran");
-    //    }
-    //}
-}
-extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    //let mut port = Port::new(0x60);
-    //let scancode: u8 = unsafe { port.read() };
-
-    /*crate::driver::keyboard::keyboard_scancode(scancode);*/
-    unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
-    }
-    /*unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
-    }*/
-}
-
-#[naked]
-#[no_mangle]
-fn syscall() {
-    unsafe {
-        naked_asm!(
-            r#"
-        push r11
-        push r10
-        push r9
-        push r8
-        push rdi
-        push rsi
-        push rdx
-        push rcx
-        push rax
-        
-        mov rdi, rsp
-        call inner_syscall
-        pop rax
-        pop rcx
-        pop rdx
-        pop rsi
-        pop rdi
-        pop r8
-        pop r9
-        pop r10
-        pop r11
-        iretq
-        "#,
-        );
-    }
-}
-
-#[derive(Debug)]
-#[repr(C)]
-struct FullInterruptStackFrame {
-    pub rax: u64,
-    pub rcx: u64,
-    pub rdx: u64,
-    pub rsi: u64,
-    pub rdi: u64,
-    pub r8: u64,
-    pub r9: u64,
-    pub r10: u64,
-    pub r11: u64,
-    pub instruction_pointer: VirtAddr,
-    pub code_segment: u64,
-    pub cpu_flags: u64,
-    pub stack_pointer: VirtAddr,
-    pub stack_segment: u64,
-}
-#[no_mangle]
-extern "C" fn inner_syscall(stack_frame: &mut FullInterruptStackFrame) {
-    if stack_frame.rax == 1 {
-        let data = unsafe { CString::from_raw(stack_frame.rcx as *mut i8) };
-        print!("{}", data.to_str().unwrap());
-    }
-}
-
-extern "x86-interrupt" fn primary_ata_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
-    }
-    /*unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::PrimaryATA.as_u8());
-    }*/
-}
-
-extern "x86-interrupt" fn secondary_ata_interrupt_handler(_stack_frame: InterruptStackFrame) {
-    //println!("aa");
-
-    unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
-    }
-
-    /*unsafe {
-        PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::SecondaryATA.as_u8());
-    }*/
+extern "x86-interrupt" fn timer(stack_frame: InterruptStackFrame) {
+    eoi();
 }
 
 extern "x86-interrupt" fn page_fault_handler(

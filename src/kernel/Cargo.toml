@@ -24,6 +24,7 @@ getrandom = "0.3.1"
 bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
+raw-cpuid = "11.5.0"
 
 [dependencies.bakery]
 path = "../bakery"

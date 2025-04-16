@@ -9,5 +9,5 @@ rustflags = [
 ]
 
 [target.'cfg(target_os = "none")']
-runner = "../../build/release/os-runner"
+runner = "../../test_run.sh"
 

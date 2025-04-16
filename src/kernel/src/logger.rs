@@ -1,5 +1,6 @@
 use core::fmt::{Arguments, Display, Formatter, Result, Write};
 
+use bootbridge::BootBridge;
 use c_enum::c_enum;
 use static_log::StaticLog;
 
@@ -66,16 +67,25 @@ impl<C: FnMut(&str)> Write for CallbackFormatter<C> {
 
 pub struct MainLogger {
     logger: StaticLog<BUFFER_SIZE>,
+    level: LogLevel,
 }
 
 impl MainLogger {
     pub const fn new() -> Self {
         Self {
             logger: StaticLog::new(),
+            level: LogLevel::Trace,
         }
     }
 
+    pub unsafe fn set_level(&mut self, level: u64) {
+        self.level = LogLevel(level);
+    }
+
     pub fn write(&self, level: LogLevel, formatter: Arguments) {
+        if level < self.level {
+            return;
+        }
         self.logger.write_log(&formatter, level);
     }
 
@@ -94,4 +104,16 @@ impl MainLogger {
             ));
         }
     }
+}
+
+pub fn init(boot_bridge: &BootBridge) {
+    // Altho this looks so fucking unsafe but i can asure you it's safe
+    // Because the init function is only being called when the kernel is initialize (guarantee by my
+    // stupidity)
+    unsafe {
+        #[allow(invalid_reference_casting)]
+        (&mut *(&LOGGER as *const MainLogger as *mut MainLogger))
+            .set_level(boot_bridge.log_level());
+    };
+    log!(Trace, "Logging start");
 }
