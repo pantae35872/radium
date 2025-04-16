@@ -54,7 +54,7 @@ endif
 -include $(BOOTLOADER_DEPS)
 -include $(BAKER_DEPS)
 
-QEMU_FLAGS := -m 1G -bios OVMF.fd \
+QEMU_FLAGS := -m 16G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-no-reboot

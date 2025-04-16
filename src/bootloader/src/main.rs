@@ -14,7 +14,7 @@ use kernel_loader::load_kernel;
 use uefi::{
     entry,
     table::{
-        boot::{self, MemoryDescriptor, MemoryType},
+        boot::{MemoryDescriptor, MemoryType},
         Boot, SystemTable,
     },
     Handle, Status,
@@ -70,11 +70,12 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
 
-    let (_system_table, memory_map) =
+    let (_system_table, mut memory_map) =
         system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
+    memory_map.sort();
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
-    let len = entries.len() * core::mem::size_of::<boot::MemoryDescriptor>();
+    let len = entries.len() * entry_size;
     let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
     boot_bridge.memory_map(memory_map_bytes, entry_size);
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
