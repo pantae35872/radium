@@ -122,7 +122,6 @@ endif
 $(BOOTLOADER_BIN):
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
-	sudo sbctl sign $(BUILD_DIR)/BOOTX64.EFI
 
 $(BAKER_BIN):
 	cd src/baker && cargo build --release
