@@ -16,6 +16,7 @@ macro choose($first:expr, $($rest:expr),+ $(,)?) {{
     )+
     next
 }}
+
 macro_rules! parser_ok {
     ($parser:expr, $input:expr, $context:expr, $expected:expr $(,)?) => {
         assert_eq!(
@@ -66,6 +67,10 @@ macro_rules! parser_err {
     };
 }
 
+#[allow(unused_imports)]
+pub(crate) use parser_err;
+#[allow(unused_imports)]
+pub(crate) use parser_ok;
 
 macro try_with_context($context: expr, $expr: expr) {
     match $expr {
