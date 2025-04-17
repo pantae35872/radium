@@ -14,8 +14,9 @@ else
   BUILD_MODE := debug
 endif
 
+CRATES := $(patsubst %/,%,$(wildcard src/*/))
 
-.PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg
+.PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg check $(CRATES)
 .DEFAULT_GOAL := debug
 
 NAME := radium
@@ -54,7 +55,7 @@ endif
 -include $(BOOTLOADER_DEPS)
 -include $(BAKER_DEPS)
 
-QEMU_FLAGS := -m 16G -bios OVMF.fd \
+QEMU_FLAGS := -m 1G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-no-reboot
@@ -121,6 +122,7 @@ endif
 $(BOOTLOADER_BIN):
 	cd src/bootloader && cargo build $(if $(RELEASE),--release,) 
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
+	sudo sbctl sign $(BUILD_DIR)/BOOTX64.EFI
 
 $(BAKER_BIN):
 	cd src/baker && cargo build --release
@@ -146,6 +148,17 @@ test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio ; \
 		status=$$?; \
 		if [ $$status -ne 33 ]; then exit $$status; else exit 0; fi
+
+check: $(CRATES)
+
+$(CRATES):
+	@cd $@ && \
+		if [ "$@" == "src/bakery" ]; then \
+			cargo check --message-format=json --no-default-features --features alloc ; \
+		else \
+			cargo check --message-format=json ;\
+			exit 0; \
+		fi
 
 test: 
 	cd src/kernel && cargo test --features testing $(RUN_ARGS)
