@@ -14,7 +14,6 @@
 #![feature(iter_array_chunks)]
 #![feature(decl_macro)]
 #![allow(internal_features)]
-#![allow(undefined_naked_function_abi)]
 
 #[macro_use]
 extern crate bitflags;
@@ -56,7 +55,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     memory::init(&boot_bridge);
     gdt::init_gdt();
     interrupt::init();
-    x86_64::instructions::interrupts::enable();
     graphics::init(&boot_bridge);
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);

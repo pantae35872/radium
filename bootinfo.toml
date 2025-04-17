@@ -6,6 +6,6 @@ screen_resolution = { width = 1920, height = 1080 }
 any_key_boot = false
 
 [kernel_config]
-font_size = 15
-log_level = 3
+font_size = 10 
+log_level = 1
 

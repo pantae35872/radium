@@ -2,19 +2,20 @@ use crate::gdt;
 use crate::hlt_loop;
 use crate::log;
 use crate::memory::memory_controller;
-use crate::memory::paging::EntryFlags;
 use crate::memory::virt_addr_alloc;
 use crate::println;
+use crate::serial_print;
+use apic::LocalApic;
+use apic::TimerDivide;
+use apic::TimerMode;
 use conquer_once::spin::OnceCell;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use x2apic::ioapic::IoApic;
-use x2apic::lapic::xapic_base;
-use x2apic::lapic::LocalApic;
-use x2apic::lapic::LocalApicBuilder;
 use x86_64::structures::idt::PageFaultErrorCode;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use x86_64::VirtAddr;
+
+mod apic;
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -69,7 +70,6 @@ lazy_static! {
     pub static ref LAPIC_VADDR: u64 = virt_addr_alloc(0x1000);
 }
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
-pub static IOAPICS: OnceCell<Mutex<IoApic>> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -91,30 +91,23 @@ impl InterruptIndex {
 
 pub fn init() {
     log!(Trace, "Initializing interrupts");
-    let apic_physical_address: u64 = unsafe { xapic_base() };
-    log!(Trace, "Apic base: {:#x}", apic_physical_address);
-    memory_controller().lock().phy_map(
-        LAPIC_SIZE,
-        apic_physical_address,
-        *LAPIC_VADDR,
-        EntryFlags::PRESENT
-            | EntryFlags::NO_CACHE
-            | EntryFlags::WRITABLE
-            | EntryFlags::WRITE_THROUGH,
-    );
+
+    IDT.load();
+    x86_64::instructions::interrupts::enable();
+
     LAPICS.init_once(|| {
-        let mut lapic = LocalApicBuilder::new()
-            .timer_vector(InterruptIndex::TimerVector.as_usize())
-            .error_vector(InterruptIndex::ErrorVector.as_usize())
-            .spurious_vector(InterruptIndex::SpuriousInterruptsVector.as_usize())
-            .set_xapic_base(*LAPIC_VADDR)
-            .build()
-            .expect("Could not create lapic");
-        unsafe {
-            lapic.enable();
-        }
-        Mutex::new(lapic)
+        let mut apic = LocalApic::new(
+            InterruptIndex::TimerVector,
+            InterruptIndex::ErrorVector,
+            InterruptIndex::SpuriousInterruptsVector,
+        );
+        memory_controller().lock().map_mmio(&mut apic);
+        Mutex::new(apic)
     });
+    let mut lapic = LAPICS.get().unwrap().lock();
+    lapic.enable();
+    lapic.start_timer(10_000_00, TimerDivide::Div16, TimerMode::Periodic);
+    lapic.enable_timer();
     //IOAPICS.init_once(|| unsafe {
     //    let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
     //    let mut entry = RedirectionTableEntry::default();
@@ -126,13 +119,10 @@ pub fn init() {
     //    ioapic.enable_irq(10);
     //    Mutex::new(ioapic)
     //});
-    IDT.load();
 }
 
 fn eoi() {
-    unsafe {
-        LAPICS.get().unwrap().lock().end_of_interrupt();
-    }
+    LAPICS.get().unwrap().lock().eoi();
 }
 
 extern "x86-interrupt" fn simd_floating_point_handler(_stack_frame: InterruptStackFrame) {}

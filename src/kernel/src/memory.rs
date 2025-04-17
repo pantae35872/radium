@@ -145,6 +145,20 @@ pub struct MemoryController<const ORDER: usize> {
     stack_allocator: StackAllocator,
 }
 
+pub trait MMIODevice {
+    fn start(&self) -> Option<u64>;
+    fn page_count(&self) -> Option<usize>;
+    fn start_frame(&self) -> Option<Frame> {
+        self.start().map(|e| Frame::containing_address(e))
+    }
+    fn end_frame(&self) -> Option<Frame> {
+        self.start()
+            .zip(self.page_count().map(|e| e as u64))
+            .map(|(e, c)| Frame::containing_address(e + c * PAGE_SIZE - 1))
+    }
+    fn mapped(&mut self, vaddr: Option<u64>);
+}
+
 impl<const ORDER: usize> MemoryController<ORDER> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
         self.stack_allocator
@@ -205,6 +219,44 @@ impl<const ORDER: usize> MemoryController<ORDER> {
             self.map_to(page, frame, flags);
         }
         return UnalignPhysicalMapGuard::new(phy_start);
+    }
+
+    pub fn map_mmio(&mut self, mmio_device: &mut impl MMIODevice) {
+        let (start_frame, end_frame, page_count) = match (
+            mmio_device.start_frame(),
+            mmio_device.end_frame(),
+            mmio_device.page_count(),
+        ) {
+            (Some(a), Some(b), Some(c)) => (a, b, c),
+            _ => {
+                mmio_device.mapped(None);
+                return;
+            }
+        };
+        let virt_start = virt_addr_alloc(page_count as u64);
+        let start_page = Page::containing_address(virt_start);
+        let end_page = Page::containing_address(virt_start + page_count as u64 * PAGE_SIZE - 1);
+        log!(
+            Trace,
+            "Mapping MMIO Device: [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}]",
+            start_page.start_address(),
+            end_page.start_address() + PAGE_SIZE,
+            start_frame.start_address(),
+            end_frame.start_address() + PAGE_SIZE,
+        );
+        for (page, frame) in Page::range_inclusive(start_page, end_page)
+            .zip(Frame::range_inclusive(start_frame, end_frame))
+        {
+            self.map_to(
+                page,
+                frame,
+                EntryFlags::PRESENT
+                    | EntryFlags::WRITABLE
+                    | EntryFlags::NO_CACHE
+                    | EntryFlags::NO_CACHE,
+            );
+        }
+        mmio_device.mapped(Some(virt_start));
     }
 
     pub fn ident_map(&mut self, size: u64, phy_start: u64, flags: EntryFlags) {

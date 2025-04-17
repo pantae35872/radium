@@ -17,7 +17,6 @@ x86_64 = "0.14.11"
 uart_16550 = "0.2.0"
 bitflags = "2.4.1"
 uguid = "2.2.0"
-x2apic = "0.4.3"
 bit_field = "0.10.2"
 hashbrown = "0.14.5"
 getrandom = "0.3.1"
@@ -25,6 +24,7 @@ bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
 raw-cpuid = "11.5.0"
+paste = "1.0.15"
 
 [dependencies.bakery]
 path = "../bakery"
