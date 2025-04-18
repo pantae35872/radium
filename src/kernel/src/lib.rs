@@ -41,7 +41,7 @@ use core::panic::PanicInfo;
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
-use driver::acpi;
+use driver::{acpi, pit};
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
@@ -57,6 +57,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     gdt::init_gdt();
     acpi::init(&boot_bridge);
     interrupt::init();
+    pit::init();
     graphics::init(&boot_bridge);
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);

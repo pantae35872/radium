@@ -10,11 +10,14 @@ extern crate lazy_static;
 extern crate radium;
 extern crate spin;
 
+use core::sync::atomic::Ordering;
+
 use bootbridge::RawBootBridge;
+use radium::interrupt::TIMER_COUNT;
 use radium::logger::LOGGER;
 use radium::task::executor::Executor;
 use radium::task::{AwaitType, Task};
-use radium::{print, println, serial_print};
+use radium::{println, serial_print};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -25,8 +28,14 @@ use radium::{print, println, serial_print};
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!!");
-    #[cfg(not(feature = "testing"))]
-    LOGGER.flush_all(&[|s| print!("{s}"), |s| serial_print!("{s}")]);
+    //#[cfg(not(feature = "testing"))]
+    LOGGER.flush_all(&[|s| serial_print!("{s}")]);
+    println!("Waiting for 5 secs");
+    let finish = TIMER_COUNT.load(Ordering::Relaxed) + 5000;
+    while TIMER_COUNT.load(Ordering::Relaxed) < finish {
+        x86_64::instructions::hlt();
+    }
+    println!("Finish that should be 5 secs");
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     let mut executor = Executor::new();
     executor.spawn(Task::new(

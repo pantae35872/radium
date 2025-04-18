@@ -1,4 +1,6 @@
-use crate::driver::acpi;
+use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::Ordering;
+
 use crate::driver::acpi::acpi;
 use crate::gdt;
 use crate::hlt_loop;
@@ -6,6 +8,7 @@ use crate::log;
 use crate::memory::memory_controller;
 use crate::println;
 use crate::serial_print;
+use crate::utils::port::Port8Bit;
 use apic::LocalApic;
 use apic::TimerDivide;
 use apic::TimerMode;
@@ -71,6 +74,7 @@ pub const LOCAL_APIC_OFFSET: u8 = 32;
 pub static ID_MAPS: [u8; 256] = [0; 256];
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
 pub static IO_APICS: OnceCell<Mutex<IoApicManager>> = OnceCell::uninit();
+pub static TIMER_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -93,6 +97,11 @@ impl InterruptIndex {
 
 pub fn init() {
     log!(Trace, "Initializing interrupts");
+
+    unsafe {
+        Port8Bit::new(0x21).write(0xff);
+        Port8Bit::new(0xA1).write(0xff);
+    }
 
     IDT.load();
     x86_64::instructions::interrupts::enable();
@@ -226,6 +235,7 @@ extern "x86-interrupt" fn apic_error(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn pit_timer(stack_frame: InterruptStackFrame) {
+    TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
     eoi();
 }
 
