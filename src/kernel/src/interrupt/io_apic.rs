@@ -32,7 +32,7 @@ struct IoApic {
     registers: Option<IoApicRegisters>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum DeliveryMode {
     Fixed = 0x0,
@@ -43,19 +43,20 @@ pub enum DeliveryMode {
     ExtINT = 0b111,
 }
 
+#[derive(Debug)]
 pub enum Destination {
     PhysicalDestination(usize),
     LogicalDestination,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum PinPolarity {
     ActiveHigh = 0,
     ActiveLow = 1,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 #[repr(u8)]
 pub enum TriggerMode {
     Edge = 0,
@@ -80,6 +81,7 @@ struct RawRedirectionTableEntry {
     high: IoApicRegister,
 }
 
+#[derive(Debug)]
 pub struct RedirectionTableEntry {
     vector: InterruptIndex,
     delivery_mode: DeliveryMode,
@@ -236,6 +238,7 @@ impl IoApic {
     fn redirect(&mut self, entry: RedirectionTableEntry, gsi: usize) {
         let reletive_gsi = gsi - self.gsi_base;
         let mut raw_entry = self.registers_mut().redirection_index(reletive_gsi);
+        log!(Trace, "Redirecting gsi {:?} to {:?}", gsi, entry);
         raw_entry.redirect(&entry);
         raw_entry.unmask();
     }
@@ -305,8 +308,8 @@ impl RawRedirectionTableEntry {
                 Destination::PhysicalDestination(_) => false,
             },
         );
-        low.set_bit(13, entry.pin_polarity as u8 == 0);
-        low.set_bit(15, entry.trigger_mode as u8 == 0);
+        low.set_bit(13, entry.pin_polarity as u8 != 0);
+        low.set_bit(15, entry.trigger_mode as u8 != 0);
         high.set_bits(
             24..32,
             match entry.destination {
