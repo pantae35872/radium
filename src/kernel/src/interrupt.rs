@@ -4,7 +4,7 @@ use crate::log;
 use crate::memory::memory_controller;
 use crate::memory::virt_addr_alloc;
 use crate::println;
-use crate::serial_print;
+use alloc::vec::Vec;
 use apic::LocalApic;
 use apic::TimerDivide;
 use apic::TimerMode;
@@ -65,10 +65,6 @@ lazy_static! {
 
 pub const LOCAL_APIC_OFFSET: u8 = 32;
 
-pub const LAPIC_SIZE: u64 = 0x1000;
-lazy_static! {
-    pub static ref LAPIC_VADDR: u64 = virt_addr_alloc(0x1000);
-}
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
