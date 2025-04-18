@@ -1,21 +1,24 @@
+use crate::driver::acpi;
+use crate::driver::acpi::acpi;
 use crate::gdt;
 use crate::hlt_loop;
 use crate::log;
 use crate::memory::memory_controller;
-use crate::memory::virt_addr_alloc;
 use crate::println;
-use alloc::vec::Vec;
+use crate::serial_print;
 use apic::LocalApic;
 use apic::TimerDivide;
 use apic::TimerMode;
 use conquer_once::spin::OnceCell;
+use io_apic::IoApicManager;
+use io_apic::RedirectionTableEntry;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_64::structures::idt::PageFaultErrorCode;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
-use x86_64::VirtAddr;
 
 mod apic;
+mod io_apic;
 
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
@@ -55,22 +58,25 @@ lazy_static! {
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
-        unsafe {
-            idt[InterruptIndex::TimerVector.as_usize()]
-                .set_handler_addr(VirtAddr::new(timer as u64));
-        }
+        idt[InterruptIndex::TimerVector.as_usize()].set_handler_fn(timer);
+        idt[InterruptIndex::PITVector.as_usize()].set_handler_fn(pit_timer);
+        idt[InterruptIndex::ErrorVector.as_usize()].set_handler_fn(apic_error);
+        idt[InterruptIndex::SpuriousInterruptsVector.as_usize()].set_handler_fn(spurious_interrupt);
         idt
     };
 }
 
 pub const LOCAL_APIC_OFFSET: u8 = 32;
 
+pub static ID_MAPS: [u8; 256] = [0; 256];
 pub static LAPICS: OnceCell<Mutex<LocalApic>> = OnceCell::uninit();
+pub static IO_APICS: OnceCell<Mutex<IoApicManager>> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {
     TimerVector = LOCAL_APIC_OFFSET,
+    PITVector,
     ErrorVector,
     SpuriousInterruptsVector = 0xFF,
 }
@@ -104,17 +110,20 @@ pub fn init() {
     lapic.enable();
     lapic.start_timer(10_000_00, TimerDivide::Div16, TimerMode::Periodic);
     lapic.enable_timer();
-    //IOAPICS.init_once(|| unsafe {
-    //    let mut ioapic = IoApic::new(IO_APIC_MMIO_VADDR);
-    //    let mut entry = RedirectionTableEntry::default();
-    //    entry.set_mode(IrqMode::Fixed);
-    //    entry.set_flags(IrqFlags::LEVEL_TRIGGERED);
-    //    entry.set_dest(LAPICS.get().unwrap().lock().id() as u8);
-    //    entry.set_vector(PIC_1_OFFSET + 14);
-    //    ioapic.set_table_entry(10, entry);
-    //    ioapic.enable_irq(10);
-    //    Mutex::new(ioapic)
-    //});
+    let apic_id = lapic.id();
+    drop(lapic);
+    let mut io_apic_manager = IoApicManager::new();
+    acpi()
+        .lock()
+        .io_apics(|addr, gsi_base| io_apic_manager.add_io_apic(addr, gsi_base));
+    acpi().lock().interrupt_overrides(|source_override| {
+        io_apic_manager.add_source_override(source_override)
+    });
+    io_apic_manager.redirect_legacy_irqs(
+        0,
+        RedirectionTableEntry::new(InterruptIndex::PITVector, apic_id),
+    );
+    IO_APICS.init_once(|| io_apic_manager.into());
 }
 
 fn eoi() {
@@ -207,6 +216,21 @@ extern "x86-interrupt" fn double_fault_handler(
 }
 
 extern "x86-interrupt" fn timer(stack_frame: InterruptStackFrame) {
+    eoi();
+}
+
+extern "x86-interrupt" fn apic_error(stack_frame: InterruptStackFrame) {
+    // TODO : Log the status code
+    log!(Error, "APIC ERROR: ");
+    eoi();
+}
+
+extern "x86-interrupt" fn pit_timer(stack_frame: InterruptStackFrame) {
+    eoi();
+}
+
+extern "x86-interrupt" fn spurious_interrupt(stack_frame: InterruptStackFrame) {
+    log!(Warning, "Spurious interrupt detected");
     eoi();
 }
 

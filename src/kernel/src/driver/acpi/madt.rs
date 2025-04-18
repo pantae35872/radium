@@ -1,3 +1,6 @@
+use bit_field::BitField;
+use c_enum::c_enum;
+
 use super::{AcpiSdt, AcpiSdtData};
 
 #[derive(Debug)]
@@ -102,6 +105,16 @@ impl AcpiSdt<Madt> {
     }
 }
 
+impl IoApic {
+    pub fn addr(&self) -> u64 {
+        self.ioapic_address as u64
+    }
+
+    pub fn gsi_base(&self) -> usize {
+        self.global_system_interrupt_base as usize
+    }
+}
+
 pub struct MadtInterruptsIter {
     address: u64,
     end_address: u64,
@@ -164,9 +177,53 @@ impl InterruptControllerStructure {
     }
 }
 
+impl IoApicInterruptSourceOverride {
+    pub fn irq_source(&self) -> u8 {
+        self.irq_source
+    }
+
+    pub fn gsi(&self) -> u32 {
+        self.global_system_interrupt
+    }
+
+    pub fn flags(&self) -> MpsINTIFlags {
+        self.flags
+    }
+}
+
 impl AcpiSdtData for Madt {
     fn signature() -> [u8; 4] {
         *b"APIC"
+    }
+}
+
+c_enum! {
+    #[derive(Clone, Copy)]
+    pub enum MpsINTITriggerMode: u8 {
+        Conforms = 0b00
+        EdgeTriggered = 0b01
+        LevelTriggered = 0b11
+    }
+
+    #[derive(Clone, Copy)]
+    pub enum MpsINTIPolarity: u8 {
+        Conforms = 0b00
+        ActiveHigh = 0b01
+        ActiveLow = 0b11
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct MpsINTIFlags(u16);
+
+impl MpsINTIFlags {
+    pub fn polarity(&self) -> MpsINTIPolarity {
+        MpsINTIPolarity(self.0.get_bits(0..2) as u8)
+    }
+
+    pub fn trigger_mode(&self) -> MpsINTITriggerMode {
+        MpsINTITriggerMode(self.0.get_bits(2..4) as u8)
     }
 }
 
@@ -175,16 +232,6 @@ bitflags! {
     struct LocalApicFlags: u32 {
         const OnlineCapable = 1 << 1;
         const Enabled = 1 << 0;
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct MpsINTIFlags: u16 {
-        const PolarityConforms = 0b00;
-        const PolarityActiveHigh = 0b01;
-        const PolarityActiveLow = 0b11;
-        const TriggerModeConforms = 0b00 << 2;
-        const TriggerModeEdge = 0b01 << 2;
-        const TriggerModeLevel = 0b11 << 2;
     }
 
     #[derive(Debug, Clone, Copy)]

@@ -1,10 +1,10 @@
 use core::fmt::Display;
 
-use alloc::fmt;
+use alloc::{fmt, vec::Vec};
 use aml::{AmlContext, AmlHandle};
 use bootbridge::BootBridge;
 use fadt::Fadt;
-use madt::Madt;
+use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
 use spin::{Mutex, Once};
@@ -17,20 +17,24 @@ use crate::{
 mod aml;
 mod dsdt;
 mod fadt;
-mod madt;
+pub mod madt;
 mod rsdt;
 mod sdp;
 
 static ACPI: Once<Mutex<Acpi>> = Once::new();
 
-pub fn init(boot_info: &BootBridge) {
+pub fn init(boot_bridge: &BootBridge) {
     log!(Trace, "Initializing acpi");
-    let acpi = unsafe { Acpi::new(boot_info.rsdp()) };
+    let acpi = unsafe { Acpi::new(boot_bridge.rsdp()) };
     ACPI.call_once(|| acpi.into());
 }
 
+pub fn acpi() -> &'static Mutex<Acpi> {
+    ACPI.get().expect("acpi is not initialized")
+}
+
 #[allow(unused)]
-struct Acpi {
+pub struct Acpi {
     xrsdp: Xrsdp,
     xrsdt: Xrsdt,
     aml: AmlContext,
@@ -48,25 +52,39 @@ impl Acpi {
     unsafe fn new(rsdp_addr: u64) -> Self {
         let xrsdp = unsafe { Xrsdp::new(rsdp_addr) };
         let xrsdt = unsafe { xrsdp.xrsdt() };
-        let madt = xrsdt.get::<Madt>().expect("No fadt acpi table found");
-        let fadt = xrsdt.get::<Fadt>().expect("No dsdt found in acpi table");
-        let dsdt = fadt.dsdt();
-        let aml = dsdt.aml();
-        log!(Trace, "Apic address madt: {:#x}", madt.apic_base());
-        log!(
-            Trace,
-            "DSDT AML. len: {}, first 32 bytes: {:x?}",
-            aml.len(),
-            &aml[0..32]
-        );
-        madt.iter().for_each(|e| log!(Debug, "{e:?}"));
-        let mut a = Self {
+        Self {
             xrsdp,
             xrsdt,
             aml: AmlContext::new(AcpiHandle),
-        };
-        a.aml_init();
-        a
+        }
+    }
+
+    pub fn io_apics(&self, mut callback: impl FnMut(u64, usize)) {
+        let madt = self
+            .xrsdt
+            .get::<Madt>()
+            .expect("MADT table is required for APIC initialization");
+        madt.iter()
+            .filter_map(|e| match e {
+                InterruptControllerStructure::IoApic(io_apic) => Some(io_apic),
+                _ => None,
+            })
+            .for_each(|io_apic| (callback)(io_apic.addr(), io_apic.gsi_base()));
+    }
+
+    pub fn interrupt_overrides(&self, mut callback: impl FnMut(&IoApicInterruptSourceOverride)) {
+        let madt = self
+            .xrsdt
+            .get::<Madt>()
+            .expect("MADT table is required for APIC initialization");
+        madt.iter()
+            .filter_map(|e| match e {
+                InterruptControllerStructure::IoApicInterruptSourceOverride(io_apic) => {
+                    Some(io_apic)
+                }
+                _ => None,
+            })
+            .for_each(|e| (callback)(e));
     }
 
     fn aml_init(&mut self) {
