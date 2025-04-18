@@ -32,7 +32,6 @@ pub mod memory;
 pub mod print;
 pub mod serial;
 pub mod task;
-pub mod userland;
 pub mod utils;
 
 use core::ffi::c_void;
@@ -58,7 +57,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     graphics::init(&boot_bridge);
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);
-    userland::init();
 }
 
 pub fn dwarf_data() -> &'static DwarfBaker<'static> {
