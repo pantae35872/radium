@@ -9,7 +9,7 @@ use crc::{
     Hasher64,
 };
 
-use crate::utils::circular_ring_buffer::lockfree::CircularRingBuffer;
+use crate::utils::circular_ring_buffer::{self, lockfree::CircularRingBuffer, singlethreaded};
 
 use super::{CallbackFormatter, LogLevel};
 
@@ -263,11 +263,82 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         Some((lost_bytes, header, data))
     }
 
+    fn read_orphan(
+        writer: &mut impl Write,
+        mut buffer: singlethreaded::CircularRingBuffer<
+            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
+            128,
+        >,
+    ) {
+        let mut orphan: singlethreaded::CircularRingBuffer<
+            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
+            128,
+        > = singlethreaded::CircularRingBuffer::new();
+        let mut have_orphan = false;
+
+        let (mut master, data) = loop {
+            let (header, data) = match buffer.read() {
+                Some(e) => e,
+                None => return,
+            };
+
+            if header.length == 0 {
+                continue;
+            }
+
+            break (header, data);
+        };
+
+        let _ = writer.write_fmt(format_args!(
+            "{}: {}",
+            master.level,
+            str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)],).unwrap()
+        ));
+
+        master.length -= master.length.min(DATA_SIZE_PER_CHUNK as u64);
+
+        loop {
+            if master.length == 0 {
+                break;
+            }
+
+            let (header, data) = match buffer.read() {
+                Some(e) => e,
+                None => break,
+            };
+
+            if header.length != 0 {
+                have_orphan = true;
+                orphan.write((header, data));
+                continue;
+            }
+
+            if header.id != master.id {
+                have_orphan = true;
+                orphan.write((header, data));
+                continue;
+            }
+
+            let _ = writer.write_str(
+                str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap(),
+            );
+
+            master.length -= master.length.min(DATA_SIZE_PER_CHUNK as u64);
+        }
+
+        if have_orphan {
+            Self::read_orphan(writer, buffer);
+        } else {
+            return;
+        }
+    }
+
     pub fn read(&self, mut writer: impl Write) -> Option<usize> {
         let mut lost_bytes = 0;
-        // TODO: change to a non atomic version of this
-        let orphan: CircularRingBuffer<(ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]), 128> =
-            CircularRingBuffer::new();
+        let mut orphan: singlethreaded::CircularRingBuffer<
+            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
+            128,
+        > = singlethreaded::CircularRingBuffer::new();
         let (mut lost_bytes, mut master_header, data) = loop {
             lost_bytes += CHUNK_SIZE;
 
@@ -319,6 +390,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
             master_header.length -= master_header.length.min(DATA_SIZE_PER_CHUNK as u64);
         }
 
+        Self::read_orphan(&mut writer, orphan);
+
         Some(lost_bytes)
     }
 }
@@ -329,7 +402,7 @@ mod tests {
 
     use crate::logger::LogLevel;
 
-    use super::StaticLog;
+    use super::{StaticLog, DATA_SIZE_PER_CHUNK};
 
     struct DummyFormatter<C: Fn(&str, usize)> {
         callback: C,
@@ -359,16 +432,67 @@ mod tests {
         }
     }
 
-    // TODO: MOREEEE TESTING
-
     #[test_case]
     fn simple_write() {
         let buffer = StaticLog::<64>::new();
         buffer.write_log(&format_args!("Hello World!!"), LogLevel::Trace);
         buffer.write_log(
-            &format_args!("1234567890abcdefghijklmnopqrstuvwxyz"),
+            &format_args!("1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156256509732480508934402278968101017787386018442744"),
             LogLevel::Trace,
         );
         buffer.write_log(&format_args!("1234567890qwertyuiopasdf"), LogLevel::Trace);
+
+        buffer.read(DummyFormatter::new(|s, c| match (s, c) {
+            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 1) => assert_eq!(s, ": "),
+            (s, 2) => assert_eq!(s, "Hello World!!"),
+            _ => unreachable!(),
+        }));
+
+        buffer.read(DummyFormatter::new(|s, c| match (s, c) {
+            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 1) => assert_eq!(s, ": "),
+            (s, 2) => assert_eq!(s, "1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156"),
+            (s, 3) => assert_eq!(s, "256509732480508934402278968101017787386018442744"),
+            _ => unreachable!(),
+        }));
+
+        buffer.read(DummyFormatter::new(|s, c| match (s, c) {
+            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 1) => assert_eq!(s, ": "),
+            (s, 2) => assert_eq!(s, "1234567890qwertyuiopasdf"),
+            _ => unreachable!(),
+        }));
+    }
+
+    #[test_case]
+    fn orphan_write() {
+        let buffer = StaticLog::<64>::new();
+        let first_id = buffer.write_master(
+            &[116; DATA_SIZE_PER_CHUNK],
+            DATA_SIZE_PER_CHUNK as u64 * 3,
+            LogLevel::Warning,
+        );
+        buffer.write_slaves(&[116; DATA_SIZE_PER_CHUNK], first_id);
+        let second_id = buffer.write_master(
+            &[117; DATA_SIZE_PER_CHUNK],
+            DATA_SIZE_PER_CHUNK as u64 * 2,
+            LogLevel::Info,
+        );
+        buffer.write_slaves(&[117; DATA_SIZE_PER_CHUNK], second_id);
+        buffer.write_slaves(&[116; DATA_SIZE_PER_CHUNK], first_id);
+
+        buffer.read(DummyFormatter::new(|s, c| match (s, c) {
+            (s, 0) => assert_eq!(s, "\x1b[93mWARNING\x1b[0m"),
+            (s, 1) => assert_eq!(s, ": "),
+            (s, 2) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 3) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 4) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 5) => assert_eq!(s, "\x1b[92mINFO\x1b[0m"),
+            (s, 6) => assert_eq!(s, ": "),
+            (s, 7) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 8) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
+            _ => unreachable!(),
+        }));
     }
 }
