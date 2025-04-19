@@ -32,7 +32,7 @@ KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
 BAKER_DEPS := $(wildcard $(BUILD_DIR)/release/baker.d)
 BOOTLOADER_DEPS := $(wildcard $(BUILD_DIR)/x86_64-unknown-uefi/$(BUILD_MODE)/*.d)
 
-KERNEL_OPTS_DEPS := src/kernel/src/boot/boot.asm
+KERNEL_OPTS_DEPS := src/kernel/src/boot/boot.asm src/kernel/src/boot/trampoline.asm
 
 # Binaries
 KERNEL_BIN := $(abspath $(BUILD_DIR)/x86_64/$(BUILD_MODE)/$(NAME))
@@ -98,7 +98,7 @@ dbg-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial stdio 
 
 dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio 
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio
 
 $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
 	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)

@@ -23,6 +23,7 @@ getrandom = "0.3.1"
 bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
+kernel_proc = { path = "../kernel_proc" }
 raw-cpuid = "11.5.0"
 paste = "1.0.15"
 

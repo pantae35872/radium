@@ -7,7 +7,6 @@ use crate::hlt_loop;
 use crate::log;
 use crate::memory::memory_controller;
 use crate::println;
-use crate::serial_print;
 use crate::utils::port::Port8Bit;
 use apic::LocalApic;
 use apic::TimerDivide;
@@ -15,16 +14,19 @@ use apic::TimerMode;
 use conquer_once::spin::OnceCell;
 use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
+use kernel_proc::{fill_idt, generate_interrupt_handlers};
 use lazy_static::lazy_static;
+use raw_cpuid::CpuId;
 use spin::Mutex;
 use x86_64::structures::idt::PageFaultErrorCode;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
+use x86_64::VirtAddr;
 
 mod apic;
 mod io_apic;
 
 lazy_static! {
-    static ref IDT: InterruptDescriptorTable = {
+    pub static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handle);
         idt.page_fault.set_handler_fn(page_fault_handler);
@@ -61,10 +63,7 @@ lazy_static! {
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
         }
-        idt[InterruptIndex::TimerVector.as_usize()].set_handler_fn(timer);
-        idt[InterruptIndex::PITVector.as_usize()].set_handler_fn(pit_timer);
-        idt[InterruptIndex::ErrorVector.as_usize()].set_handler_fn(apic_error);
-        idt[InterruptIndex::SpuriousInterruptsVector.as_usize()].set_handler_fn(spurious_interrupt);
+        fill_idt!();
         idt
     };
 }
@@ -82,6 +81,7 @@ pub enum InterruptIndex {
     TimerVector = LOCAL_APIC_OFFSET,
     PITVector,
     ErrorVector,
+    DriverCall = 0x90,
     SpuriousInterruptsVector = 0xFF,
 }
 
@@ -95,14 +95,21 @@ impl InterruptIndex {
     }
 }
 
-pub fn init() {
-    log!(Trace, "Initializing interrupts");
-
+fn disable_pic() {
     unsafe {
         Port8Bit::new(0x21).write(0xff);
         Port8Bit::new(0xA1).write(0xff);
     }
+}
 
+pub fn ap_init() {
+    disable_pic();
+    x86_64::instructions::interrupts::enable();
+}
+
+pub fn init() {
+    log!(Trace, "Initializing interrupts");
+    disable_pic();
     IDT.load();
     x86_64::instructions::interrupts::enable();
 
@@ -135,6 +142,57 @@ pub fn init() {
     IO_APICS.init_once(|| io_apic_manager.into());
 }
 
+#[derive(Debug)]
+#[repr(C)]
+struct FullInterruptStackFrame {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rbp: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub instruction_pointer: VirtAddr,
+    pub code_segment: u64,
+    pub cpu_flags: u64,
+    pub stack_pointer: VirtAddr,
+    pub stack_segment: u64,
+}
+
+#[no_mangle]
+extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
+    match idx {
+        idx if idx == InterruptIndex::TimerVector.as_u8() => {}
+        idx if idx == InterruptIndex::PITVector.as_u8() => {
+            TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+        idx if idx == InterruptIndex::ErrorVector.as_u8() => {
+            log!(Error, "Apic configuration error");
+        }
+        idx if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() => {
+            log!(Warning, "Spurious Interrupt Detected");
+        }
+        idx if idx == InterruptIndex::DriverCall.as_u8() => todo!(),
+        idx => {
+            log!(Error, "Unhandled external interrupts {}", idx);
+        }
+    }
+
+    if idx != InterruptIndex::DriverCall.as_u8() {
+        eoi();
+    }
+}
+
+generate_interrupt_handlers!();
+
 fn eoi() {
     LAPICS.get().unwrap().lock().eoi();
 }
@@ -149,7 +207,9 @@ extern "x86-interrupt" fn device_not_available_handler(_stack_frame: InterruptSt
 
 extern "x86-interrupt" fn hv_injection_handler(_stack_frame: InterruptStackFrame) {}
 
-extern "x86-interrupt" fn invalid_opcode_handler(_stack_frame: InterruptStackFrame) {}
+extern "x86-interrupt" fn invalid_opcode_handler(_stack_frame: InterruptStackFrame) {
+    panic!("Inavlid opcode");
+}
 
 extern "x86-interrupt" fn machine_check_handler(_stack_frame: InterruptStackFrame) -> ! {
     hlt_loop();
@@ -201,7 +261,9 @@ extern "x86-interrupt" fn vmm_communication_exception_handler(
 ) {
 }
 
-extern "x86-interrupt" fn tss_handler(_stack_frame: InterruptStackFrame, _error_code: u64) {}
+extern "x86-interrupt" fn tss_handler(_stack_frame: InterruptStackFrame, _error_code: u64) {
+    panic!("INVALID TSS");
+}
 
 extern "x86-interrupt" fn debug_handler(_stack_frame: InterruptStackFrame) {}
 
@@ -222,26 +284,6 @@ extern "x86-interrupt" fn double_fault_handler(
     _error_code: u64,
 ) -> ! {
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
-}
-
-extern "x86-interrupt" fn timer(stack_frame: InterruptStackFrame) {
-    eoi();
-}
-
-extern "x86-interrupt" fn apic_error(stack_frame: InterruptStackFrame) {
-    // TODO : Log the status code
-    log!(Error, "APIC ERROR: ");
-    eoi();
-}
-
-extern "x86-interrupt" fn pit_timer(stack_frame: InterruptStackFrame) {
-    TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
-    eoi();
-}
-
-extern "x86-interrupt" fn spurious_interrupt(stack_frame: InterruptStackFrame) {
-    log!(Warning, "Spurious interrupt detected");
-    eoi();
 }
 
 extern "x86-interrupt" fn page_fault_handler(

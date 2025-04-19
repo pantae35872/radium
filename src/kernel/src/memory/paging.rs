@@ -38,7 +38,7 @@ bitflags! {
         const DIRTY =           1 << 6;
         const HUGE_PAGE =       1 << 7;
         const GLOBAL =          1 << 8;
-        const OVERWRITEABLE =   1 << 62; // Custom flags. This flags mean the mapped address can be
+        const OVERWRITEABLE =   1 << 10; // Custom flags. This flags mean the mapped address can be
                                          // overwrite when mapping
         const NO_EXECUTE =      1 << 63;
     }

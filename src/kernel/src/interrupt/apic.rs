@@ -214,6 +214,23 @@ pub enum TimerDivide {
     Div1 = 0b1011,
 }
 
+#[repr(u8)]
+pub enum IpiDestMode {
+    Physical = 0,
+    Logical = 1,
+}
+
+#[derive(Debug)]
+#[repr(u8)]
+pub enum IpiDeliveryMode {
+    Fixed = 0b000,
+    LowestPriority = 0b001,
+    SystemManagement = 0b010,
+    NonMaskable = 0b100,
+    Init = 0b101,
+    StartUp = 0b110,
+}
+
 impl LocalApic {
     pub fn new(
         timer_vector: InterruptIndex,
@@ -298,6 +315,64 @@ impl LocalApic {
 
     fn software_enable(&mut self) {
         self.registers_mut().spurious_interrupt.write_bit(8, true);
+    }
+
+    fn write_icr(&mut self, value: u64) {
+        if self.x2apic {
+            log!(Debug, "Writing ICR: {:#x}", value);
+            unsafe { Msr::new(0x830).write(value) };
+        } else {
+            self.registers_mut()
+                .icr_high
+                .write((value as usize >> 32) & 0xFFFFFFFF);
+            log!(Trace, "Writing icr: {:#x}", value & 0xFFFFFFFF);
+            self.registers_mut()
+                .icr_low
+                .write(value as usize & 0xFFFFFFFF);
+            while self.registers().icr_low.read_bit(12) {
+                core::hint::spin_loop();
+            }
+        }
+    }
+
+    pub fn send_init_ipi(&mut self, destination: usize) {
+        let mut icr = 0u64;
+        if self.x2apic {
+            icr.set_bits(32..64, destination as u64);
+        } else {
+            icr.set_bits(56..64, destination as u64);
+        }
+        icr.set_bits(0..8, 0);
+        icr.set_bits(8..11, IpiDeliveryMode::Init as u8 as u64);
+        icr.set_bit(11, IpiDestMode::Physical as u8 == 1);
+        icr.set_bit(14, true);
+        icr.set_bit(15, true);
+        self.write_icr(icr);
+    }
+
+    // NOTE: There two version of this idk which one to use
+    // This one is from https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-3a-part-1-manual.pdf
+    // The Intel SDM volume 3A section 10.12.10.2
+    // Logical x2APIC ID = [(x2APIC ID[19:4] « 16) | (1 « x2APIC ID[3:0])]
+    // And this one is from https://courses.cs.washington.edu/courses/cse451/24sp/resources/x2apic.pdf
+    // Logical x2APIC ID = [(x2APIC ID[31:4] << 16) | (1 << x2APIC ID[3:0])]
+    fn id_to_logical_destination(id: usize) -> u64 {
+        ((id.get_bits(4..20) << 16) | (1 << id.get_bits(0..4))) as u64
+    }
+
+    pub fn send_startup_ipi(&mut self, destination: usize) {
+        let mut icr = 0u64;
+        if self.x2apic {
+            icr.set_bits(32..64, destination as u64);
+        } else {
+            icr.set_bits(56..64, destination as u64);
+        }
+        icr.set_bits(0..8, 0b1000);
+        icr.set_bits(8..11, IpiDeliveryMode::StartUp as u8 as u64);
+        icr.set_bit(11, IpiDestMode::Physical as u8 == 1);
+        icr.set_bit(14, true);
+        icr.set_bit(14, false);
+        self.write_icr(icr);
     }
 
     fn disable_local_interrupt_pins(&mut self) {

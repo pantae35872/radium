@@ -46,6 +46,10 @@ impl Gdt {
         unsafe { lgdt(&ptr) };
     }
 
+    pub fn limit(&self) -> u16 {
+        (self.table.len() * size_of::<u64>() - 1) as u16
+    }
+
     fn push(&mut self, value: u64) -> usize {
         if self.next_free < self.table.len() {
             let index = self.next_free;

@@ -32,6 +32,7 @@ pub mod memory;
 pub mod print;
 pub mod scheduler;
 pub mod serial;
+pub mod smp;
 pub mod task;
 pub mod utils;
 
@@ -58,6 +59,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     acpi::init(&boot_bridge);
     interrupt::init();
     pit::init();
+    smp::init(&boot_bridge);
     graphics::init(&boot_bridge);
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     driver::init(&boot_bridge);

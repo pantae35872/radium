@@ -2,10 +2,7 @@ use core::{marker::PhantomData, ptr};
 
 use bootbridge::{MemoryMap, MemoryType};
 use santa::Elf;
-use x86_64::{
-    instructions::interrupts,
-    VirtAddr,
-};
+use x86_64::{instructions::interrupts, VirtAddr};
 
 use crate::{
     dwarf_data,

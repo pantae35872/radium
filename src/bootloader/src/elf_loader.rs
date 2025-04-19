@@ -1,14 +1,18 @@
 use core::ptr::write_bytes;
 
-use santa::{Elf, ProgramType};
+use santa::{Elf, ProgramType, SectionHeaderFlags};
 use uefi::table::boot::{AllocateType, MemoryType};
-use uefi_services::system_table;
+use uefi_services::{println, system_table};
 
 pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
     let elf = Elf::new(buffer).expect("Failed to create elf file from the kernel file buffer");
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
     let mut mem_max: u64 = 0;
+
+    elf.program_header_iter()
+        .filter(|e| e.segment_type() == ProgramType::Load)
+        .for_each(|e| println!("{e:?}"));
 
     for header in elf.program_header_iter() {
         if header.segment_type() != ProgramType::Load {

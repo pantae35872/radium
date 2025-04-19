@@ -7,7 +7,7 @@ use paging::{early_map_kernel, table::RecurseLevel4, ActivePageTable, EntryFlags
 use spin::Mutex;
 use stack_allocator::{Stack, StackAllocator};
 use x86_64::{
-    registers::control::{Cr0Flags, EferFlags},
+    registers::control::{Cr0Flags, Cr3, EferFlags},
     PhysAddr, VirtAddr,
 };
 
@@ -82,7 +82,7 @@ pub fn init(bootbridge: &BootBridge) {
     );
 }
 
-fn enable_write_protect_bit() {
+pub fn enable_write_protect_bit() {
     use x86_64::registers::control::Cr0;
 
     unsafe {
@@ -92,7 +92,7 @@ fn enable_write_protect_bit() {
     }
 }
 
-fn enable_nxe_bit() {
+pub fn enable_nxe_bit() {
     use x86_64::registers::model_specific::Efer;
 
     unsafe {
@@ -311,6 +311,10 @@ impl<const ORDER: usize> MemoryController<ORDER> {
 
     pub fn allocated(&self) -> usize {
         self.allocator.allocated()
+    }
+
+    pub unsafe fn current_page_phys(&self) -> u64 {
+        Cr3::read().0.start_address().as_u64()
     }
 }
 

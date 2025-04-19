@@ -1,6 +1,9 @@
 use bootbridge::{MemoryMap, MemoryType};
 
-use crate::memory::{FrameAllocator, PAGE_SIZE};
+use crate::{
+    memory::{FrameAllocator, PAGE_SIZE},
+    serial_println,
+};
 
 pub struct LinearAllocator {
     orginal_start: usize,
@@ -12,12 +15,7 @@ impl LinearAllocator {
     pub unsafe fn new(memory_map: &MemoryMap<'static>) -> Self {
         let mut entry = memory_map
             .entries()
-            .filter(|e| {
-                matches!(
-                    e.ty,
-                    MemoryType::CONVENTIONAL | MemoryType::BOOT_SERVICES_CODE
-                )
-            })
+            .filter(|e| matches!(e.ty, MemoryType::CONVENTIONAL))
             .filter_map(|e| e.phys_align(PAGE_SIZE))
             .next()
             .expect("Failed to find free memory areas for the linear allocator");
@@ -59,6 +57,9 @@ impl FrameAllocator for LinearAllocator {
         }
         let addr = self.current;
         self.current += PAGE_SIZE as usize;
+        if self.current >= 0x7000 && self.current <= 0x8000 {
+            self.current = 0x9000;
+        }
         return Some(crate::memory::Frame::containing_address(addr as u64));
     }
     fn deallocate_frame(&mut self, _frame: crate::memory::Frame) {}
