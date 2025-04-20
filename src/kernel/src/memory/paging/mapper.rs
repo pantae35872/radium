@@ -1,8 +1,8 @@
 use x86_64::{PhysAddr, VirtAddr};
 
 use super::table::{
-    DirectP4Create, HierarchicalLevel, NextTableAddress,
-    RecurseP4Create, Table, TableLevel, TableLevel4,
+    DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
+    TableLevel4,
 };
 use super::{EntryFlags, Page, ENTRY_COUNT};
 use crate::memory::{Frame, FrameAllocator, PAGE_SIZE};
@@ -115,6 +115,7 @@ where
         );
         p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
     }
+
     pub fn map<A>(&mut self, page: Page, flags: EntryFlags, allocator: &mut A)
     where
         A: FrameAllocator,

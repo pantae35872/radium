@@ -1,4 +1,4 @@
-use spin::Once;
+use alloc::boxed::Box;
 use x86_64::registers::segmentation::{Segment, CS};
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::tss::TaskStateSegment;
@@ -6,14 +6,13 @@ use x86_64::{PrivilegeLevel, VirtAddr};
 
 use crate::log;
 use crate::memory::memory_controller;
+use crate::smp::local_initializer;
 
 pub struct Gdt {
     table: [u64; 8],
     next_free: usize,
 }
 
-static TSS: Once<TaskStateSegment> = Once::new();
-static GDT: Once<Gdt> = Once::new();
 impl Gdt {
     pub fn new() -> Gdt {
         Gdt {
@@ -63,31 +62,32 @@ impl Gdt {
 }
 
 pub fn init_gdt() {
-    log!(Trace, "Initializing gdt");
-    use x86_64::instructions::tables::load_tss;
-    let double_fault = memory_controller()
-        .lock()
-        .alloc_stack(1)
-        .expect("Could not allocate stack for double fault handle");
-    let tss = TSS.call_once(|| {
-        let mut tss = TaskStateSegment::new();
+    local_initializer().lock().register(|cpu, id| {
+        log!(Trace, "Initializing gdt for core: {id}");
+        use x86_64::instructions::tables::load_tss;
+        let double_fault = memory_controller()
+            .lock()
+            .alloc_stack(1)
+            .expect("Could not allocate stack for double fault handle");
+        log!(
+            Debug,
+            "Double fault handler stack, Top: {:#x}, Bottom: {:#x}",
+            double_fault.top(),
+            double_fault.bottom()
+        );
+        let tss = Box::leak(TaskStateSegment::new().into());
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
             VirtAddr::new(double_fault.top() as u64);
-        tss
+        let gdt = Box::leak(Gdt::new().into());
+        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+        let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));
+        gdt.load();
+        unsafe {
+            CS::set_reg(code_selector);
+            load_tss(tss_selector);
+        }
+        cpu.gdt(gdt);
     });
-    let mut code_selector = SegmentSelector(0);
-    let mut tss_selector = SegmentSelector(0);
-    let gdt = GDT.call_once(|| {
-        let mut gdt = Gdt::new();
-        code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-        tss_selector = gdt.add_entry(Descriptor::tss_segment(&tss));
-        gdt
-    });
-    gdt.load();
-    unsafe {
-        CS::set_reg(code_selector);
-        load_tss(tss_selector);
-    }
 }
 
 pub enum Descriptor {

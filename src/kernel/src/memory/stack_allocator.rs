@@ -1,23 +1,35 @@
+use x86_64::VirtAddr;
+
+use crate::{log, logger::LOGGER, serial_print, serial_println};
+
 use super::{
+    allocator::buddy_allocator::BuddyAllocator,
     paging::{table::RecurseLevel4, ActivePageTable, EntryFlags, Page, PageIter},
-    FrameAllocator, PAGE_SIZE,
+    Frame, FrameAllocator, PAGE_SIZE,
 };
 
 pub struct StackAllocator {
     range: PageIter,
+    original_range: PageIter,
 }
 
 impl StackAllocator {
     pub fn new(page_range: PageIter) -> StackAllocator {
-        StackAllocator { range: page_range }
+        StackAllocator {
+            range: page_range.clone(),
+            original_range: page_range,
+        }
     }
 }
 
 impl StackAllocator {
-    pub fn alloc_stack<FA: FrameAllocator>(
+    pub fn original_range(&self) -> PageIter {
+        self.original_range.clone()
+    }
+
+    pub fn alloc_stack(
         &mut self,
         active_table: &mut ActivePageTable<RecurseLevel4>,
-        frame_allocator: &mut FA,
         size_in_pages: usize,
     ) -> Option<Stack> {
         if size_in_pages == 0 {
@@ -35,12 +47,10 @@ impl StackAllocator {
         };
 
         match (guard_page, stack_start, stack_end) {
-            (Some(_), Some(start), Some(end)) => {
+            (Some(guard), Some(start), Some(end)) => {
                 self.range = range;
 
-                for page in Page::range_inclusive(start, end) {
-                    active_table.map(page, EntryFlags::WRITABLE, frame_allocator);
-                }
+                active_table.unmap_addr(guard);
 
                 let top_of_stack = end.start_address() + PAGE_SIZE;
                 Some(Stack::new(top_of_stack, start.start_address()))
@@ -57,7 +67,7 @@ pub struct Stack {
 }
 
 impl Stack {
-    fn new(top: u64, bottom: u64) -> Stack {
+    pub fn new(top: u64, bottom: u64) -> Stack {
         assert!(top > bottom);
         Stack { top, bottom }
     }

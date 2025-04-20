@@ -1,9 +1,11 @@
+use core::ptr::{NonNull, Unique};
 use core::{marker::PhantomData, ptr};
 
-use bootbridge::{MemoryMap, MemoryType};
+use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use santa::Elf;
 use x86_64::{instructions::interrupts, VirtAddr};
 
+use crate::memory::stack_allocator::StackAllocator;
 use crate::{
     dwarf_data,
     memory::{
@@ -16,22 +18,21 @@ use crate::{
     utils::NumberUtils,
 };
 
-use super::linear_allocator::LinearAllocator;
+use super::{area_allocator::AreaAllocator, linear_allocator::LinearAllocator};
 
 struct AllocationContext {
     linear_allocator: LinearAllocator,
     map_access: Option<InactivePageTable>,
 }
 
-pub struct BuddyAllocator<'a, const ORDER: usize> {
+pub struct BuddyAllocator<const ORDER: usize> {
     free_lists: [FreeList; ORDER],
     max_mem: usize,
     allocated: usize,
-    areas: Option<&'a MemoryMap<'a>>,
     allocation_context: AllocationContext,
 }
 
-impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
+impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
     fn allocate_frame(&mut self) -> Option<Frame> {
         return Some(Frame::containing_address(
             self.allocate(PAGE_SIZE as usize)? as u64,
@@ -46,11 +47,12 @@ impl<'a, const ORDER: usize> FrameAllocator for BuddyAllocator<'a, ORDER> {
     }
 }
 
-impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
-    pub unsafe fn new(
-        memory_map: &'a MemoryMap<'a>,
+impl<const ORDER: usize> BuddyAllocator<ORDER> {
+    pub unsafe fn new<'a>(
         elf: &Elf<'a>,
         mut allocator: LinearAllocator,
+        area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
+        stack_allocator: &StackAllocator,
     ) -> Self {
         let map_access = Some(create_mappings(
             |mapper, allocator| {
@@ -65,6 +67,13 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
                             allocator,
                         );
                     }
+                });
+                stack_allocator.original_range().for_each(|e| {
+                    mapper.identity_map(
+                        Frame::containing_address(e.start_address()),
+                        EntryFlags::WRITABLE,
+                        allocator,
+                    )
                 });
                 dwarf_data().map_self(|start, size| {
                     let start_frame = Frame::containing_address(start);
@@ -92,38 +101,23 @@ impl<'a, const ORDER: usize> BuddyAllocator<'a, ORDER> {
             free_lists: [const { FreeList::new() }; ORDER],
             max_mem: 0,
             allocated: 0,
-            areas: Some(memory_map),
             allocation_context: AllocationContext {
                 linear_allocator: allocator,
                 map_access,
             },
         };
 
-        init.add_memory_map_to_area();
+        init.add_entire_memory_to_area(area_allocator);
 
         return init;
     }
 
-    unsafe fn add_memory_map_to_area(&mut self) {
-        let areas = match self.areas {
-            Some(areas) => areas,
-            None => return,
-        };
-        for area in areas
-            .entries()
-            .filter(|e| matches!(e.ty, MemoryType::CONVENTIONAL))
-        {
-            if area.phys_start == 0
-                || area.phys_start
-                    == self.allocation_context.linear_allocator.original_start() as u64
-            {
-                continue;
-            }
-
-            self.add_area(
-                area.phys_start as usize,
-                area.page_count as usize * PAGE_SIZE as usize,
-            );
+    unsafe fn add_entire_memory_to_area<'a>(
+        &mut self,
+        mut area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
+    ) {
+        while let Some((start, size)) = area_allocator.allocate_entire_buffer() {
+            self.add_area(start, size);
         }
     }
 
@@ -369,4 +363,4 @@ impl<'a, 'c> Iterator for FreeListIterMut<'a, 'c> {
     }
 }
 
-unsafe impl<const ORDER: usize> Send for BuddyAllocator<'_, ORDER> {}
+unsafe impl<const ORDER: usize> Send for BuddyAllocator<ORDER> {}

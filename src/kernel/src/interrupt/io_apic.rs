@@ -125,7 +125,7 @@ impl IoApicManager {
     pub fn add_io_apic(&mut self, base: u64, gsi_base: usize) {
         let mut io_apic = IoApic::new(base, gsi_base);
         log!(Debug, "Found IoApic at: {:#x}", base);
-        memory_controller().lock().map_mmio(&mut io_apic);
+        memory_controller().lock().map_mmio(&mut io_apic, false);
         let io_apic_max = io_apic.registers().max_redirection_entry();
         let io_apic_gsi_ranges = gsi_base..io_apic_max;
         log!(

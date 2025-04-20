@@ -1,44 +1,49 @@
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 
+use alloc::{boxed::Box, vec::Vec};
 use bootbridge::BootBridge;
-use spin::Once;
+use conquer_once::spin::OnceCell;
+use raw_cpuid::CpuId;
+use spin::Mutex;
 use x86_64::{
-    instructions::{self, interrupts},
-    registers::{
-        control::Cr3,
-        segmentation::{Segment, CS},
-    },
-    structures::gdt::SegmentSelector,
+    instructions::{self},
+    registers::model_specific::Msr,
+    structures::idt::InterruptDescriptorTable,
 };
 
 use crate::{
-    gdt::{Descriptor, Gdt},
+    driver::acpi::acpi,
+    gdt::Gdt,
     hlt_loop,
-    interrupt::{self, IDT, LAPICS, TIMER_COUNT},
+    interrupt::{apic::LocalApic, TIMER_COUNT},
     log,
     memory::{
         allocator::linear_allocator::LinearAllocator,
-        enable_nxe_bit, enable_write_protect_bit, memory_controller,
+        enable_write_protect_bit, memory_controller,
         paging::{
             table::{DirectLevel4, Table},
             ActivePageTable, EntryFlags,
         },
         Frame, FrameAllocator, PAGE_SIZE,
     },
-    serial_print, serial_println,
 };
 
-extern "C" {
-    pub static __trampoline_start: u8;
-    pub static __trampoline_end: u8;
-    pub static early_alloc: u8;
-}
+pub const MAX_CPU: usize = 64;
 
-fn clunky_wait(ms: usize) {
-    let end_time = TIMER_COUNT.load(Ordering::Relaxed) + ms;
-    while TIMER_COUNT.load(Ordering::Relaxed) < end_time {
-        instructions::hlt();
-    }
+static LOCAL_INITIALIZER: Mutex<LocalInitializer> = Mutex::new(LocalInitializer::new());
+static APIC_ID_TO_CPU_ID: OnceCell<Mutex<[Option<usize>; MAX_CPU]>> = OnceCell::uninit();
+static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
+
+const IA32_KERNEL_GS_BASE: u32 = 0xc0000102;
+const IA32_GS_BASE: u32 = 0xc0000101;
+
+pub const TRAMPOLINE_START: usize = 0x7000;
+pub const TRAMPOLINE_END: usize = 0x9000;
+
+extern "C" {
+    static __trampoline_start: u8;
+    static __trampoline_end: u8;
+    static early_alloc: u8;
 }
 
 #[repr(C)]
@@ -50,112 +55,326 @@ struct SmpInitializationData {
     stack_bottom: u64,
 }
 
-pub fn prepare_memory(boot_bridge: &BootBridge) {
-    let trampoline_size = unsafe {
-        &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
-    };
+struct ApInitializer {
+    ap_bootstrap_page_table: Frame,
+}
 
-    unsafe {
-        core::ptr::write_bytes(&early_alloc as *const u8 as *mut u8, 0, 4096 * 64);
+impl ApInitializer {
+    fn new(boot_bridge: &BootBridge) -> Self {
+        let trampoline_size = unsafe {
+            &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
+        };
+
+        unsafe {
+            core::ptr::write_bytes(&early_alloc as *const u8 as *mut u8, 0, 4096 * 64);
+        }
+
+        // We reuse the early boot memory we used to bootstrap this core
+        // We know it's below 4GB range because our kernel is at 1M
+        // so it's fits in 32-bit register
+        let mut boot_alloc =
+            unsafe { LinearAllocator::new(&early_alloc as *const u8 as usize, 4096 * 64) };
+
+        let p4_table = boot_alloc
+            .allocate_frame()
+            .expect("Failed to allocate frame for temporary early boot");
+        let mut bootstrap_table = unsafe {
+            ActivePageTable::<DirectLevel4>::new_custom(
+                p4_table.start_address().as_u64() as *mut Table<DirectLevel4>
+            )
+        };
+
+        boot_bridge.kernel_elf().map_self(|start, end, flags| {
+            bootstrap_table.identity_map_range(
+                start.into(),
+                end.into(),
+                EntryFlags::from_elf_program_flags(&flags),
+                &mut boot_alloc,
+            )
+        });
+
+        bootstrap_table.identity_map_range(
+            Frame::containing_address(0x7000),
+            Frame::containing_address(0x8000),
+            EntryFlags::WRITABLE | EntryFlags::PRESENT,
+            &mut boot_alloc,
+        );
+
+        memory_controller().lock().ident_map(
+            trampoline_size as u64 + PAGE_SIZE,
+            0x7000,
+            EntryFlags::WRITABLE | EntryFlags::PRESENT,
+        );
+        unsafe {
+            core::ptr::copy(
+                &__trampoline_start as *const u8,
+                0x8000 as *mut u8,
+                trampoline_size,
+            )
+        };
+
+        Self {
+            ap_bootstrap_page_table: p4_table,
+        }
     }
 
-    // We reuse the early boot memory we used to bootstrap this core
-    // We know it's below 4GB range because our kernel is at 1M
-    let mut boot_alloc =
-        unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
+    fn prepare_stack_and_info(&self) {
+        let stack = memory_controller()
+            .lock()
+            .alloc_stack(8)
+            .expect("Failed to allocate stack for ap");
 
-    let p4_table = boot_alloc
-        .allocate_frame()
-        .expect("Failed to allocate frame for temporary early boot");
-    let mut bootstrap_table = unsafe {
-        ActivePageTable::<DirectLevel4>::new_custom(
-            p4_table.start_address().as_u64() as *mut Table<DirectLevel4>
-        )
-    };
+        let data = SmpInitializationData {
+            page_table: self.ap_bootstrap_page_table.start_address().as_u64() as u32,
+            _padding: 0,
+            real_page_table: unsafe { memory_controller().lock().current_page_phys() },
+            stack: stack.top(),
+            stack_bottom: stack.bottom(),
+        };
 
-    boot_bridge.kernel_elf().map_self(|start, end, flags| {
-        bootstrap_table.identity_map_range(
-            start.into(),
-            end.into(),
-            EntryFlags::from_elf_program_flags(&flags),
-            &mut boot_alloc,
-        )
-    });
-
-    bootstrap_table.identity_map_range(
-        Frame::containing_address(0x7000),
-        Frame::containing_address(0x8000),
-        EntryFlags::WRITABLE | EntryFlags::PRESENT,
-        &mut boot_alloc,
-    );
-
-    memory_controller().lock().ident_map(
-        trampoline_size as u64 + PAGE_SIZE,
-        0x7000,
-        EntryFlags::WRITABLE | EntryFlags::PRESENT,
-    );
-    unsafe {
-        core::ptr::copy(
-            &__trampoline_start as *const u8,
-            0x8000 as *mut u8,
-            trampoline_size,
-        )
-    };
-
-    let stack = memory_controller()
-        .lock()
-        .alloc_stack(8)
-        .expect("Failed to allocate stack for ap");
-
-    let data = SmpInitializationData {
-        page_table: p4_table.start_address().as_u64() as u32,
-        _padding: 0,
-        real_page_table: Cr3::read().0.start_address().as_u64(),
-        stack: stack.top(),
-        stack_bottom: stack.bottom(),
-    };
-
-    log!(Info, "AP Bootstrap page table at {:#x}", data.page_table);
-    log!(Info, "AP Bootstrap stack at {:#x}", data.stack);
-
-    unsafe {
-        core::ptr::copy(
-            &data as *const SmpInitializationData,
-            0x7000 as *mut SmpInitializationData,
-            1,
+        log!(Info, "AP Bootstrap page table at {:#x}", data.page_table);
+        log!(
+            Info,
+            "AP Bootstrap stack, Top: {:#x}, Bottom: {:#x}",
+            data.stack,
+            data.stack_bottom
         );
+
+        unsafe {
+            core::ptr::copy(
+                &data as *const SmpInitializationData,
+                0x7000 as *mut SmpInitializationData,
+                1,
+            );
+        }
+    }
+
+    fn boot_ap(&self, apic_id: usize) {
+        self.prepare_stack_and_info();
+        assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
+
+        cpu_local().lapic().send_init_ipi(apic_id);
+
+        clunky_wait(10);
+        for _ in 0..2 {
+            cpu_local().lapic().send_startup_ipi(apic_id);
+            clunky_wait(1);
+        }
+
+        while !AP_INITIALIZED.load(Ordering::SeqCst) {
+            clunky_wait(1);
+        }
+        AP_INITIALIZED.store(false, Ordering::SeqCst);
     }
 }
 
-static GDT: Once<Gdt> = Once::new();
+static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[no_mangle]
 pub extern "C" fn ap_startup() -> ! {
     enable_write_protect_bit();
-    let mut code_selector = SegmentSelector(0);
-    let gdt = GDT.call_once(|| {
-        let mut gdt = Gdt::new();
-        code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-        gdt
-    });
-    gdt.load();
-    unsafe {
-        CS::set_reg(code_selector);
-    }
 
-    log!(Info, "Hello from cpu 1");
+    local_initializer().lock().initialize_current();
+    AP_INITIALIZED.store(true, Ordering::SeqCst);
 
     hlt_loop();
 }
 
-pub fn init(boot_bridge: &BootBridge) {
-    prepare_memory(boot_bridge);
+pub struct LocalInitializer {
+    local_initializers: Vec<Box<dyn Fn(&mut CpuLocalBuilder, usize) + Send + Sync>>,
+    after_bsps: Vec<Box<dyn Fn(&CpuLocal) + Send + Sync>>,
+}
 
-    interrupts::without_interrupts(|| LAPICS.get().unwrap().lock().send_init_ipi(1));
+pub struct CpuLocal {
+    cpu_id: usize,
+    apic_id: usize,
+    lapic: LocalApic,
+    idt: &'static InterruptDescriptorTable,
+    gdt: &'static Gdt,
+}
 
-    clunky_wait(10);
-    for _ in 0..2 {
-        interrupts::without_interrupts(|| LAPICS.get().unwrap().lock().send_startup_ipi(1));
-        clunky_wait(1);
+pub struct CpuLocalBuilder {
+    lapic: Option<LocalApic>,
+    gdt: Option<&'static Gdt>,
+    idt: Option<&'static InterruptDescriptorTable>,
+}
+
+impl CpuLocalBuilder {
+    pub const fn new() -> Self {
+        Self {
+            lapic: None,
+            idt: None,
+            gdt: None,
+        }
     }
+
+    pub fn lapic(&mut self, apic: LocalApic) -> &mut Self {
+        self.lapic = Some(apic);
+        self
+    }
+
+    pub fn idt(&mut self, idt: &'static InterruptDescriptorTable) -> &mut Self {
+        self.idt = Some(idt);
+        self
+    }
+
+    pub fn gdt(&mut self, gdt: &'static Gdt) -> &mut Self {
+        self.gdt = Some(gdt);
+        self
+    }
+
+    fn build(self) -> Option<&'static CpuLocal> {
+        let lapic = self.lapic?;
+        Some(Box::<CpuLocal>::leak(
+            CpuLocal {
+                cpu_id: apic_id_to_cpu_id(lapic.id()),
+                idt: self.idt?,
+                apic_id: lapic.id(),
+                lapic,
+                gdt: self.gdt?,
+            }
+            .into(),
+        ))
+    }
+}
+
+impl LocalInitializer {
+    pub const fn new() -> Self {
+        Self {
+            local_initializers: Vec::new(),
+            after_bsps: Vec::new(),
+        }
+    }
+
+    pub fn after_bsp(&mut self, initializer: impl Fn(&CpuLocal) + Send + Sync + 'static) {
+        self.after_bsps.push(Box::new(initializer));
+    }
+
+    pub fn register(
+        &mut self,
+        initializer: impl Fn(&mut CpuLocalBuilder, usize) + Send + Sync + 'static,
+    ) {
+        self.local_initializers.push(Box::new(initializer));
+    }
+
+    fn initialize_current(&mut self) {
+        let mut cpu_local_builder = CpuLocalBuilder::new();
+        let id = apic_id_to_cpu_id(apic_id());
+        log!(Debug, "Initializing cpu: {id}");
+
+        self.local_initializers
+            .iter()
+            .for_each(|e| e(&mut cpu_local_builder, id));
+
+        init_local(cpu_local_builder, id);
+
+        if BSP_CPU_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
+            log!(Debug, "initialization bsp, bsp processor id: {id}");
+            self.after_bsps.iter().for_each(|i| i(cpu_local()));
+        }
+    }
+}
+
+impl CpuLocal {
+    pub fn apic_id(&self) -> usize {
+        self.apic_id
+    }
+
+    pub fn cpu_id(&self) -> usize {
+        self.cpu_id
+    }
+
+    pub fn lapic(&mut self) -> &mut LocalApic {
+        &mut self.lapic
+    }
+}
+
+fn apic_id() -> usize {
+    CpuId::new()
+        .get_feature_info()
+        .unwrap()
+        .initial_local_apic_id() as usize
+}
+
+fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
+    let cpu_local = match builder.build() {
+        Some(e) => e,
+        None => {
+            log!(Error, "Failed to initialize CPU: {cpu_id}");
+            return;
+        }
+    };
+    log!(
+        Trace,
+        "CPU {cpu_id} Local address at: {:#x}",
+        cpu_local as *const CpuLocal as u64
+    );
+    let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
+    let mut msr = Msr::new(IA32_KERNEL_GS_BASE);
+    unsafe { msr.write(ptr as *const u64 as u64) };
+    let mut msr = Msr::new(IA32_GS_BASE);
+    unsafe { msr.write(ptr as *const u64 as u64) };
+}
+
+fn apic_id_to_cpu_id(apic_id: usize) -> usize {
+    APIC_ID_TO_CPU_ID
+        .get()
+        .expect("APIC ID to cpu ID mapping must be initialized core initialization")
+        .lock()
+        .get(apic_id)
+        .expect("apic id out of range")
+        .expect("apic id is not mapped in the mapping") as usize
+}
+
+#[inline(always)]
+pub fn cpu_local() -> &'static mut CpuLocal {
+    let ptr: *mut CpuLocal;
+    unsafe {
+        core::arch::asm!("mov {}, gs:0", out(reg) ptr);
+    }
+    unsafe { &mut *ptr }
+}
+
+fn clunky_wait(ms: usize) {
+    let end_time = TIMER_COUNT.load(Ordering::Relaxed) + ms;
+    while TIMER_COUNT.load(Ordering::Relaxed) < end_time {
+        instructions::hlt();
+    }
+}
+
+pub fn local_initializer() -> &'static Mutex<LocalInitializer> {
+    &LOCAL_INITIALIZER
+}
+
+pub fn init() {
+    APIC_ID_TO_CPU_ID.init_once(|| {
+        let mut id = [None; MAX_CPU];
+        let mut current_id = 0;
+        let bsp_apic_id = apic_id();
+        acpi().lock().processors(|apic_id| {
+            log!(
+                Info,
+                "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}"
+            );
+            if apic_id == bsp_apic_id {
+                BSP_CPU_ID.init_once(|| current_id);
+            }
+            id[apic_id] = Some(current_id);
+            current_id += 1;
+        });
+        id.into()
+    });
+
+    local_initializer().lock().initialize_current();
+}
+
+pub fn init_aps(boot_bridge: &BootBridge) {
+    let ap_initializer = ApInitializer::new(boot_bridge);
+
+    acpi().lock().processors(|apic_id| {
+        if apic_id == cpu_local().apic_id() {
+            return;
+        }
+        ap_initializer.boot_ap(apic_id);
+    });
 }

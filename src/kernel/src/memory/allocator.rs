@@ -4,6 +4,7 @@ use crate::memory::virt_addr_alloc;
 use alloc::alloc::*;
 use lazy_static::lazy_static;
 
+pub mod area_allocator;
 pub mod buddy_allocator;
 pub mod linear_allocator;
 pub mod linked_list;

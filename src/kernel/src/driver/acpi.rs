@@ -87,6 +87,23 @@ impl Acpi {
             .for_each(|e| (callback)(e));
     }
 
+    /// Call the callback with a list of apic or x2apic id
+    pub fn processors(&self, mut callback: impl FnMut(usize)) {
+        let madt = self
+            .xrsdt
+            .get::<Madt>()
+            .expect("MADT table is required for Processors initialization");
+        madt.iter()
+            .filter_map(|e| match e {
+                InterruptControllerStructure::LocalApic(proccesor) => {
+                    Some(proccesor.apic_id() as usize)
+                }
+                InterruptControllerStructure::LocalX2Apic(processor) => Some(processor.apic_id()),
+                _ => None,
+            })
+            .for_each(|e| (callback)(e));
+    }
+
     fn aml_init(&mut self) {
         let fadt = self
             .xrsdt

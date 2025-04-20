@@ -21,19 +21,19 @@ struct InterruptControllerStructureHeader {
 #[derive(Debug)]
 #[allow(unused)]
 pub enum InterruptControllerStructure {
-    LocalApic(&'static LocalApic),
+    LocalApic(&'static MadtLocalApic),
     IoApic(&'static IoApic),
     IoApicInterruptSourceOverride(&'static IoApicInterruptSourceOverride),
     IoApicNmi(&'static IoApicNmi),
     LocalApicNmi(&'static LocalApicNmi),
     LocalApicAddressOverride(&'static LocalApicAddressOverride),
-    LocalX2Apic(&'static LocalX2Apic),
+    LocalX2Apic(&'static MadtLocalX2Apic),
     Unknown(u8),
 }
 
 #[derive(Debug)]
 #[repr(C, packed)]
-pub struct LocalApic {
+pub struct MadtLocalApic {
     processor_id: u8,
     apic_id: u8,
     flags: LocalApicFlags,
@@ -83,7 +83,7 @@ pub struct LocalApicAddressOverride {
 
 #[derive(Debug)]
 #[repr(C, packed)]
-pub struct LocalX2Apic {
+pub struct MadtLocalX2Apic {
     _reserved: [u8; 2],
     local_x2apic_id: u32,
     flags: u32,
@@ -120,6 +120,12 @@ pub struct MadtInterruptsIter {
     end_address: u64,
 }
 
+impl MadtLocalX2Apic {
+    pub fn apic_id(&self) -> usize {
+        self.local_x2apic_id as usize
+    }
+}
+
 impl MadtInterruptsIter {
     unsafe fn new(address: u64, length: u64) -> Self {
         Self {
@@ -143,6 +149,12 @@ impl Iterator for MadtInterruptsIter {
         Some(unsafe {
             InterruptControllerStructure::from_header_and_pointer(header.clone(), before_addr)
         })
+    }
+}
+
+impl MadtLocalApic {
+    pub fn apic_id(&self) -> u8 {
+        self.apic_id
     }
 }
 

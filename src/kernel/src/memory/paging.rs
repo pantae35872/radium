@@ -18,11 +18,12 @@ use x86_64::structures::paging::PhysFrame;
 use x86_64::{PhysAddr, VirtAddr};
 
 use super::allocator::linear_allocator::LinearAllocator;
+use super::stack_allocator::{Stack, StackAllocator};
 
 mod entry;
 mod mapper;
 pub mod table;
-mod temporary_page;
+pub mod temporary_page;
 
 const ENTRY_COUNT: u64 = 512;
 
@@ -387,13 +388,17 @@ impl InactivePageTable {
     }
 }
 
-pub unsafe fn early_map_kernel<A>(
+extern "C" {
+    pub static early_alloc: u8;
+}
+
+pub unsafe fn early_map_kernel(
     bootbridge: &BootBridge,
-    allocator: &mut A,
-    linear_allocator: &LinearAllocator,
-) where
-    A: FrameAllocator,
-{
+    buddy_allocator_allocator: &LinearAllocator,
+) {
+    let mut allocator =
+        unsafe { LinearAllocator::new(&early_alloc as *const u8 as usize, 4096 * 64) };
+
     let p4_table = allocator
         .allocate_frame()
         .expect("Failed to allocate frame for temporary early boot");
@@ -405,7 +410,7 @@ pub unsafe fn early_map_kernel<A>(
             start.into(),
             end.into(),
             EntryFlags::from_elf_program_flags(&flags),
-            allocator,
+            &mut allocator,
         )
     });
 
@@ -417,7 +422,7 @@ pub unsafe fn early_map_kernel<A>(
             active_table.identity_map(
                 frame,
                 EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::OVERWRITEABLE,
-                allocator,
+                &mut allocator,
             );
         }
     };
@@ -431,12 +436,10 @@ pub unsafe fn early_map_kernel<A>(
 
     // Map the allocator memories (used by the next boot strap process)
     active_table.identity_map_range(
-        (linear_allocator.original_start() as u64).into(),
-        Frame::containing_address(
-            linear_allocator.original_start() as u64 + linear_allocator.size() as u64 - 1,
-        ),
+        (buddy_allocator_allocator.original_start() as u64).into(),
+        Frame::containing_address(buddy_allocator_allocator.size() as u64),
         EntryFlags::PRESENT | EntryFlags::WRITABLE,
-        allocator,
+        &mut allocator,
     );
 
     // Unsafely change the cr3 bc we have no recursive map on the uefi table
@@ -470,6 +473,7 @@ where
 
 pub fn remap_the_kernel<A>(
     allocator: &mut A,
+    stack_allocator: &StackAllocator,
     bootbridge: &BootBridge,
 ) -> ActivePageTable<RecurseLevel4>
 where
@@ -488,6 +492,14 @@ where
                 start.into(),
                 end.into(),
                 EntryFlags::from_elf_program_flags(&flags),
+                allocator,
+            )
+        });
+
+        stack_allocator.original_range().for_each(|e| {
+            mapper.identity_map(
+                Frame::containing_address(e.start_address()),
+                EntryFlags::WRITABLE,
                 allocator,
             )
         });

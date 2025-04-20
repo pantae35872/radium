@@ -1,6 +1,9 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use allocator::{buddy_allocator::BuddyAllocator, linear_allocator::LinearAllocator};
+use allocator::{
+    area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator,
+    linear_allocator::LinearAllocator,
+};
 use bootbridge::{BootBridge, MemoryType};
 use conquer_once::spin::OnceCell;
 use paging::{early_map_kernel, table::RecurseLevel4, ActivePageTable, EntryFlags, Page};
@@ -22,47 +25,12 @@ pub mod stack_allocator;
 pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ALIGN: usize = 8192;
 
-extern "C" {
-    pub static early_alloc: u8;
-}
-
 pub fn init(bootbridge: &BootBridge) {
-    let linear_allocator = unsafe { LinearAllocator::new(bootbridge.memory_map()) };
-    let mut early_boot_alloc =
-        unsafe { LinearAllocator::new_custom(&early_alloc as *const u8 as usize, 4096 * 64) };
     enable_nxe_bit();
     enable_write_protect_bit();
-    log!(Info, "UEFI memory map usable:");
-    bootbridge
-        .memory_map()
-        .entries()
-        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-        .for_each(|descriptor| {
-            log!(
-                Info,
-                "Range: Phys: [{:#016x}-{:#016x}]",
-                descriptor.phys_start,
-                descriptor.phys_start + descriptor.page_count * PAGE_SIZE,
-            );
-        });
-    unsafe {
-        early_map_kernel(bootbridge, &mut early_boot_alloc, &linear_allocator);
-    }
-    let mut allocator = unsafe {
-        BuddyAllocator::new(
-            bootbridge.memory_map(),
-            bootbridge.kernel_elf(),
-            linear_allocator,
-        )
-    };
-    let active_table = remap_the_kernel(&mut allocator, bootbridge);
 
-    let stack_allocator = {
-        let stack_alloc_start = Page::containing_address(virt_addr_alloc(409600));
-        let stack_alloc_end = stack_alloc_start + 100;
-        let stack_alloc_range = Page::range_inclusive(stack_alloc_start, stack_alloc_end);
-        StackAllocator::new(stack_alloc_range)
-    };
+    let (mut allocator, stack_allocator) = init_allocator(bootbridge);
+    let active_table = remap_the_kernel(&mut allocator, &stack_allocator, bootbridge);
 
     MEMORY_CONTROLLER.init_once(|| {
         MemoryController {
@@ -80,6 +48,61 @@ pub fn init(bootbridge: &BootBridge) {
         "Usable memory: {:.2} GB",
         memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
     );
+}
+
+fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackAllocator) {
+    let mut area_allocator = AreaAllocator::new(bootbridge.memory_map());
+    let buddy_allocator_allocator = area_allocator
+        .linear_allocator(128)
+        .expect("Not enough contiguous chunk of memory to boot the kernel");
+    let kernel_stack_range = area_allocator
+        .linear_allocator(512)
+        .expect("Failed to allocate stack for the kernel");
+    log!(
+        Trace,
+        "Buddy allocator range: [{:#016x}-{:#016x}]",
+        buddy_allocator_allocator.original_start(),
+        buddy_allocator_allocator.end()
+    );
+    log!(
+        Trace,
+        "Kernel stack range: [{:#016x}-{:#016x}]",
+        kernel_stack_range.original_start(),
+        kernel_stack_range.end()
+    );
+    log!(Info, "UEFI memory map usable:");
+    bootbridge
+        .memory_map()
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+        .for_each(|descriptor| {
+            log!(
+                Info,
+                "Range: Phys: [{:#016x}-{:#016x}]",
+                descriptor.phys_start,
+                descriptor.phys_start + descriptor.page_count * PAGE_SIZE,
+            );
+        });
+    unsafe {
+        early_map_kernel(bootbridge, &buddy_allocator_allocator);
+    }
+    let stack_alloc = StackAllocator::new(Page::range_inclusive(
+        Page::containing_address(kernel_stack_range.original_start() as u64),
+        Page::containing_address(
+            (kernel_stack_range.original_start() + kernel_stack_range.size() - 1) as u64,
+        ),
+    ));
+    (
+        unsafe {
+            BuddyAllocator::new(
+                bootbridge.kernel_elf(),
+                buddy_allocator_allocator,
+                area_allocator,
+                &stack_alloc,
+            )
+        },
+        stack_alloc,
+    )
 }
 
 pub fn enable_write_protect_bit() {
@@ -141,7 +164,7 @@ pub fn virt_addr_alloc(size: u64) -> u64 {
 
 pub struct MemoryController<const ORDER: usize> {
     active_table: ActivePageTable<RecurseLevel4>,
-    allocator: BuddyAllocator<'static, ORDER>,
+    allocator: BuddyAllocator<ORDER>,
     stack_allocator: StackAllocator,
 }
 
@@ -162,7 +185,7 @@ pub trait MMIODevice {
 impl<const ORDER: usize> MemoryController<ORDER> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
         self.stack_allocator
-            .alloc_stack(&mut self.active_table, &mut self.allocator, size_in_pages)
+            .alloc_stack(&mut self.active_table, size_in_pages)
     }
 
     fn map(&mut self, page: Page, flags: EntryFlags) {
@@ -221,7 +244,9 @@ impl<const ORDER: usize> MemoryController<ORDER> {
         return UnalignPhysicalMapGuard::new(phy_start);
     }
 
-    pub fn map_mmio(&mut self, mmio_device: &mut impl MMIODevice) {
+    /// If the mmio device may be mapped multiple times due to core initialization logic,
+    /// the argument multiple_cores may be set to true
+    pub fn map_mmio(&mut self, mmio_device: &mut impl MMIODevice, multiple_cores: bool) {
         let (start_frame, end_frame, page_count) = match (
             mmio_device.start_frame(),
             mmio_device.end_frame(),
@@ -244,17 +269,14 @@ impl<const ORDER: usize> MemoryController<ORDER> {
             start_frame.start_address(),
             end_frame.start_address() + PAGE_SIZE,
         );
+        let mut flag = EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE;
+        if multiple_cores {
+            flag |= EntryFlags::OVERWRITEABLE
+        }
         for (page, frame) in Page::range_inclusive(start_page, end_page)
             .zip(Frame::range_inclusive(start_frame, end_frame))
         {
-            self.map_to(
-                page,
-                frame,
-                EntryFlags::PRESENT
-                    | EntryFlags::WRITABLE
-                    | EntryFlags::NO_CACHE
-                    | EntryFlags::NO_CACHE,
-            );
+            self.map_to(page, frame, flag);
         }
         mmio_device.mapped(Some(virt_start));
     }
@@ -385,10 +407,44 @@ impl From<u64> for Frame {
 }
 
 pub trait FrameAllocator {
+    fn linear_allocator(&mut self, size_in_frames: u64) -> Option<LinearAllocator> {
+        let mut last_address = 0;
+        let mut counter = size_in_frames;
+        let mut start_frame = Frame::containing_address(0);
+        loop {
+            let frame = match self.allocate_frame() {
+                Some(frame) => frame,
+                None => return None,
+            };
+            if start_frame.start_address().as_u64() == 0 {
+                start_frame = frame.clone();
+            }
+            // If the memory is not contiguous, reset the counter
+            if last_address + PAGE_SIZE != frame.start_address().as_u64() && last_address != 0 {
+                counter = size_in_frames;
+                start_frame = frame.clone();
+            }
+            last_address = frame.start_address().as_u64();
+            counter -= 1;
+            if counter == 0 {
+                break;
+            }
+        }
+        assert!(start_frame.start_address().as_u64() != 0);
+        // We know that the frame allocator is valid
+        Some(unsafe {
+            LinearAllocator::new(
+                start_frame.start_address().as_u64() as usize,
+                (size_in_frames * PAGE_SIZE) as usize,
+            )
+        })
+    }
+
     fn allocate_frame(&mut self) -> Option<Frame>;
     fn deallocate_frame(&mut self, frame: Frame);
 }
 
+#[derive(Clone)]
 pub struct FrameIter {
     start: Frame,
     end: Frame,
