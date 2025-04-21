@@ -50,7 +50,6 @@ use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use logger::LOGGER;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
-use x86_64::registers::control::{Cr4, Cr4Flags};
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 
@@ -59,7 +58,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
     logger::init(&boot_bridge);
     memory::init(&boot_bridge);
-    log_enable_features();
     gdt::init_gdt();
     interrupt::init();
     pit::init();
@@ -69,19 +67,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
     smp::init_aps(&boot_bridge);
     driver::init(&boot_bridge);
-}
-
-fn log_enable_features() {
-    log!(
-        Info,
-        "OSFXSR enable: {}",
-        Cr4::read().contains(Cr4Flags::OSFXSR)
-    );
-    log!(
-        Info,
-        "OSXMMEXCPT enable: {}",
-        Cr4::read().contains(Cr4Flags::OSXMMEXCPT_ENABLE)
-    );
 }
 
 pub fn dwarf_data() -> &'static DwarfBaker<'static> {
