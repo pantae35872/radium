@@ -213,8 +213,8 @@ pub mod lockfree {
         }
     }
 
-    unsafe impl<T, const N: usize> Sync for CircularRingBuffer<T, N> {}
-    unsafe impl<T, const N: usize> Send for CircularRingBuffer<T, N> {}
+    unsafe impl<T: Send, const N: usize> Sync for CircularRingBuffer<T, N> {}
+    unsafe impl<T: Send, const N: usize> Send for CircularRingBuffer<T, N> {}
 
     struct Slot<T> {
         state: AtomicUsize, // 0 = empty, 1 = writing, 2 = full
