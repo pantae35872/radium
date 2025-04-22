@@ -1,17 +1,20 @@
 use core::fmt::Display;
 
-use alloc::{fmt, vec::Vec};
+use alloc::fmt;
 use aml::{AmlContext, AmlHandle};
 use bootbridge::BootBridge;
-use fadt::Fadt;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
+use pager::{
+    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, Mapper,
+};
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
 use spin::{Mutex, Once};
 
 use crate::{
     log,
-    memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
+    memory::{virt_addr_alloc, MMIOBufferInfo, MemoryContext},
 };
 
 mod aml;
@@ -23,9 +26,9 @@ mod sdp;
 
 static ACPI: Once<Mutex<Acpi>> = Once::new();
 
-pub fn init(boot_bridge: &BootBridge) {
+pub fn init(boot_bridge: &BootBridge, ctx: &mut MemoryContext) {
     log!(Trace, "Initializing acpi");
-    let acpi = unsafe { Acpi::new(boot_bridge.rsdp()) };
+    let acpi = unsafe { Acpi::new(boot_bridge.rsdp(), ctx) };
     ACPI.call_once(|| acpi.into());
 }
 
@@ -49,9 +52,9 @@ impl AmlHandle for AcpiHandle {
 }
 
 impl Acpi {
-    unsafe fn new(rsdp_addr: u64) -> Self {
-        let xrsdp = unsafe { Xrsdp::new(rsdp_addr) };
-        let xrsdt = unsafe { xrsdp.xrsdt() };
+    unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut MemoryContext) -> Self {
+        let xrsdp = unsafe { Xrsdp::new(rsdp_addr, ctx) };
+        let xrsdt = unsafe { xrsdp.xrsdt(ctx) };
         Self {
             xrsdp,
             xrsdt,
@@ -59,23 +62,46 @@ impl Acpi {
         }
     }
 
-    pub fn io_apics(&self, mut callback: impl FnMut(u64, usize)) {
+    pub fn local_apic_mmio(&self, ctx: &mut MemoryContext) -> MMIOBufferInfo {
         let madt = self
             .xrsdt
-            .get::<Madt>()
+            .get::<Madt>(ctx)
+            .expect("MADT table is required for APIC initialization");
+        // SAFETY: we know this is safe because this is from acpi tables
+        unsafe { MMIOBufferInfo::new_raw(PhysAddr::new(madt.lapic_base().into()), 1) }
+    }
+
+    pub fn io_apics(
+        &self,
+        ctx: &mut MemoryContext,
+        mut callback: impl FnMut(MMIOBufferInfo, usize, &mut MemoryContext),
+    ) {
+        let madt = self
+            .xrsdt
+            .get::<Madt>(ctx)
             .expect("MADT table is required for APIC initialization");
         madt.iter()
             .filter_map(|e| match e {
                 InterruptControllerStructure::IoApic(io_apic) => Some(io_apic),
                 _ => None,
             })
-            .for_each(|io_apic| (callback)(io_apic.addr(), io_apic.gsi_base()));
+            .for_each(|io_apic| {
+                (callback)(
+                    unsafe { MMIOBufferInfo::new_raw(io_apic.addr(), 1) },
+                    io_apic.gsi_base(),
+                    ctx,
+                )
+            });
     }
 
-    pub fn interrupt_overrides(&self, mut callback: impl FnMut(&IoApicInterruptSourceOverride)) {
+    pub fn interrupt_overrides(
+        &self,
+        ctx: &mut MemoryContext,
+        mut callback: impl FnMut(&IoApicInterruptSourceOverride, &mut MemoryContext),
+    ) {
         let madt = self
             .xrsdt
-            .get::<Madt>()
+            .get::<Madt>(ctx)
             .expect("MADT table is required for APIC initialization");
         madt.iter()
             .filter_map(|e| match e {
@@ -84,14 +110,18 @@ impl Acpi {
                 }
                 _ => None,
             })
-            .for_each(|e| (callback)(e));
+            .for_each(|e| (callback)(e, ctx));
     }
 
     /// Call the callback with a list of apic or x2apic id
-    pub fn processors(&self, mut callback: impl FnMut(usize)) {
+    pub fn processors(
+        &self,
+        ctx: &mut MemoryContext,
+        mut callback: impl FnMut(usize, &mut MemoryContext),
+    ) {
         let madt = self
             .xrsdt
-            .get::<Madt>()
+            .get::<Madt>(ctx)
             .expect("MADT table is required for Processors initialization");
         madt.iter()
             .filter_map(|e| match e {
@@ -101,16 +131,7 @@ impl Acpi {
                 InterruptControllerStructure::LocalX2Apic(processor) => Some(processor.apic_id()),
                 _ => None,
             })
-            .for_each(|e| (callback)(e));
-    }
-
-    fn aml_init(&mut self) {
-        let fadt = self
-            .xrsdt
-            .get::<Fadt>()
-            .expect("No dsdt found in acpi table");
-        let dsdt = fadt.dsdt();
-        //aml::init(dsdt.aml(), &mut self.aml).unwrap();
+            .for_each(|e| (callback)(e, ctx));
     }
 }
 
@@ -141,38 +162,44 @@ impl AcpiSdtData for EmptySdt {
 }
 
 impl<T: AcpiSdtData> AcpiSdt<T> {
-    unsafe fn new(address: u64) -> Option<&'static AcpiSdt<T>> {
+    unsafe fn new(address: u64, ctx: &mut MemoryContext) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
-        memory_controller().lock().ident_map(
-            size_of::<AcpiSdt<EmptySdt>>() as u64,
-            address,
-            EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-        );
+        unsafe {
+            ctx.mapper().identity_map_by_size(
+                Frame::containing_address(PhysAddr::new(address)),
+                size_of::<AcpiSdt<EmptySdt>>(),
+                EntryFlags::PRESENT | EntryFlags::NO_CACHE,
+            )
+        };
 
-        let detect_sdt = unsafe { Self::from_raw(address) };
+        let detect_sdt = unsafe { Self::from_raw(VirtAddr::new(address)) };
         let sdt_signature = detect_sdt.signature;
         let sdt_size = detect_sdt.length.into();
         let _ = detect_sdt;
-        memory_controller()
-            .lock()
-            .unmap_addr(address, size_of::<AcpiSdt<EmptySdt>>() as u64);
+        unsafe {
+            ctx.mapper()
+                .unmap_addr(Page::containing_address(VirtAddr::new(address)));
+        }
         if sdt_signature != T::signature() {
             return None;
         }
         let virt_sdt = virt_addr_alloc(sdt_size);
-        let guard = memory_controller().lock().phy_map(
-            sdt_size,
-            address,
-            virt_sdt,
-            EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-        );
-        let table = unsafe { Self::from_raw(guard.apply(virt_sdt)) };
+        unsafe {
+            ctx.mapper().map_to_range_by_size(
+                virt_sdt,
+                Frame::containing_address(PhysAddr::new(address)),
+                sdt_size as usize,
+                EntryFlags::NO_CACHE,
+            )
+        };
+        let table =
+            unsafe { Self::from_raw(virt_sdt.start_address().align_to(PhysAddr::new(address))) };
         table.validate_checksum();
         return Some(table);
     }
 
-    unsafe fn from_raw(address: u64) -> &'static AcpiSdt<T> {
-        unsafe { &*(address as *const AcpiSdt<T>) }
+    unsafe fn from_raw(address: VirtAddr) -> &'static AcpiSdt<T> {
+        unsafe { &*(address.as_ptr()) }
     }
 
     /// Validate this table checksum

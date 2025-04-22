@@ -5,11 +5,12 @@ use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
+use pager::{address::Page, EntryFlags, Mapper, PAGE_SIZE};
 use spin::mutex::Mutex;
 
 use crate::{
     log,
-    memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
+    memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice, MemoryContext},
 };
 
 pub mod color;
@@ -41,47 +42,6 @@ pub struct Graphic {
 pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
 
 impl Graphic {
-    pub fn new(mode: GraphicsInfo, frame_buffer: &'static mut [u32]) -> Self {
-        let (width, height) = mode.resolution();
-        log!(Info, "Graphic resolution {}x{}", width, height);
-        let plot_fn = match mode.pixel_format() {
-            PixelFormat::Rgb => Self::plot_rgb,
-            PixelFormat::Bgr => Self::plot_bgr,
-            PixelFormat::Bitmask(_) => Self::plot_bitmask,
-            PixelFormat::BltOnly => unimplemented!("Not support"),
-        };
-        let get_pixel_fn = match mode.pixel_format() {
-            PixelFormat::Rgb => Self::get_pixel_rgb,
-            PixelFormat::Bgr => Self::get_pixel_bgr,
-            PixelFormat::Bitmask(_) => Self::get_pixel_bitmask,
-            PixelFormat::BltOnly => unimplemented!("Not support"),
-        };
-        let framebuffer_len = frame_buffer.len();
-        let framebuffer_size = (framebuffer_len * size_of::<u32>()) as u64;
-        let virt = virt_addr_alloc(framebuffer_size);
-        memory_controller().lock().alloc_map(framebuffer_size, virt);
-        let mut va = Self {
-            mode,
-            plot_fn,
-            get_pixel_fn,
-            real_buffer: frame_buffer,
-            frame_buffer: unsafe {
-                core::slice::from_raw_parts_mut(virt as *mut u32, framebuffer_len)
-            },
-            backbuffer_tracker: FrameTracker::new(width, height, mode.stride()),
-            glyph_tracker: FrameTracker::new(width, height, mode.stride()),
-            glyphs: Vec::new(),
-            glyph_ids: Vec::new(),
-        };
-        for y in 0..height {
-            for x in 0..width {
-                va.plot(x, y, BACKGROUND_COLOR);
-            }
-        }
-        va.swap();
-        va
-    }
-
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
         let min_pos = self.backbuffer_tracker.frame_buffer_min();
@@ -327,23 +287,71 @@ pub fn graphic() -> &'static Mutex<Graphic> {
     DRIVER.get().expect("Uninitialize graphics")
 }
 
-pub fn init(boot_bridge: &BootBridge) {
-    log!(Trace, "Initializing graphic");
-    DRIVER.init_once(|| {
-        let framebuffer = boot_bridge.framebuffer_data();
-        let virt = virt_addr_alloc(framebuffer.size() as u64);
-        log!(Trace, "Framebuffer addr: {:#016x}", framebuffer.start());
-        let guard = memory_controller().lock().phy_map(
-            framebuffer.size() as u64,
-            framebuffer.start(),
-            virt,
-            EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::PRESENT,
-        );
-        Mutex::new(Graphic::new(boot_bridge.graphics_info(), unsafe {
-            core::slice::from_raw_parts_mut(
-                guard.apply(virt) as *mut u32,
-                framebuffer.size() / size_of::<u32>(),
-            )
-        }))
-    });
+impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
+    fn boot_bridge(bootbridge: &BootBridge) -> Option<MMIOBufferInfo> {
+        Some(bootbridge.framebuffer_data().into())
+    }
+
+    fn new(buffer: MMIOBuffer, args: (&'static mut [u32], GraphicsInfo)) -> Self {
+        let (back_buffer, mode) = args;
+        let (width, height) = mode.resolution();
+        log!(Info, "Graphic resolution {}x{}", width, height);
+        let plot_fn = match mode.pixel_format() {
+            PixelFormat::Rgb => Self::plot_rgb,
+            PixelFormat::Bgr => Self::plot_bgr,
+            PixelFormat::Bitmask(_) => Self::plot_bitmask,
+            PixelFormat::BltOnly => unimplemented!("Not support"),
+        };
+        let get_pixel_fn = match mode.pixel_format() {
+            PixelFormat::Rgb => Self::get_pixel_rgb,
+            PixelFormat::Bgr => Self::get_pixel_bgr,
+            PixelFormat::Bitmask(_) => Self::get_pixel_bitmask,
+            PixelFormat::BltOnly => unimplemented!("Not support"),
+        };
+        let mut va = Self {
+            mode,
+            plot_fn,
+            get_pixel_fn,
+            real_buffer: buffer.as_slice(),
+            frame_buffer: back_buffer,
+            backbuffer_tracker: FrameTracker::new(width, height, mode.stride()),
+            glyph_tracker: FrameTracker::new(width, height, mode.stride()),
+            glyphs: Vec::new(),
+            glyph_ids: Vec::new(),
+        };
+        for y in 0..height {
+            for x in 0..width {
+                va.plot(x, y, BACKGROUND_COLOR);
+            }
+        }
+        va.swap();
+        va
+    }
+}
+
+pub fn init(ctx: &mut MemoryContext, boot_bridge: &BootBridge) {
+    log!(Trace, "Registering graphic");
+    let graphics_info = boot_bridge.graphics_info();
+    let start = virt_addr_alloc(boot_bridge.framebuffer_data().size() as u64 / PAGE_SIZE);
+    ctx.mapper().map_range(
+        start,
+        Page::containing_address(start.start_address() + boot_bridge.framebuffer_data().size() - 1),
+        EntryFlags::WRITABLE,
+    );
+    let graphics = ctx
+        .mmio_device::<Graphic, _>(
+            (
+                unsafe {
+                    core::slice::from_raw_parts_mut(
+                        start.start_address().as_mut_ptr::<u32>(),
+                        boot_bridge.framebuffer_data().size() / size_of::<u32>(),
+                    )
+                },
+                graphics_info,
+            ),
+            boot_bridge,
+            None,
+        )
+        .expect("Failed to create graphics driver");
+    DRIVER.init_once(|| graphics.into());
 }

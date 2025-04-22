@@ -34,7 +34,7 @@ impl LinkedListAllocator {
     }
 
     pub unsafe fn init(&mut self, heap_start: usize, heap_size: usize) {
-        self.add_free_region(heap_start, heap_size);
+        unsafe { self.add_free_region(heap_start, heap_size) };
     }
 
     pub unsafe fn add_free_region(&mut self, addr: usize, size: usize) {
@@ -44,8 +44,8 @@ impl LinkedListAllocator {
         let mut node = ListNode::new(size);
         node.next = self.head.next.take();
         let node_ptr = addr as *mut ListNode;
-        node_ptr.write(node);
-        self.head.next = Some(&mut *node_ptr);
+        unsafe { node_ptr.write(node) };
+        self.head.next = Some(unsafe { &mut *node_ptr });
     }
 
     pub fn find_region(

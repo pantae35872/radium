@@ -9,3 +9,4 @@ std = []
 alloc = []
 
 [dependencies]
+pager = { path = "../pager" }

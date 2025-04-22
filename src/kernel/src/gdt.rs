@@ -5,7 +5,7 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::{PrivilegeLevel, VirtAddr};
 
 use crate::log;
-use crate::memory::memory_controller;
+use crate::memory::MemoryContext;
 use crate::smp::local_initializer;
 
 pub struct Gdt {
@@ -61,14 +61,14 @@ impl Gdt {
     }
 }
 
-pub fn init_gdt() {
-    local_initializer().lock().register(|cpu, id| {
+pub fn init_gdt(ctx: &mut MemoryContext) {
+    let double_fault = ctx
+        .stack_allocator()
+        .alloc_stack(1)
+        .expect("Failed to allocator stack for double fault handler");
+    local_initializer().lock().register(move |cpu, id| {
         log!(Trace, "Initializing gdt for core: {id}");
         use x86_64::instructions::tables::load_tss;
-        let double_fault = memory_controller()
-            .lock()
-            .alloc_stack(1)
-            .expect("Could not allocate stack for double fault handle");
         log!(
             Debug,
             "Double fault handler stack, Top: {:#x}, Bottom: {:#x}",
@@ -77,7 +77,7 @@ pub fn init_gdt() {
         );
         let tss = Box::leak(TaskStateSegment::new().into());
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
-            VirtAddr::new(double_fault.top() as u64);
+            x86_64::VirtAddr::new(double_fault.top().as_u64());
         let gdt = Box::leak(Gdt::new().into());
         let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
         let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));

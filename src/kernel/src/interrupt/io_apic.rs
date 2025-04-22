@@ -2,6 +2,8 @@ use core::{cmp::Ordering, u8};
 
 use alloc::vec::Vec;
 use bit_field::BitField;
+use bootbridge::BootBridge;
+use pager::address::VirtAddr;
 
 use crate::{
     driver::acpi::{
@@ -9,7 +11,7 @@ use crate::{
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
     log,
-    memory::{memory_controller, MMIODevice},
+    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice, MemoryContext},
     utils::VolatileCell,
 };
 
@@ -27,9 +29,8 @@ pub struct IoApicSourceOverride {
 }
 
 struct IoApic {
-    base: u64,
     gsi_base: usize,
-    registers: Option<IoApicRegisters>,
+    registers: IoApicRegisters,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -122,11 +123,18 @@ impl IoApicManager {
         }
     }
 
-    pub fn add_io_apic(&mut self, base: u64, gsi_base: usize) {
-        let mut io_apic = IoApic::new(base, gsi_base);
-        log!(Debug, "Found IoApic at: {:#x}", base);
-        memory_controller().lock().map_mmio(&mut io_apic, false);
-        let io_apic_max = io_apic.registers().max_redirection_entry();
+    pub fn add_io_apic(
+        &mut self,
+        base: MMIOBufferInfo,
+        gsi_base: usize,
+        ctx: &mut MemoryContext,
+        boot_bridge: &BootBridge,
+    ) {
+        log!(Debug, "Found IoApic at: {:#x}", base.addr());
+        let io_apic = ctx
+            .mmio_device::<IoApic, _>(gsi_base, boot_bridge, Some(base))
+            .expect("Failed to create some io apic");
+        let io_apic_max = io_apic.registers.max_redirection_entry();
         let io_apic_gsi_ranges = gsi_base..io_apic_max;
         log!(
             Debug,
@@ -168,7 +176,7 @@ impl IoApicManager {
                 if source_override.gsi < item.gsi_base {
                     Ordering::Greater
                 } else if source_override.gsi
-                    >= item.gsi_base + item.registers().max_redirection_entry()
+                    >= item.gsi_base + item.registers.max_redirection_entry()
                 {
                     Ordering::Less
                 } else {
@@ -217,27 +225,18 @@ impl From<MpsINTIFlags> for PinPolarity {
 }
 
 impl IoApic {
-    fn new(base: u64, gsi_base: usize) -> Self {
+    fn new(base: MMIOBuffer, gsi_base: usize) -> Self {
         Self {
-            base,
             gsi_base,
-            registers: None,
+            registers: unsafe { IoApicRegisters::new(base.base()) },
         }
-    }
-
-    fn registers(&self) -> &IoApicRegisters {
-        self.registers.as_ref().expect("Io Apic not mapped")
-    }
-
-    fn registers_mut(&mut self) -> &mut IoApicRegisters {
-        self.registers.as_mut().expect("Io Apic not mapped")
     }
 
     /// Provide the abslute index of the gsi not the, reletive index to this IoApic
     /// it's is being calculate internally
     fn redirect(&mut self, entry: RedirectionTableEntry, gsi: usize) {
         let reletive_gsi = gsi - self.gsi_base;
-        let mut raw_entry = self.registers_mut().redirection_index(reletive_gsi);
+        let mut raw_entry = self.registers.redirection_index(reletive_gsi);
         log!(Trace, "Redirecting gsi {:?} to {:?}", gsi, entry);
         raw_entry.redirect(&entry);
         raw_entry.unmask();
@@ -265,12 +264,12 @@ impl IoApicRegister {
 }
 
 impl IoApicRegisters {
-    pub unsafe fn new(base: u64) -> Self {
+    pub unsafe fn new(base: VirtAddr) -> Self {
         Self {
-            base,
-            id: IoApicRegister::new(base, 0x00),
-            ver: IoApicRegister::new(base, 0x01),
-            arb: IoApicRegister::new(base, 0x02),
+            base: base.as_u64(),
+            id: unsafe { IoApicRegister::new(base.as_u64(), 0x00) },
+            ver: unsafe { IoApicRegister::new(base.as_u64(), 0x01) },
+            arb: unsafe { IoApicRegister::new(base.as_u64(), 0x02) },
         }
     }
 
@@ -336,17 +335,8 @@ impl RawRedirectionTableEntry {
     }
 }
 
-impl MMIODevice for IoApic {
-    fn start(&self) -> Option<u64> {
-        Some(self.base)
-    }
-
-    fn page_count(&self) -> Option<usize> {
-        Some(1)
-    }
-
-    fn mapped(&mut self, vaddr: Option<u64>) {
-        self.registers =
-            Some(unsafe { IoApicRegisters::new(vaddr.expect("Failed to map memory for io apic")) });
+impl MMIODevice<usize> for IoApic {
+    fn new(buffer: crate::memory::MMIOBuffer, gsi_base: usize) -> Self {
+        Self::new(buffer, gsi_base)
     }
 }

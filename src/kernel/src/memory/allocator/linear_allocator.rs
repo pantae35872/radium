@@ -1,15 +1,25 @@
-use bootbridge::{MemoryMap, MemoryType};
+use pager::{
+    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
+    EntryFlags, IdentityMappable,
+};
 
 use crate::{
-    log,
     memory::{FrameAllocator, PAGE_SIZE},
     smp::{TRAMPOLINE_END, TRAMPOLINE_START},
 };
 
 #[derive(Debug)]
 pub struct LinearAllocator {
-    orginal_start: usize,
-    current: usize,
+    orginal_start: PhysAddr,
+    current: PhysAddr,
+    size: usize,
+}
+
+// This is to get around the brower checker rules incase of mapping the same allocator using the
+// same allocator
+#[derive(Debug)]
+pub struct LinearAllocatorMappings {
+    start: PhysAddr,
     size: usize,
 }
 
@@ -17,8 +27,9 @@ impl LinearAllocator {
     /// Create a new linear allocator
     ///
     /// # Safety
-    /// The caller must ensure that the provide start and size are valid
-    pub unsafe fn new(start: usize, size: usize) -> Self {
+    /// The caller must ensure that the provide start and size are valid and not overlap with other
+    /// allocator or is being used
+    pub unsafe fn new(start: PhysAddr, size: usize) -> Self {
         Self {
             orginal_start: start,
             current: start,
@@ -26,11 +37,29 @@ impl LinearAllocator {
         }
     }
 
-    pub fn original_start(&self) -> usize {
+    pub fn mappings(&self) -> LinearAllocatorMappings {
+        LinearAllocatorMappings {
+            start: self.orginal_start,
+            size: self.size,
+        }
+    }
+
+    pub fn range(&self) -> FrameIter {
+        Frame::range_inclusive(self.original_start().into(), self.end().into())
+    }
+
+    pub fn range_page(&self) -> PageIter {
+        Page::range_inclusive(
+            VirtAddr::new(self.original_start().as_u64()).into(),
+            VirtAddr::new(self.end().as_u64()).into(),
+        )
+    }
+
+    pub fn original_start(&self) -> PhysAddr {
         self.orginal_start
     }
 
-    pub fn end(&self) -> usize {
+    pub fn end(&self) -> PhysAddr {
         self.orginal_start + self.size - 1
     }
 
@@ -38,7 +67,7 @@ impl LinearAllocator {
         self.size
     }
 
-    pub fn current(&self) -> usize {
+    pub fn current(&self) -> PhysAddr {
         self.current
     }
 
@@ -48,20 +77,42 @@ impl LinearAllocator {
     }
 }
 
+impl LinearAllocatorMappings {
+    pub fn start(&self) -> PhysAddr {
+        self.start
+    }
+
+    pub fn end(&self) -> PhysAddr {
+        self.start + self.size - 1
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+}
+
 impl FrameAllocator for LinearAllocator {
-    fn allocate_frame(&mut self) -> Option<crate::memory::Frame> {
+    fn allocate_frame(&mut self) -> Option<Frame> {
         if self.current >= self.end() {
             return None;
         }
         let addr = self.current;
-        self.current += PAGE_SIZE as usize;
+        self.current += PAGE_SIZE;
         // TODO: Find a better way to handle reserve areas
         if self.current >= TRAMPOLINE_START && self.current <= TRAMPOLINE_END {
-            self.current = TRAMPOLINE_END.min(self.size) + PAGE_SIZE as usize;
+            self.current = TRAMPOLINE_END.min(PhysAddr::new(self.size as u64)) + PAGE_SIZE;
         }
-        return Some(crate::memory::Frame::containing_address(addr as u64));
+        return Some(Frame::containing_address(addr));
     }
     fn deallocate_frame(&mut self, _frame: crate::memory::Frame) {}
+}
+
+impl IdentityMappable for LinearAllocatorMappings {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        unsafe {
+            mapper.identity_map_range(self.start().into(), self.end().into(), EntryFlags::WRITABLE)
+        };
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 c_enum = { path = "../c_enum" }
 santa = { path = "../santa"}
+pager = { path = "../pager"}
 
 [dependencies.bakery]
 path = "../bakery"

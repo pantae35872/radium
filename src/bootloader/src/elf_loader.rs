@@ -23,8 +23,8 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
             max_alignment = header.alignment();
         }
 
-        let mut header_begin = header.vaddr();
-        let mut header_end = header.vaddr() + header.memsize() + max_alignment - 1;
+        let mut header_begin = header.vaddr().as_u64();
+        let mut header_end = header.vaddr().as_u64() + header.memsize() + max_alignment - 1;
 
         header_begin &= !(max_alignment - 1);
         header_end &= !(max_alignment - 1);
@@ -64,7 +64,7 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
             continue;
         }
 
-        let relative_offset = header.vaddr() - mem_min;
+        let relative_offset = header.vaddr().as_u64() - mem_min;
 
         let dst = program_ptr as u64 + relative_offset;
         let src = buffer.as_ptr() as u64 + header.offset();

@@ -4,10 +4,11 @@ use alloc::{string::String, vec::Vec};
 use bootbridge::BootBridge;
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
+use pager::{EntryFlags, Mapper};
 
 use crate::{
     graphics::{color::Color, graphic},
-    memory::{memory_controller, paging::EntryFlags},
+    memory::MemoryContext,
 };
 
 #[derive(Hash, PartialEq, Eq)]
@@ -31,16 +32,23 @@ pub struct TtfRenderer {
 
 // TODO: ts needs a rewrite
 impl TtfRenderer {
-    pub fn new(boot_info: &BootBridge, foreground_color: Color, background_color: Color) -> Self {
+    pub fn new(
+        boot_info: &BootBridge,
+        ctx: &mut MemoryContext,
+        foreground_color: Color,
+        background_color: Color,
+    ) -> Self {
         let font = boot_info.font_data();
 
-        memory_controller().lock().ident_map(
-            font.size() as u64,
-            font.start(),
-            EntryFlags::WRITABLE | EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-        );
+        unsafe {
+            ctx.mapper().identity_map_by_size(
+                font.start().into(),
+                font.size(),
+                EntryFlags::WRITABLE | EntryFlags::PRESENT | EntryFlags::NO_CACHE,
+            )
+        };
         let font = Font::from_bytes(
-            unsafe { core::slice::from_raw_parts(font.start() as *const u8, font.size()) },
+            unsafe { core::slice::from_raw_parts(font.start().as_u64() as *const u8, font.size()) },
             FontSettings::default(),
         )
         .unwrap();

@@ -1,20 +1,37 @@
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::{
+    any::Any,
+    marker::PhantomData,
+    mem::MaybeUninit,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
+use alloc::{boxed::Box, vec::Vec};
 use allocator::{
-    area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator,
+    area_allocator::AreaAllocator,
+    buddy_allocator::{self, BuddyAllocator},
     linear_allocator::LinearAllocator,
 };
-use bootbridge::{BootBridge, MemoryType};
-use conquer_once::spin::OnceCell;
-use paging::{early_map_kernel, table::RecurseLevel4, ActivePageTable, EntryFlags, Page};
+use bootbridge::{BootBridge, MemoryType, RawData};
+use pager::{
+    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+};
+use paging::{
+    early_map_kernel, mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable,
+};
+use paste::paste;
 use spin::Mutex;
 use stack_allocator::{Stack, StackAllocator};
-use x86_64::{
-    registers::control::{Cr0Flags, Cr3, EferFlags},
-    PhysAddr, VirtAddr,
-};
+use x86_64::registers::control::{Cr0Flags, Cr3, EferFlags};
 
-use crate::log;
+use crate::{
+    driver::acpi::{acpi, Acpi},
+    initialize_guard, log,
+    logger::LOGGER,
+    serial_print,
+    smp::local_initializer,
+    utils::VolatileCell,
+};
 
 pub use self::paging::remap_the_kernel;
 
@@ -22,36 +39,61 @@ pub mod allocator;
 pub mod paging;
 pub mod stack_allocator;
 
-pub const PAGE_SIZE: u64 = 4096;
 pub const MAX_ALIGN: usize = 8192;
 
-pub fn init(bootbridge: &BootBridge) {
-    enable_nxe_bit();
-    enable_write_protect_bit();
+/// Initialize the memory
+///
+/// If this is being called outside kernel initialization this will panic
+pub fn init(bootbridge: &BootBridge) -> MemoryContext {
+    initialize_guard!();
+    // SAFETY: This safe because the initialize_guard_above
+    unsafe { prepare_flags() };
 
-    let (mut allocator, stack_allocator) = init_allocator(bootbridge);
-    let active_table = remap_the_kernel(&mut allocator, &stack_allocator, bootbridge);
+    // SAFETY: This safe because the initialize_guard_above
+    let (mut allocator, stack_allocator) = unsafe { init_allocator(bootbridge) };
+    let mut active_table =
+        unsafe { remap_the_kernel(&mut allocator, &stack_allocator, bootbridge) };
 
-    MEMORY_CONTROLLER.init_once(|| {
-        MemoryController {
-            active_table,
-            allocator,
-            stack_allocator,
-        }
-        .into()
+    unsafe {
+        // SAFETY: This is called after the memory controller is initialize above
+        allocator::init(&mut active_table, &mut allocator);
+    }
+
+    // SAFETY: This is safe because we're sure that the initializer is only being called on
+    // processor initialization
+    //
+    // NOTE: Altho we already prepare the flags above we have to still register it for ap cores
+    local_initializer().lock().register(|_, _| unsafe {
+        prepare_flags();
     });
-
-    allocator::init();
 
     log!(
         Info,
         "Usable memory: {:.2} GB",
-        memory_controller().lock().max_mem() as f32 / (1 << 30) as f32 // TO GB
+        allocator.max_mem() as f32 / (1 << 30) as f32 // TO GB
     );
+    MemoryContext::new(active_table, allocator, stack_allocator)
 }
 
-fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackAllocator) {
-    let mut area_allocator = AreaAllocator::new(bootbridge.memory_map());
+/// Prepare the processor flags
+/// e.g No-execute Write-protected
+///
+/// # Safety
+/// The caller must ensure that this is only called on kernel initialization
+unsafe fn prepare_flags() {
+    unsafe {
+        enable_nxe_bit();
+        enable_write_protect_bit();
+    }
+}
+
+/// Initialize the buddy allocator and the kernel stack
+///
+/// # Safety
+/// The caller must ensure that this is only called on kernel initialization
+/// and the bootbridge memory map is valid
+unsafe fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackAllocator) {
+    let mut area_allocator = unsafe { AreaAllocator::new(bootbridge.memory_map()) };
     let buddy_allocator_allocator = area_allocator
         .linear_allocator(128)
         .expect("Not enough contiguous chunk of memory to boot the kernel");
@@ -86,323 +128,190 @@ fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackAllocato
     unsafe {
         early_map_kernel(bootbridge, &buddy_allocator_allocator);
     }
-    let stack_alloc = StackAllocator::new(Page::range_inclusive(
-        Page::containing_address(kernel_stack_range.original_start() as u64),
-        Page::containing_address(
-            (kernel_stack_range.original_start() + kernel_stack_range.size() - 1) as u64,
-        ),
-    ));
+    let stack_alloc = unsafe { StackAllocator::new(kernel_stack_range.range_page()) };
     (
         unsafe {
             BuddyAllocator::new(
-                bootbridge.kernel_elf(),
                 buddy_allocator_allocator,
                 area_allocator,
                 &stack_alloc,
+                bootbridge,
             )
         },
         stack_alloc,
     )
 }
 
-pub fn enable_write_protect_bit() {
+unsafe fn enable_write_protect_bit() {
     use x86_64::registers::control::Cr0;
 
-    unsafe {
-        let mut cr0 = Cr0::read();
-        cr0.insert(Cr0Flags::WRITE_PROTECT);
-        Cr0::write(cr0);
-    }
+    let mut cr0 = Cr0::read();
+    cr0.insert(Cr0Flags::WRITE_PROTECT);
+    unsafe { Cr0::write(cr0) };
 }
 
-pub fn enable_nxe_bit() {
+unsafe fn enable_nxe_bit() {
     use x86_64::registers::model_specific::Efer;
 
-    unsafe {
-        let mut efer = Efer::read();
-        efer.insert(EferFlags::NO_EXECUTE_ENABLE);
-        Efer::write(efer);
-    }
-}
-
-static MEMORY_CONTROLLER: OnceCell<Mutex<MemoryController<64>>> = OnceCell::uninit();
-
-pub fn memory_controller() -> &'static Mutex<MemoryController<64>> {
-    MEMORY_CONTROLLER
-        .get()
-        .expect("Memory controller not initialized")
+    let mut efer = Efer::read();
+    efer.insert(EferFlags::NO_EXECUTE_ENABLE);
+    unsafe { Efer::write(efer) };
 }
 
 const VIRT_BASE_ADDR: u64 = 0xFFFFFFFF00000000;
-const PAGE_ALIGN: u64 = 4096;
 static CURRENT_ADDR: AtomicU64 = AtomicU64::new(VIRT_BASE_ADDR);
 
-pub fn virt_addr_alloc(size: u64) -> u64 {
-    let mut addr = CURRENT_ADDR.load(Ordering::Acquire);
-    let mut new_addr;
-    loop {
-        new_addr = addr + size + (size as *const u8).align_offset(PAGE_ALIGN as usize) as u64;
-        match CURRENT_ADDR.compare_exchange_weak(
-            addr,
-            new_addr,
-            Ordering::Release,
-            Ordering::Acquire,
-        ) {
-            Ok(_) => {
-                log!(
-                    Trace,
-                    "Allocating vaddr ranges: [{:#016x}-{:#016x}]",
-                    addr,
-                    addr + size
-                );
-                return addr;
-            }
-            Err(updated) => addr = updated,
-        }
-    }
+pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
+    let page = Page::containing_address(VirtAddr::new(
+        CURRENT_ADDR.fetch_add(size_in_pages * PAGE_SIZE, Ordering::SeqCst),
+    ));
+    page
 }
 
-pub struct MemoryController<const ORDER: usize> {
+pub struct MemoryContext {
     active_table: ActivePageTable<RecurseLevel4>,
-    allocator: BuddyAllocator<ORDER>,
+    buddy_allocator: BuddyAllocator<64>,
     stack_allocator: StackAllocator,
 }
 
-pub trait MMIODevice {
-    fn start(&self) -> Option<u64>;
-    fn page_count(&self) -> Option<usize>;
-    fn start_frame(&self) -> Option<Frame> {
-        self.start().map(|e| Frame::containing_address(e))
-    }
-    fn end_frame(&self) -> Option<Frame> {
-        self.start()
-            .zip(self.page_count().map(|e| e as u64))
-            .map(|(e, c)| Frame::containing_address(e + c * PAGE_SIZE - 1))
-    }
-    fn mapped(&mut self, vaddr: Option<u64>);
+pub struct WithTable<'a, T> {
+    table: &'a mut ActivePageTable<RecurseLevel4>,
+    with_table: &'a mut T,
 }
 
-impl<const ORDER: usize> MemoryController<ORDER> {
-    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.stack_allocator
-            .alloc_stack(&mut self.active_table, size_in_pages)
+impl<'a, T> WithTable<'a, T> {
+    pub fn new(
+        active_table: &'a mut ActivePageTable<RecurseLevel4>,
+        with_table: &'a mut T,
+    ) -> Self {
+        Self {
+            table: active_table,
+            with_table,
+        }
+    }
+}
+
+pub struct MMIOBuffer {
+    start: VirtAddr,
+    size_in_pages: usize,
+}
+
+pub struct MMIOBufferInfo {
+    addr: PhysAddr,
+    size_in_pages: usize,
+}
+
+impl MMIOBufferInfo {
+    /// Create a new buffer info
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provide address and size is valid
+    pub unsafe fn new_raw(addr: PhysAddr, size_in_pages: usize) -> Self {
+        Self {
+            addr,
+            size_in_pages,
+        }
+    }
+}
+
+impl From<RawData> for MMIOBufferInfo {
+    fn from(value: RawData) -> Self {
+        // SAFETY: We know this is safe because the raw data is only created at bootloader time
+        unsafe { Self::new_raw(value.start(), value.size() / PAGE_SIZE as usize) }
+    }
+}
+
+impl MMIOBuffer {
+    pub fn base(&self) -> VirtAddr {
+        self.start
     }
 
-    fn map(&mut self, page: Page, flags: EntryFlags) {
-        self.active_table.map(page, flags, &mut self.allocator);
+    pub fn as_slice<T>(self) -> &'static mut [T] {
+        // SAFETY: This is safe because the mmio is gurentee to be valid
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                self.start.as_mut_ptr::<T>(),
+                self.size_in_pages * PAGE_SIZE as usize / size_of::<T>(),
+            )
+        }
+    }
+}
+
+pub trait MMIODevice<Args> {
+    fn boot_bridge(_bootbridge: &BootBridge) -> Option<MMIOBufferInfo> {
+        None
     }
 
-    pub fn alloc_map(&mut self, size: u64, start: u64) {
-        let start_page = Page::containing_address(start);
-        let end_page = Page::containing_address(start + size - 1);
+    fn other() -> Option<MMIOBufferInfo> {
+        None
+    }
 
-        log!(
-            Trace,
-            "Allocate: [{:#016x}-{:#016x}], Actual Allocate (aligned): [{:#016x}-{:#016x}]",
-            start,
-            start + size - 1,
-            start_page.start_address(),
-            end_page.start_address() + PAGE_SIZE,
-        );
+    fn new(buffer: MMIOBuffer, args: Args) -> Self;
+}
 
-        for page in Page::range_inclusive(start_page, end_page) {
-            self.map(page, EntryFlags::WRITABLE | EntryFlags::PRESENT);
+impl MMIOBufferInfo {
+    pub fn size_in_pages(&self) -> usize {
+        self.size_in_pages
+    }
+
+    pub fn size_in_bytes(&self) -> usize {
+        self.size_in_pages * PAGE_SIZE as usize
+    }
+
+    pub fn addr(&self) -> PhysAddr {
+        self.addr
+    }
+}
+
+impl MemoryContext {
+    pub fn new(
+        active_table: ActivePageTable<RecurseLevel4>,
+        buddy_allocator: BuddyAllocator<64>,
+        stack_allocator: StackAllocator,
+    ) -> Self {
+        Self {
+            active_table,
+            buddy_allocator,
+            stack_allocator,
         }
     }
 
-    /// Map the provided virtual address to the provided physical address. if the physical address
-    /// is not align, will return a offset that used to offset the provided virtual address to match the provided physical address.
-    pub fn phy_map(
-        &mut self,
-        size: u64,
-        phy_start: u64,
-        virt_start: u64,
-        flags: EntryFlags,
-    ) -> UnalignPhysicalMapGuard {
-        let start_page = Page::containing_address(virt_start);
-        let start_frame = Frame::containing_address(phy_start);
-        let end_page = Page::containing_address(virt_start + size - 1);
-        let end_frame = Frame::containing_address(phy_start + size - 1);
-        log!(
-            Trace,
-            "Mapping: [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}], Actual Map (aligned): [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}], Flags: {}",
-            virt_start,
-            virt_start + size - 1,
-            phy_start,
-            phy_start + size - 1,
-            start_page.start_address(),
-            end_page.start_address() + PAGE_SIZE,
-            start_frame.start_address(),
-            end_frame.start_address() + PAGE_SIZE,
-            flags
-        );
-        for (page, frame) in Page::range_inclusive(start_page, end_page)
-            .zip(Frame::range_inclusive(start_frame, end_frame))
-        {
-            self.map_to(page, frame, flags);
-        }
-        return UnalignPhysicalMapGuard::new(phy_start);
-    }
-
-    /// If the mmio device may be mapped multiple times due to core initialization logic,
-    /// the argument multiple_cores may be set to true
-    pub fn map_mmio(&mut self, mmio_device: &mut impl MMIODevice, multiple_cores: bool) {
-        let (start_frame, end_frame, page_count) = match (
-            mmio_device.start_frame(),
-            mmio_device.end_frame(),
-            mmio_device.page_count(),
-        ) {
-            (Some(a), Some(b), Some(c)) => (a, b, c),
-            _ => {
-                mmio_device.mapped(None);
-                return;
-            }
-        };
-        let virt_start = virt_addr_alloc(page_count as u64);
-        let start_page = Page::containing_address(virt_start);
-        let end_page = Page::containing_address(virt_start + page_count as u64 * PAGE_SIZE - 1);
-        log!(
-            Trace,
-            "Mapping MMIO Device: [{:#016x}-{:#016x}] to [{:#016x}-{:#016x}]",
-            start_page.start_address(),
-            end_page.start_address() + PAGE_SIZE,
-            start_frame.start_address(),
-            end_frame.start_address() + PAGE_SIZE,
-        );
-        let mut flag = EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_CACHE;
-        if multiple_cores {
-            flag |= EntryFlags::OVERWRITEABLE
-        }
-        for (page, frame) in Page::range_inclusive(start_page, end_page)
-            .zip(Frame::range_inclusive(start_frame, end_frame))
-        {
-            self.map_to(page, frame, flag);
-        }
-        mmio_device.mapped(Some(virt_start));
-    }
-
-    pub fn ident_map(&mut self, size: u64, phy_start: u64, flags: EntryFlags) {
-        let start = Frame::containing_address(phy_start);
-        let end = Frame::containing_address(phy_start + size - 1);
-        log!(
-            Trace,
-            "Identity map: [{:#016x}-{:#016x}], Actual Identity map: [{:#016x}-{:#016x}], Flags: {}",
-            phy_start,
-            phy_start + size - 1,
-            start.start_address(),
-            end.start_address() + PAGE_SIZE,
-            flags,
-        );
-        Frame::range_inclusive(start, end).for_each(|frame| {
-            self.active_table
-                .identity_map(frame, flags, &mut self.allocator)
-        });
-    }
-
-    pub fn unmap_addr(&mut self, mapped_start: u64, size: u64) {
-        let start = Page::containing_address(mapped_start);
-        let end = Page::containing_address(mapped_start + size - 1);
-        Page::range_inclusive(start, end).for_each(|page| {
-            self.active_table.unmap_addr(page);
-        });
-    }
-
-    fn map_to(&mut self, page: Page, frame: Frame, flags: EntryFlags) {
+    pub fn mapper(&mut self) -> MapperWithAllocator<'_, RecurseLevel4, BuddyAllocator<64>> {
         self.active_table
-            .map_to(page, frame, flags, &mut self.allocator);
+            .mapper_with_allocator(&mut self.buddy_allocator)
     }
 
-    pub fn physical_alloc(&mut self, size: usize) -> Option<PhysAddr> {
-        return self
-            .allocator
-            .allocate(size)
-            .map(|ptr| PhysAddr::new(ptr as u64));
+    pub fn mmio_device<T: MMIODevice<A>, A>(
+        &mut self,
+        args: A,
+        bootbridge: &BootBridge,
+        depends: Option<MMIOBufferInfo>,
+    ) -> Option<T> {
+        let info = T::boot_bridge(bootbridge)
+            .or_else(|| T::other())
+            .or_else(|| depends)?;
+        let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
+        // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
+        unsafe {
+            self.active_table.map_to_range(
+                Page::containing_address(vaddr.start_address()),
+                Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
+                Frame::containing_address(info.addr),
+                Frame::containing_address(info.addr + info.size_in_bytes() - 1),
+                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
+                &mut self.buddy_allocator,
+            )
+        };
+        let buf = MMIOBuffer {
+            start: vaddr.start_address(),
+            size_in_pages: info.size_in_pages(),
+        };
+        Some(T::new(buf, args))
     }
 
-    pub fn physical_dealloc(&mut self, addr: PhysAddr, size: usize) {
-        self.allocator.dealloc(addr.as_u64() as *mut u8, size);
-    }
-
-    pub fn get_physical(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
-        return self.active_table.translate(addr);
-    }
-
-    pub fn max_mem(&self) -> usize {
-        self.allocator.max_mem()
-    }
-
-    pub fn allocated(&self) -> usize {
-        self.allocator.allocated()
-    }
-
-    pub unsafe fn current_page_phys(&self) -> u64 {
-        Cr3::read().0.start_address().as_u64()
-    }
-}
-
-/// A guard for unalign physical map.
-/// If the caller of phy_map not adding the offset correctly, this will issue a warning.
-pub struct UnalignPhysicalMapGuard {
-    offset: u64,
-    used: bool,
-}
-
-impl UnalignPhysicalMapGuard {
-    pub fn new(phy_addr: u64) -> Self {
-        if (phy_addr as *const u8).is_aligned_to(PAGE_ALIGN as usize) {
-            return Self::new_empty();
-        }
-        Self {
-            offset: PAGE_ALIGN - (phy_addr as *const u8).align_offset(PAGE_ALIGN as usize) as u64,
-            used: false,
-        }
-    }
-
-    pub fn new_empty() -> Self {
-        Self {
-            offset: 0,
-            used: true,
-        }
-    }
-
-    /// Apply the provided virtual address to the required offset, consuming this in the process.
-    #[must_use]
-    pub fn apply(mut self, virt_addr: u64) -> u64 {
-        self.used = true;
-        virt_addr + self.offset
-    }
-}
-
-impl Drop for UnalignPhysicalMapGuard {
-    fn drop(&mut self) {
-        if !self.used {
-            log!(Warning, "Unused physical alignment for virtual address ");
-        }
-    }
-}
-
-#[derive(PartialEq, PartialOrd, Clone)]
-pub struct Frame {
-    number: u64,
-}
-
-impl Frame {
-    pub fn containing_address(address: u64) -> Frame {
-        Frame {
-            number: address / PAGE_SIZE,
-        }
-    }
-    pub fn start_address(&self) -> PhysAddr {
-        PhysAddr::new(self.number * PAGE_SIZE)
-    }
-    pub fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
-        FrameIter { start, end }
-    }
-}
-
-impl From<u64> for Frame {
-    fn from(value: u64) -> Self {
-        Self::containing_address(value)
+    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
+        self.stack_allocator.with_table(&mut self.active_table)
     }
 }
 
@@ -410,7 +319,7 @@ pub trait FrameAllocator {
     fn linear_allocator(&mut self, size_in_frames: u64) -> Option<LinearAllocator> {
         let mut last_address = 0;
         let mut counter = size_in_frames;
-        let mut start_frame = Frame::containing_address(0);
+        let mut start_frame = Frame::null();
         loop {
             let frame = match self.allocate_frame() {
                 Some(frame) => frame,
@@ -434,32 +343,15 @@ pub trait FrameAllocator {
         // We know that the frame allocator is valid
         Some(unsafe {
             LinearAllocator::new(
-                start_frame.start_address().as_u64() as usize,
+                start_frame.start_address(),
                 (size_in_frames * PAGE_SIZE) as usize,
             )
         })
     }
 
+    // SAFETY: The implementor of this function must gurentee that the return frame is valid and is
+    // the only ownership of that physical frame
     fn allocate_frame(&mut self) -> Option<Frame>;
+
     fn deallocate_frame(&mut self, frame: Frame);
-}
-
-#[derive(Clone)]
-pub struct FrameIter {
-    start: Frame,
-    end: Frame,
-}
-
-impl Iterator for FrameIter {
-    type Item = Frame;
-
-    fn next(&mut self) -> Option<Frame> {
-        if self.start <= self.end {
-            let frame = self.start.clone();
-            self.start.number += 1;
-            Some(frame)
-        } else {
-            None
-        }
-    }
 }

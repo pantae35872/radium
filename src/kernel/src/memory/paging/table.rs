@@ -211,16 +211,26 @@ pub trait RecurseP4Create<T>
 where
     T: TableLevel,
 {
+    /// Create a new recursive p4 table pointer
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the current active table is recursive mapped
     unsafe fn create() -> Unique<Table<T>> {
-        Unique::new_unchecked(0xffffffff_fffff000 as *mut _)
+        unsafe { Unique::new_unchecked(0xffffffff_fffff000 as *mut _) }
     }
 }
 pub trait DirectP4Create<T>
 where
     T: TableLevel,
 {
+    /// Create a new p4 table from the provided table pointer
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the table pointer is valid and mapped
     unsafe fn create(p4: *mut Table<T>) -> Unique<Table<T>> {
-        Unique::new_unchecked(p4)
+        unsafe { Unique::new_unchecked(p4) }
     }
 }
 

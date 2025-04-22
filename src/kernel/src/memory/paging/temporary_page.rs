@@ -1,13 +1,14 @@
-use x86_64::VirtAddr;
+use pager::address::{Frame, VirtAddr};
 
 use super::table::{
     HierarchicalLevel, NextTableAddress, RecurseLevel1, Table, TableLevel, TableLevel4,
 };
 use super::{ActivePageTable, Page};
 use crate::memory::paging::EntryFlags;
-use crate::memory::{Frame, FrameAllocator};
+use crate::memory::FrameAllocator;
 
 pub struct TemporaryPage {
+    mapped: bool,
     page: Page,
     allocator: TinyAllocator,
 }
@@ -18,12 +19,17 @@ impl TemporaryPage {
         A: FrameAllocator,
     {
         TemporaryPage {
+            mapped: false,
             page,
             allocator: TinyAllocator::new(allocator),
         }
     }
 
-    pub fn map<P4>(&mut self, frame: Frame, active_table: &mut ActivePageTable<P4>) -> VirtAddr
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided frame is valid and does not causes any side
+    /// effects
+    pub unsafe fn map<P4>(&mut self, frame: Frame, active_table: &mut ActivePageTable<P4>) -> VirtAddr
     where
         P4: HierarchicalLevel + TableLevel4,
         P4::Marker: NextTableAddress,
@@ -37,12 +43,18 @@ impl TemporaryPage {
             active_table.translate_page(self.page).is_none(),
             "temporary page is already mapped"
         );
+        assert!(!self.mapped);
 
-        active_table.map_to(self.page, frame, EntryFlags::WRITABLE, &mut self.allocator);
+        unsafe { active_table.map_to(self.page, frame, EntryFlags::WRITABLE, &mut self.allocator) };
 
-        return VirtAddr::new(self.page.start_address());
+        self.mapped = true;
+        return self.page.start_address();
     }
 
+    /// Unmap the page from the active_table
+    ///
+    /// # Panics
+    /// if the page is not mapped this will panic
     pub fn unmap<P4>(&mut self, active_table: &mut ActivePageTable<P4>)
     where
         P4: HierarchicalLevel + TableLevel4,
@@ -53,10 +65,17 @@ impl TemporaryPage {
         <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
             NextTableAddress
     {
-        active_table.unmap_addr(self.page);
+        assert!(self.mapped);
+        // SAFETY: We know that the frame is valid because [`self.mapped`]
+        unsafe { active_table.unmap_addr(self.page) };
+        self.mapped = false;
     }
 
-    pub fn map_table_frame<P4>(
+    /// # Safety
+    ///
+    /// The caller must ensure that the provided frame is valid and does not causes any side
+    /// effects
+    pub unsafe fn map_table_frame<P4>(
         &mut self,
         frame: Frame,
         active_table: &mut ActivePageTable<P4>,

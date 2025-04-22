@@ -23,7 +23,6 @@ extern crate lazy_static;
 extern crate spin;
 
 pub mod driver;
-pub mod filesystem;
 pub mod gdt;
 pub mod graphics;
 pub mod interrupt;
@@ -33,11 +32,10 @@ pub mod print;
 pub mod scheduler;
 pub mod serial;
 pub mod smp;
-pub mod task;
 pub mod utils;
 
-use core::ffi::c_void;
 use core::panic::PanicInfo;
+use core::{ffi::c_void, sync::atomic::AtomicBool};
 
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
@@ -52,20 +50,26 @@ use logger::LOGGER;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
+static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
 pub fn init(boot_bridge: *mut RawBootBridge) {
     let mut boot_bridge = BootBridge::new(boot_bridge);
     DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
     logger::init(&boot_bridge);
-    memory::init(&boot_bridge);
-    gdt::init_gdt();
-    interrupt::init();
+    let mut memory_ctx = memory::init(&boot_bridge);
+    acpi::init(&boot_bridge, &mut memory_ctx);
+    gdt::init_gdt(&mut memory_ctx);
+    interrupt::init(&mut memory_ctx, &boot_bridge);
     pit::init();
-    acpi::init(&boot_bridge);
-    smp::init();
-    graphics::init(&boot_bridge);
-    print::init(&boot_bridge, Color::new(209, 213, 219), BACKGROUND_COLOR);
-    smp::init_aps(&boot_bridge);
+    smp::init(&mut memory_ctx);
+    graphics::init(&mut memory_ctx, &boot_bridge);
+    print::init(
+        &boot_bridge,
+        &mut memory_ctx,
+        Color::new(209, 213, 219),
+        BACKGROUND_COLOR,
+    );
+    smp::init_aps(&boot_bridge, &mut memory_ctx);
     driver::init(&boot_bridge);
 }
 
@@ -73,8 +77,17 @@ pub fn dwarf_data() -> &'static DwarfBaker<'static> {
     DWARF_DATA.get().expect("How could this happen")
 }
 
+#[macro_export]
+macro_rules! initialize_guard {
+    () => {
+        if !$crate::STILL_INITIALIZING.load(core::sync::atomic::Ordering::SeqCst) {
+            panic!("Trying to call initialize function when the kernel is already initialized");
+        }
+    };
+}
+
 #[cfg(test)]
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
     init(boot_info);
     test_main();

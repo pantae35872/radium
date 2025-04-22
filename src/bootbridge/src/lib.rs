@@ -4,11 +4,15 @@ use core::{cell::OnceCell, fmt::Debug};
 
 use bakery::DwarfBaker;
 use c_enum::c_enum;
+use pager::{
+    address::{Frame, PhysAddr, VirtAddr},
+    DataBuffer, EntryFlags, IdentityMappable,
+};
 use santa::{Elf, PAGE_SIZE};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {
-    start: u64,
+    start: PhysAddr,
     size: usize,
 }
 
@@ -18,12 +22,12 @@ pub struct KernelConfig {
     pub log_level: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub struct MemoryDescriptor {
     pub ty: MemoryType,
-    pub phys_start: u64,
-    pub virt_start: u64,
+    pub phys_start: PhysAddr,
+    pub virt_start: VirtAddr,
     pub page_count: u64,
     pub att: u64,
 }
@@ -57,7 +61,7 @@ pub struct MemoryMapIter<'buf> {
 /// A reimplementation of the uefi memory map
 #[derive(Debug)]
 pub struct MemoryMap<'a> {
-    memory_map: &'a [u8],
+    memory_map: DataBuffer<'a>,
     entry_size: usize,
 }
 
@@ -93,7 +97,7 @@ pub struct RawBootBridge {
     kernel_config: KernelConfig,
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
-    rsdp: u64,
+    rsdp: PhysAddr,
 }
 
 #[derive(Debug)]
@@ -121,7 +125,7 @@ impl BootBridge {
         unsafe { &mut *self.0 }
     }
 
-    pub fn rsdp(&self) -> u64 {
+    pub fn rsdp(&self) -> PhysAddr {
         self.deref().rsdp
     }
 
@@ -156,16 +160,21 @@ impl BootBridge {
     pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
         self.deref_mut().dwarf_data.take().unwrap()
     }
+}
 
-    pub fn map_self(&self, mut mapper: impl FnMut(u64, u64)) {
-        let bridge_start = self.0 as *const u8 as u64;
-        mapper(bridge_start, core::mem::size_of::<RawBootBridge>() as u64);
-
-        let mem_map = self.deref().memory_map.memory_map;
-        let map_start = mem_map as *const [u8] as *const u8 as u64;
-        mapper(map_start, mem_map.len() as u64);
-
-        self.kernel_elf().map_buffer(mapper);
+impl IdentityMappable for BootBridge {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        unsafe {
+            mapper.identity_map_range(
+                Frame::containing_address(PhysAddr::new(self.0 as u64)),
+                Frame::containing_address(PhysAddr::new(
+                    self.0 as u64 + size_of::<RawBootBridge>() as u64,
+                )),
+                EntryFlags::WRITABLE,
+            )
+        };
+        self.deref().memory_map.memory_map.map(mapper);
+        self.deref().kernel_elf.map(mapper);
     }
 }
 
@@ -191,7 +200,10 @@ where
 
     pub fn framebuffer_data(&mut self, start: u64, size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.framebuffer_data = RawData { start, size };
+        boot_bridge.framebuffer_data = RawData {
+            start: PhysAddr::new(start),
+            size,
+        };
         self
     }
 
@@ -209,7 +221,10 @@ where
 
     pub fn font_data(&mut self, start: u64, size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.font_data = RawData { start, size };
+        boot_bridge.font_data = RawData {
+            start: PhysAddr::new(start),
+            size,
+        };
         self
     }
 
@@ -238,7 +253,7 @@ where
 
     pub fn rsdp(&mut self, rsdp: u64) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.rsdp = rsdp;
+        boot_bridge.rsdp = PhysAddr::new(rsdp);
         self
     }
 
@@ -253,21 +268,21 @@ where
 }
 
 impl RawData {
-    pub fn start(&self) -> u64 {
+    pub fn start(&self) -> PhysAddr {
         self.start
     }
     pub fn size(&self) -> usize {
         self.size
     }
-    pub fn end(&self) -> u64 {
-        self.start + self.size as u64 - 1
+    pub fn end(&self) -> PhysAddr {
+        self.start + self.size - 1
     }
 }
 
 impl<'a> MemoryMap<'a> {
     pub fn new(memory_map: &'static [u8], entry_size: usize) -> Self {
         MemoryMap {
-            memory_map,
+            memory_map: DataBuffer::new(memory_map),
             entry_size,
         }
     }
@@ -312,23 +327,6 @@ impl GraphicsInfo {
     }
 }
 
-impl MemoryDescriptor {
-    pub fn phys_align(&self, align: u64) -> Option<Self> {
-        if !align.is_power_of_two() {
-            return None;
-        }
-        let mut aligned_self = *self;
-        let ptr = self.phys_start as *const u8;
-        aligned_self.phys_start += ptr.align_offset(align as usize) as u64;
-        aligned_self.page_count =
-            self.page_count - (aligned_self.phys_start - self.phys_start) / PAGE_SIZE - 1;
-        if aligned_self.phys_start >= self.page_count * PAGE_SIZE + self.phys_start {
-            return None;
-        }
-        return Some(aligned_self);
-    }
-}
-
 impl<'a> Iterator for MemoryMapIter<'a> {
     type Item = &'a MemoryDescriptor;
 
@@ -351,7 +349,7 @@ impl Debug for BootBridge {
             boot_bridge.font_data,
             boot_bridge.kernel_elf,
             boot_bridge.kernel_config,
-            boot_bridge.rsdp,
+            boot_bridge.rsdp.as_u64(),
         )
     }
 }

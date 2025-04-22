@@ -10,12 +10,16 @@ use core::ffi::CStr;
 use core::fmt::Debug;
 use core::iter::Iterator;
 use core::option::Option;
+use pager::{
+    address::{Frame, PhysAddr, VirtAddr},
+    DataBuffer, EntryFlags, IdentityMappable,
+};
 
 pub const PAGE_SIZE: u64 = 4096;
 
 // TODO: Add testing
 pub struct Elf<'a> {
-    buffer: &'a [u8],
+    buffer: DataBuffer<'a>,
 }
 
 //  Reference from https://wiki.osdev.org/ELF
@@ -70,7 +74,7 @@ pub struct ProgramHeader {
     /// The offset in the file that the data for this segment can be found (p_offset)
     program_offset: u64,
     /// Where you should start to put this segment in virtual memory (p_vaddr)
-    program_vaddr: u64,
+    program_vaddr: VirtAddr,
     /// Reserved for segment's physical address (p_paddr)
     reserved: u64,
     /// Size of the segment in the file (p_filesz)
@@ -203,7 +207,9 @@ impl<'a> Elf<'a> {
                 magic: buffer[0..4].try_into().expect("Should not failed"),
             });
         }
-        let s = Self { buffer };
+        let s = Self {
+            buffer: DataBuffer::new(buffer),
+        };
         if s.header().bits != ElfBits::B64 {
             return Err(ElfError::InvalidHeader);
         }
@@ -309,37 +315,53 @@ impl<'a> Elf<'a> {
     pub fn entry_point(&self) -> u64 {
         self.header().program_entry_offset
     }
+}
 
-    /// Warning: these two function are different
-    /// this function map the file buffer not the loaded elf
-    pub fn map_buffer<M>(&self, mut mapper: M)
-    where
-        M: FnMut(u64, u64),
-    {
-        let buffer_start = self.buffer as *const [u8] as *const u8 as u64;
-        mapper(buffer_start, self.buffer.len() as u64);
-    }
-
-    /// this map the loaded elf not the elf file itself
-    pub fn map_self<M>(&self, mut mapper: M)
-    where
-        M: FnMut(u64, u64, ProgramHeaderFlags),
-    {
+impl IdentityMappable for Elf<'_> {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
         for section in self.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
                 continue;
             }
             assert!(
-                section.vaddr() % PAGE_SIZE == 0,
+                section.vaddr().as_u64() % PAGE_SIZE == 0,
                 "sections need to be page aligned"
             );
 
-            mapper(
-                section.vaddr(),
-                section.vaddr() + section.memsize() - 1,
-                section.flags(),
-            );
+            // SAFETY: We know this is safe because we're parsing the elf correctly
+            unsafe {
+                mapper.identity_map_range(
+                    Frame::containing_address(PhysAddr::new(section.vaddr().as_u64())),
+                    Frame::containing_address(PhysAddr::new(
+                        section.vaddr().as_u64() + section.memsize() - 1,
+                    )),
+                    EntryFlags::from_elf_program_flags(&section.flags()),
+                )
+            };
         }
+        self.buffer.map(mapper);
+    }
+}
+
+trait FromHeaderFlags {
+    fn from_elf_program_flags(section: &ProgramHeaderFlags) -> EntryFlags;
+}
+
+impl FromHeaderFlags for EntryFlags {
+    fn from_elf_program_flags(section: &ProgramHeaderFlags) -> EntryFlags {
+        let mut flags = EntryFlags::empty();
+
+        if section.contains(ProgramHeaderFlags::Readable) {
+            flags |= EntryFlags::PRESENT;
+        }
+        if section.contains(ProgramHeaderFlags::Writeable) {
+            flags |= EntryFlags::WRITABLE;
+        }
+        if !section.contains(ProgramHeaderFlags::Executeable) {
+            flags |= EntryFlags::NO_EXECUTE;
+        }
+
+        flags
     }
 }
 
@@ -356,7 +378,7 @@ impl ProgramHeader {
         self.program_offset
     }
 
-    pub fn vaddr(&self) -> u64 {
+    pub fn vaddr(&self) -> VirtAddr {
         self.program_vaddr
     }
 

@@ -2,6 +2,8 @@ use core::slice::{self};
 
 use alloc::boxed::Box;
 
+use crate::memory::MemoryContext;
+
 use super::{AcpiSdt, AcpiSdtData, EmptySdt};
 
 #[repr(C)]
@@ -21,9 +23,9 @@ pub enum Xrsdt {
 }
 
 impl Xrsdt {
-    pub unsafe fn new(address: u64) -> Option<Self> {
-        unsafe { AcpiSdt::<Rsdt>::new(address).map(|e| Self::RSDT(e)) }
-            .or_else(|| unsafe { AcpiSdt::<Xsdt>::new(address) }.map(|e| Self::XSDT(e)))
+    pub unsafe fn new(address: u64, ctx: &mut MemoryContext) -> Option<Self> {
+        unsafe { AcpiSdt::<Rsdt>::new(address, ctx).map(|e| Self::RSDT(e)) }
+            .or_else(|| unsafe { AcpiSdt::<Xsdt>::new(address, ctx) }.map(|e| Self::XSDT(e)))
     }
 
     fn iter(&self) -> Box<dyn Iterator<Item = u64> + '_> {
@@ -33,8 +35,9 @@ impl Xrsdt {
         }
     }
 
-    pub fn get<T: AcpiSdtData>(&self) -> Option<&'static AcpiSdt<T>> {
-        self.iter().find_map(|e| unsafe { AcpiSdt::<T>::new(e) })
+    pub fn get<T: AcpiSdtData>(&self, ctx: &mut MemoryContext) -> Option<&'static AcpiSdt<T>> {
+        self.iter()
+            .find_map(|e| unsafe { AcpiSdt::<T>::new(e, ctx) })
     }
 }
 

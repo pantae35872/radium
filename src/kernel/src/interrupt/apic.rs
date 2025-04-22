@@ -1,10 +1,14 @@
 use core::{marker::PhantomData, ops::RangeBounds, usize};
 
 use bit_field::BitField;
+use pager::address::{PhysAddr, VirtAddr};
 use raw_cpuid::CpuId;
 use x86_64::registers::model_specific::Msr;
 
-use crate::{inline_if, log, memory::MMIODevice};
+use crate::{
+    inline_if, log,
+    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
+};
 
 use super::InterruptIndex;
 
@@ -17,7 +21,8 @@ pub struct LocalApic {
     error_vector: InterruptIndex,
     timer_vector: InterruptIndex,
     spurious_vector: InterruptIndex,
-    registers: Option<ApicRegisters>,
+    mode: ApicMode,
+    registers: ApicRegisters,
 }
 
 macro_rules! apic_registers {
@@ -110,14 +115,21 @@ apic_registers! {
     divide_configuration(Read|Write): 0x3E0,
 }
 
+#[derive(Clone)]
 enum ApicMode {
     X2Apic,
-    Apic { base: u64 },
+    Apic { base: VirtAddr },
 }
 
 enum LocalApicRegister<T> {
-    X2Apic { msr: Msr, _phantom: PhantomData<T> },
-    Apic { addr: u64, _phantom: PhantomData<T> },
+    X2Apic {
+        msr: Msr,
+        _phantom: PhantomData<T>,
+    },
+    Apic {
+        addr: VirtAddr,
+        _phantom: PhantomData<T>,
+    },
 }
 
 impl<T> LocalApicRegister<T> {
@@ -151,7 +163,7 @@ impl<T: LocalApicRegisterWrite> LocalApicRegister<T> {
         match (self, value as u64) {
             (Self::X2Apic { msr, .. }, value) => unsafe { msr.write(value) },
             (Self::Apic { addr, .. }, value) if value <= u32::MAX as u64 => unsafe {
-                *(*addr as *mut u32) = value as u32;
+                *addr.as_mut_ptr::<u32>() = value as u32;
             },
             _ => panic!("Cannot write value more than u64 to a APIC register"),
         }
@@ -163,7 +175,7 @@ impl<T: LocalApicRegisterRead> LocalApicRegister<T> {
     fn read(&self) -> usize {
         match self {
             Self::X2Apic { msr, .. } => unsafe { msr.read() as usize },
-            Self::Apic { addr, .. } => unsafe { *(*addr as *const u32) as usize },
+            Self::Apic { addr, .. } => unsafe { *addr.as_mut_ptr::<u32>() as usize },
         }
     }
 
@@ -231,44 +243,27 @@ pub enum IpiDeliveryMode {
     StartUp = 0b110,
 }
 
+pub struct LocalApicArguments {
+    pub timer_vector: InterruptIndex,
+    pub error_vector: InterruptIndex,
+    pub spurious_vector: InterruptIndex,
+}
+
 impl LocalApic {
-    pub fn new(
-        timer_vector: InterruptIndex,
-        error_vector: InterruptIndex,
-        spurious_vector: InterruptIndex,
-    ) -> Self {
-        let x2apic = CpuId::new().get_feature_info().unwrap().has_x2apic();
-
-        Self {
-            error_vector,
-            spurious_vector,
-            timer_vector,
-            x2apic,
-            registers: None,
-        }
-    }
-
-    fn registers_mut(&mut self) -> &mut ApicRegisters {
-        self.registers.as_mut().expect("APIC Registers not mapped")
-    }
-
-    fn registers(&self) -> &ApicRegisters {
-        self.registers.as_ref().expect("APIC Registers not mapped")
-    }
-
     pub fn id(&self) -> usize {
         inline_if!(
             self.x2apic,
-            self.registers().id.read(),
-            self.registers().id.read_bits(24..32)
+            self.registers.id.read(),
+            self.registers.id.read_bits(24..32)
         )
     }
 
     pub fn enable(&mut self) {
+        // FIXME: APIC timer interrupts now working on legacy apic mode
         if self.x2apic {
-            self.registers_mut().base.write_bit(10, true);
+            self.registers.base.write_bit(10, true);
         }
-        log!(Info, "Enabling local apic for apic id: {}", self.id());
+        log!(Debug, "Enabling local apic for apic id: {}", self.id());
         let timer_vector = self.timer_vector.as_usize();
         let error_vector = self.error_vector.as_usize();
         let spurious_vector = self.spurious_vector.as_usize();
@@ -280,13 +275,9 @@ impl LocalApic {
             error_vector,
             spurious_vector
         );
-        self.registers_mut()
-            .lvt_timer
-            .write_bits(0..8, timer_vector);
-        self.registers_mut()
-            .lvt_error
-            .write_bits(0..8, error_vector);
-        self.registers_mut()
+        self.registers.lvt_timer.write_bits(0..8, timer_vector);
+        self.registers.lvt_error.write_bits(0..8, error_vector);
+        self.registers
             .spurious_interrupt
             .write_bits(0..8, spurious_vector);
 
@@ -296,40 +287,36 @@ impl LocalApic {
     }
 
     pub fn start_timer(&mut self, initial_count: usize, divide: TimerDivide, mode: TimerMode) {
-        self.registers_mut()
+        self.registers
             .divide_configuration
             .write_bits(0..4, divide as u8 as usize);
-        self.registers_mut()
+        self.registers
             .lvt_timer
             .write_bits(17..19, mode as u8 as usize);
-        self.registers_mut().initial_count.write(initial_count);
+        self.registers.initial_count.write(initial_count);
     }
 
     pub fn enable_timer(&mut self) {
-        self.registers_mut().lvt_timer.write_bit(16, false);
+        self.registers.lvt_timer.write_bit(16, false);
     }
 
     pub fn disable_timer(&mut self) {
-        self.registers_mut().lvt_timer.write_bit(16, true);
+        self.registers.lvt_timer.write_bit(16, true);
     }
 
     fn software_enable(&mut self) {
-        self.registers_mut().spurious_interrupt.write_bit(8, true);
+        self.registers.spurious_interrupt.write_bit(8, true);
     }
 
     fn write_icr(&mut self, value: u64) {
         if self.x2apic {
-            log!(Debug, "Writing ICR: {:#x}", value);
             unsafe { Msr::new(0x830).write(value) };
         } else {
-            self.registers_mut()
+            self.registers
                 .icr_high
                 .write((value as usize >> 32) & 0xFFFFFFFF);
-            log!(Trace, "Writing icr: {:#x}", value & 0xFFFFFFFF);
-            self.registers_mut()
-                .icr_low
-                .write(value as usize & 0xFFFFFFFF);
-            while self.registers().icr_low.read_bit(12) {
+            self.registers.icr_low.write(value as usize & 0xFFFFFFFF);
+            while self.registers.icr_low.read_bit(12) {
                 core::hint::spin_loop();
             }
         }
@@ -381,48 +368,64 @@ impl LocalApic {
             "Disabling local interrupt pins for apic id: {}",
             self.id()
         );
-        self.registers_mut().lvt_lint0.write(0);
-        self.registers_mut().lvt_lint1.write(0);
+        self.registers.lvt_lint0.write(0);
+        self.registers.lvt_lint1.write(0);
     }
 
     pub fn eoi(&mut self) {
-        self.registers_mut().eoi.write(0);
+        self.registers.eoi.write(0);
     }
 }
 
-fn lapic_base() -> u64 {
+impl Clone for LocalApic {
+    fn clone(&self) -> Self {
+        Self {
+            x2apic: self.x2apic,
+            error_vector: self.error_vector,
+            timer_vector: self.timer_vector,
+            spurious_vector: self.spurious_vector,
+            mode: self.mode.clone(),
+            registers: ApicRegisters::new(&self.mode),
+        }
+    }
+}
+
+fn lapic_base() -> PhysAddr {
     unsafe {
-        x86_64::registers::model_specific::Msr::new(IA32_APIC_BASE_MSR).read() & 0xFFFFFF000 as u64
+        PhysAddr::new(
+            x86_64::registers::model_specific::Msr::new(IA32_APIC_BASE_MSR).read()
+                & 0xFFFFFF000 as u64,
+        )
     }
 }
 
-impl MMIODevice for LocalApic {
-    fn start(&self) -> Option<u64> {
-        if self.x2apic {
-            None
-        } else {
-            Some(lapic_base())
-        }
-    }
-    fn page_count(&self) -> Option<usize> {
-        if self.x2apic {
-            None
-        } else {
-            Some(1)
-        }
+impl MMIODevice<LocalApicArguments> for LocalApic {
+    fn other() -> Option<crate::memory::MMIOBufferInfo> {
+        Some(unsafe { MMIOBufferInfo::new_raw(lapic_base(), 1) })
     }
 
-    fn mapped(&mut self, vaddr: Option<u64>) {
-        let mode;
-        if let Some(vaddr) = vaddr {
-            log!(Info, "using apic");
-            mode = ApicMode::Apic { base: vaddr };
-        } else if self.x2apic {
-            log!(Info, "X2APIC capability found, using x2Apic");
-            mode = ApicMode::X2Apic;
-        } else {
-            panic!("Failed to map mmio for apic");
+    fn new(buffer: MMIOBuffer, args: LocalApicArguments) -> Self {
+        let LocalApicArguments {
+            timer_vector,
+            error_vector,
+            spurious_vector,
+        } = args;
+        let x2apic = CpuId::new().get_feature_info().unwrap().has_x2apic();
+
+        let mode = inline_if!(
+            x2apic,
+            ApicMode::X2Apic,
+            ApicMode::Apic {
+                base: buffer.base()
+            }
+        );
+        Self {
+            error_vector,
+            spurious_vector,
+            timer_vector,
+            x2apic,
+            registers: ApicRegisters::new(&mode),
+            mode,
         }
-        self.registers = Some(ApicRegisters::new(&mode))
     }
 }

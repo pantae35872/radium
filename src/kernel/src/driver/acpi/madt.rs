@@ -1,5 +1,6 @@
 use bit_field::BitField;
 use c_enum::c_enum;
+use pager::address::PhysAddr;
 
 use super::{AcpiSdt, AcpiSdtData};
 
@@ -100,14 +101,14 @@ impl AcpiSdt<Madt> {
         }
     }
 
-    pub fn apic_base(&self) -> u32 {
+    pub fn lapic_base(&self) -> u32 {
         self.data.local_apic
     }
 }
 
 impl IoApic {
-    pub fn addr(&self) -> u64 {
-        self.ioapic_address as u64
+    pub fn addr(&self) -> PhysAddr {
+        PhysAddr::new(self.ioapic_address.into())
     }
 
     pub fn gsi_base(&self) -> usize {

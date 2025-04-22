@@ -1,8 +1,12 @@
 use alloc::string::String;
+use pager::{
+    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, Mapper, PAGE_SIZE,
+};
 
 use crate::{
     log,
-    memory::{memory_controller, paging::EntryFlags, virt_addr_alloc},
+    memory::{virt_addr_alloc, MemoryContext},
 };
 
 use super::{rsdt::Xrsdt, AcpiRevisions};
@@ -31,43 +35,54 @@ pub enum Xrsdp {
 }
 
 impl Xrsdp {
-    pub unsafe fn new(rsdp_addr: u64) -> Self {
+    pub unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut MemoryContext) -> Self {
         // Map sdp for revision checking
-        memory_controller().lock().ident_map(
-            size_of::<Rsdp>() as u64,
-            rsdp_addr,
-            EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-        );
-        let check_rsdp = unsafe { Rsdp::new(rsdp_addr) };
+        unsafe {
+            ctx.mapper().identity_map_by_size(
+                Frame::containing_address(rsdp_addr),
+                size_of::<Rsdp>(),
+                EntryFlags::NO_CACHE,
+            )
+        };
+        let check_rsdp = unsafe { Rsdp::new(rsdp_addr.as_u64()) };
         check_rsdp.validate();
         let revision = check_rsdp.revision();
         // After revision checking unmap the sdp.
-        memory_controller()
-            .lock()
-            .unmap_addr(rsdp_addr, size_of::<Rsdp>() as u64);
+        unsafe {
+            ctx.mapper()
+                .unmap_addr(Page::containing_address(VirtAddr::new(rsdp_addr.as_u64())))
+        };
         // Create sdp based on readed revision
         log!(Trace, "Rsdp address: {:#x}", rsdp_addr);
         log!(Info, "Acpi revision: {}", revision);
         let sdp = match revision {
             AcpiRevisions::Rev1 => {
-                let virt_rdsp = virt_addr_alloc(size_of::<Rsdp>() as u64);
-                let guard = memory_controller().lock().phy_map(
-                    size_of::<Rsdp>() as u64,
-                    rsdp_addr,
-                    virt_rdsp,
-                    EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-                );
-                Xrsdp::RSDP(unsafe { Rsdp::new(guard.apply(virt_rdsp)) })
+                let virt_rdsp = virt_addr_alloc(1);
+                unsafe {
+                    ctx.mapper().map_to_range_by_size(
+                        virt_rdsp,
+                        Frame::containing_address(rsdp_addr),
+                        size_of::<Rsdp>(),
+                        EntryFlags::PRESENT,
+                    )
+                };
+                Xrsdp::RSDP(unsafe {
+                    Rsdp::new(virt_rdsp.start_address().align_to(rsdp_addr).as_u64())
+                })
             }
             AcpiRevisions::Rev2 => {
-                let virt_xsdp = virt_addr_alloc(size_of::<Xsdp>() as u64);
-                let guard = memory_controller().lock().phy_map(
-                    size_of::<Xsdp>() as u64,
-                    rsdp_addr,
-                    virt_xsdp,
-                    EntryFlags::PRESENT | EntryFlags::NO_CACHE,
-                );
-                Xrsdp::XSDP(unsafe { Xsdp::new(guard.apply(virt_xsdp)) })
+                let virt_xsdp = virt_addr_alloc(1);
+                unsafe {
+                    ctx.mapper().map_to_range_by_size(
+                        virt_xsdp,
+                        Frame::containing_address(rsdp_addr),
+                        size_of::<Xsdp>(),
+                        EntryFlags::PRESENT,
+                    )
+                };
+                Xrsdp::XSDP(unsafe {
+                    Xsdp::new(virt_xsdp.start_address().align_to(rsdp_addr).as_u64())
+                })
             }
         };
         sdp.validate();
@@ -91,10 +106,10 @@ impl Xrsdp {
             .collect::<String>()
     }
 
-    pub unsafe fn xrsdt(&self) -> Xrsdt {
+    pub unsafe fn xrsdt(&self, ctx: &mut MemoryContext) -> Xrsdt {
         match self {
-            Self::XSDP(xsdp) => unsafe { Xrsdt::new(xsdp.xsdt).expect("") },
-            Self::RSDP(rsdp) => unsafe { Xrsdt::new(rsdp.rsdt_addr as u64).expect("") },
+            Self::XSDP(xsdp) => unsafe { Xrsdt::new(xsdp.xsdt, ctx).expect("") },
+            Self::RSDP(rsdp) => unsafe { Xrsdt::new(rsdp.rsdt_addr as u64, ctx).expect("") },
         }
     }
 

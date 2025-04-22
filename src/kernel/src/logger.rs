@@ -1,8 +1,13 @@
-use core::fmt::{Arguments, Display, Formatter, Result, Write};
+use core::{
+    cell::SyncUnsafeCell,
+    fmt::{Arguments, Display, Formatter, Result, Write},
+};
 
 use bootbridge::BootBridge;
 use c_enum::c_enum;
 use static_log::StaticLog;
+
+use crate::initialize_guard;
 
 mod static_log;
 
@@ -67,23 +72,28 @@ impl<C: FnMut(&str)> Write for CallbackFormatter<C> {
 
 pub struct MainLogger {
     logger: StaticLog<BUFFER_SIZE>,
-    level: LogLevel,
+    /// SAFETY: This is sync because this is our kernel does not have multi threaded
+    /// initialization and the logger instance is only initialize once across all cores
+    level: SyncUnsafeCell<LogLevel>,
 }
 
 impl MainLogger {
     pub const fn new() -> Self {
         Self {
             logger: StaticLog::new(),
-            level: LogLevel::Trace,
+            level: SyncUnsafeCell::new(LogLevel::Trace),
         }
     }
 
-    pub unsafe fn set_level(&mut self, level: u64) {
-        self.level = LogLevel(level);
+    /// SAFETY: the caller must ensure that this is only being called on kernel initialization
+    pub unsafe fn set_level(&self, level: u64) {
+        *self.level.get() = LogLevel(level);
     }
 
     pub fn write(&self, level: LogLevel, formatter: Arguments) {
-        if level < self.level {
+        // SAFETY: This is safe because the function that mutates the level only being called on
+        // initialization (gureentee by unsafe)
+        if level < unsafe { *self.level.get() } {
             return;
         }
         self.logger.write_log(&formatter, level);
@@ -107,13 +117,10 @@ impl MainLogger {
 }
 
 pub fn init(boot_bridge: &BootBridge) {
-    // Altho this looks so fucking unsafe but i can asure you it's safe
-    // Because the init function is only being called when the kernel is initialize (guarantee by my
-    // stupidity)
+    initialize_guard!();
+    // SAFETY: This is safe because the above interrupt guard
     unsafe {
-        #[allow(invalid_reference_casting)]
-        (&mut *(&LOGGER as *const MainLogger as *mut MainLogger))
-            .set_level(boot_bridge.log_level());
+        LOGGER.set_level(boot_bridge.log_level());
     };
     log!(Trace, "Logging start");
 }

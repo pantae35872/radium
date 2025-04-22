@@ -1,8 +1,15 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::{
+    sync::atomic::{AtomicBool, Ordering},
+    u64,
+};
 
 use alloc::{boxed::Box, vec::Vec};
 use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
+use pager::{
+    address::{Frame, PhysAddr, VirtAddr},
+    Cr3, EntryFlags, Mapper, PAGE_SIZE,
+};
 use raw_cpuid::CpuId;
 use spin::Mutex;
 use x86_64::{
@@ -19,12 +26,11 @@ use crate::{
     log,
     memory::{
         allocator::linear_allocator::LinearAllocator,
-        enable_write_protect_bit, memory_controller,
         paging::{
             table::{DirectLevel4, Table},
-            ActivePageTable, EntryFlags,
+            ActivePageTable,
         },
-        Frame, FrameAllocator, PAGE_SIZE,
+        FrameAllocator, MemoryContext,
     },
 };
 
@@ -37,10 +43,10 @@ static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
 const IA32_KERNEL_GS_BASE: u32 = 0xc0000102;
 const IA32_GS_BASE: u32 = 0xc0000101;
 
-pub const TRAMPOLINE_START: usize = 0x7000;
-pub const TRAMPOLINE_END: usize = 0x9000;
+pub const TRAMPOLINE_START: PhysAddr = PhysAddr::new(0x7000);
+pub const TRAMPOLINE_END: PhysAddr = PhysAddr::new(0x9000);
 
-extern "C" {
+unsafe extern "C" {
     static __trampoline_start: u8;
     static __trampoline_end: u8;
     static early_alloc: u8;
@@ -51,8 +57,8 @@ struct SmpInitializationData {
     page_table: u32,
     _padding: u32, // Just to make it clear to me
     real_page_table: u64,
-    stack: u64,
-    stack_bottom: u64,
+    stack: VirtAddr,
+    stack_bottom: VirtAddr,
 }
 
 struct ApInitializer {
@@ -60,7 +66,7 @@ struct ApInitializer {
 }
 
 impl ApInitializer {
-    fn new(boot_bridge: &BootBridge) -> Self {
+    fn new(boot_bridge: &BootBridge, ctx: &mut MemoryContext) -> Self {
         let trampoline_size = unsafe {
             &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
         };
@@ -72,8 +78,9 @@ impl ApInitializer {
         // We reuse the early boot memory we used to bootstrap this core
         // We know it's below 4GB range because our kernel is at 1M
         // so it's fits in 32-bit register
-        let mut boot_alloc =
-            unsafe { LinearAllocator::new(&early_alloc as *const u8 as usize, 4096 * 64) };
+        let mut boot_alloc = unsafe {
+            LinearAllocator::new(PhysAddr::new(&early_alloc as *const u8 as u64), 4096 * 64)
+        };
 
         let p4_table = boot_alloc
             .allocate_frame()
@@ -84,27 +91,23 @@ impl ApInitializer {
             )
         };
 
-        boot_bridge.kernel_elf().map_self(|start, end, flags| {
+        bootstrap_table.identity_map_object(boot_bridge, &mut boot_alloc);
+
+        unsafe {
             bootstrap_table.identity_map_range(
-                start.into(),
-                end.into(),
-                EntryFlags::from_elf_program_flags(&flags),
+                Frame::containing_address(PhysAddr::new(0x7000)),
+                Frame::containing_address(PhysAddr::new(0x8000)),
+                EntryFlags::WRITABLE | EntryFlags::PRESENT,
                 &mut boot_alloc,
-            )
-        });
+            );
 
-        bootstrap_table.identity_map_range(
-            Frame::containing_address(0x7000),
-            Frame::containing_address(0x8000),
-            EntryFlags::WRITABLE | EntryFlags::PRESENT,
-            &mut boot_alloc,
-        );
+            ctx.mapper().identity_map_range(
+                Frame::containing_address(PhysAddr::new(0x7000)),
+                Frame::containing_address(PhysAddr::new(0x8000)),
+                EntryFlags::WRITABLE,
+            );
+        };
 
-        memory_controller().lock().ident_map(
-            trampoline_size as u64 + PAGE_SIZE,
-            0x7000,
-            EntryFlags::WRITABLE | EntryFlags::PRESENT,
-        );
         unsafe {
             core::ptr::copy(
                 &__trampoline_start as *const u8,
@@ -118,23 +121,23 @@ impl ApInitializer {
         }
     }
 
-    fn prepare_stack_and_info(&self) {
-        let stack = memory_controller()
-            .lock()
+    fn prepare_stack_and_info(&self, ctx: &mut MemoryContext) {
+        let stack = ctx
+            .stack_allocator()
             .alloc_stack(8)
             .expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
             page_table: self.ap_bootstrap_page_table.start_address().as_u64() as u32,
             _padding: 0,
-            real_page_table: unsafe { memory_controller().lock().current_page_phys() },
+            real_page_table: Cr3::read().0.start_address().as_u64(),
             stack: stack.top(),
             stack_bottom: stack.bottom(),
         };
 
-        log!(Info, "AP Bootstrap page table at {:#x}", data.page_table);
+        log!(Trace, "AP Bootstrap page table at {:#x}", data.page_table);
         log!(
-            Info,
+            Trace,
             "AP Bootstrap stack, Top: {:#x}, Bottom: {:#x}",
             data.stack,
             data.stack_bottom
@@ -149,8 +152,8 @@ impl ApInitializer {
         }
     }
 
-    fn boot_ap(&self, apic_id: usize) {
-        self.prepare_stack_and_info();
+    fn boot_ap(&self, apic_id: usize, ctx: &mut MemoryContext) {
+        self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
         cpu_local().lapic().send_init_ipi(apic_id);
@@ -170,10 +173,8 @@ impl ApInitializer {
 
 static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn ap_startup() -> ! {
-    enable_write_protect_bit();
-
     local_initializer().lock().initialize_current();
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
@@ -182,7 +183,7 @@ pub extern "C" fn ap_startup() -> ! {
 
 pub struct LocalInitializer {
     local_initializers: Vec<Box<dyn Fn(&mut CpuLocalBuilder, usize) + Send + Sync>>,
-    after_bsps: Vec<Box<dyn Fn(&CpuLocal) + Send + Sync>>,
+    after_bsps: Vec<Box<dyn FnOnce(&CpuLocal) + Send + Sync>>,
 }
 
 pub struct CpuLocal {
@@ -246,7 +247,7 @@ impl LocalInitializer {
         }
     }
 
-    pub fn after_bsp(&mut self, initializer: impl Fn(&CpuLocal) + Send + Sync + 'static) {
+    pub fn after_bsp(&mut self, initializer: impl FnOnce(&CpuLocal) + Send + Sync + 'static) {
         self.after_bsps.push(Box::new(initializer));
     }
 
@@ -270,7 +271,9 @@ impl LocalInitializer {
 
         if BSP_CPU_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
             log!(Debug, "initialization bsp, bsp processor id: {id}");
-            self.after_bsps.iter().for_each(|i| i(cpu_local()));
+            while let Some(f) = self.after_bsps.pop() {
+                f(&cpu_local());
+            }
         }
     }
 }
@@ -346,12 +349,12 @@ pub fn local_initializer() -> &'static Mutex<LocalInitializer> {
     &LOCAL_INITIALIZER
 }
 
-pub fn init() {
+pub fn init(ctx: &mut MemoryContext) {
     APIC_ID_TO_CPU_ID.init_once(|| {
         let mut id = [None; MAX_CPU];
         let mut current_id = 0;
         let bsp_apic_id = apic_id();
-        acpi().lock().processors(|apic_id| {
+        acpi().lock().processors(ctx, |apic_id, _| {
             log!(
                 Info,
                 "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}"
@@ -368,13 +371,13 @@ pub fn init() {
     local_initializer().lock().initialize_current();
 }
 
-pub fn init_aps(boot_bridge: &BootBridge) {
-    let ap_initializer = ApInitializer::new(boot_bridge);
+pub fn init_aps(boot_bridge: &BootBridge, ctx: &mut MemoryContext) {
+    let ap_initializer = ApInitializer::new(boot_bridge, ctx);
 
-    acpi().lock().processors(|apic_id| {
+    acpi().lock().processors(ctx, |apic_id, ctx| {
         if apic_id == cpu_local().apic_id() {
             return;
         }
-        ap_initializer.boot_ap(apic_id);
+        ap_initializer.boot_ap(apic_id, ctx);
     });
 }

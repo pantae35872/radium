@@ -1,0 +1,8 @@
+[package]
+name = "pager"
+version = "0.1.0"
+edition = "2024"
+description = "Contains x86 paging related stuff"
+
+[dependencies]
+bitflags = "2.4.1"

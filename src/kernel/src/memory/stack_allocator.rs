@@ -1,11 +1,11 @@
-use x86_64::VirtAddr;
-
-use crate::{log, logger::LOGGER, serial_print, serial_println};
+use pager::{
+    address::{Frame, PageIter, PhysAddr, VirtAddr},
+    EntryFlags, IdentityMappable, PAGE_SIZE,
+};
 
 use super::{
-    allocator::buddy_allocator::BuddyAllocator,
-    paging::{table::RecurseLevel4, ActivePageTable, EntryFlags, Page, PageIter},
-    Frame, FrameAllocator, PAGE_SIZE,
+    paging::{table::RecurseLevel4, ActivePageTable},
+    WithTable,
 };
 
 pub struct StackAllocator {
@@ -14,15 +14,20 @@ pub struct StackAllocator {
 }
 
 impl StackAllocator {
-    pub fn new(page_range: PageIter) -> StackAllocator {
+    /// Create a new stack allocator
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided page ranges is valid
+    ///
+    /// The caller must ensure that the provided page was mapped by [`crate::memory::paging::Mapper<T>::map_to`] or [`crate::memory::paging::ActivePageTable<T>::identity_map`]
+    pub unsafe fn new(page_range: PageIter) -> StackAllocator {
         StackAllocator {
             range: page_range.clone(),
             original_range: page_range,
         }
     }
-}
 
-impl StackAllocator {
     pub fn original_range(&self) -> PageIter {
         self.original_range.clone()
     }
@@ -50,33 +55,64 @@ impl StackAllocator {
             (Some(guard), Some(start), Some(end)) => {
                 self.range = range;
 
-                active_table.unmap_addr(guard);
+                // SAFETY: We're gurentee
+                unsafe { active_table.unmap_addr(guard) };
 
-                let top_of_stack = end.start_address() + PAGE_SIZE;
-                Some(Stack::new(top_of_stack, start.start_address()))
+                let top_of_stack = end.start_address().as_u64() + PAGE_SIZE;
+                Some(Stack::new(
+                    VirtAddr::new(top_of_stack),
+                    start.start_address(),
+                ))
             }
             _ => None,
         }
+    }
+
+    pub fn with_table<'a>(
+        &'a mut self,
+        active_table: &'a mut ActivePageTable<RecurseLevel4>,
+    ) -> WithTable<'a, Self> {
+        WithTable {
+            table: active_table,
+            with_table: self,
+        }
+    }
+}
+
+impl WithTable<'_, StackAllocator> {
+    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
+        self.with_table.alloc_stack(self.table, size_in_pages)
+    }
+}
+
+impl IdentityMappable for StackAllocator {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        self.original_range().for_each(|e| unsafe {
+            mapper.identity_map(
+                Frame::containing_address(PhysAddr::new(e.start_address().as_u64())),
+                EntryFlags::WRITABLE,
+            );
+        });
     }
 }
 
 #[derive(Debug)]
 pub struct Stack {
-    top: u64,
-    bottom: u64,
+    top: VirtAddr,
+    bottom: VirtAddr,
 }
 
 impl Stack {
-    pub fn new(top: u64, bottom: u64) -> Stack {
+    pub fn new(top: VirtAddr, bottom: VirtAddr) -> Stack {
         assert!(top > bottom);
         Stack { top, bottom }
     }
 
-    pub fn top(&self) -> u64 {
+    pub fn top(&self) -> VirtAddr {
         self.top
     }
 
-    pub fn bottom(&self) -> u64 {
+    pub fn bottom(&self) -> VirtAddr {
         self.bottom
     }
 }

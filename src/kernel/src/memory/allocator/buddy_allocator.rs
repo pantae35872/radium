@@ -1,28 +1,27 @@
-use core::ptr::{NonNull, Unique};
 use core::{marker::PhantomData, ptr};
 
-use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
-use santa::Elf;
-use x86_64::{instructions::interrupts, VirtAddr};
+use bootbridge::{BootBridge, MemoryDescriptor};
+use pager::address::{Page, PhysAddr, VirtAddr};
+use pager::EntryFlags;
+use x86_64::instructions::interrupts;
 
+use crate::logger::LOGGER;
 use crate::memory::stack_allocator::StackAllocator;
 use crate::{
     dwarf_data,
     memory::{
-        paging::{
-            create_mappings, table::RecurseLevel4, ActivePageTable, EntryFlags, InactivePageTable,
-            Page,
-        },
+        paging::{create_mappings, table::RecurseLevel4, ActivePageTable, InactivePageTable},
         Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE,
     },
     utils::NumberUtils,
 };
+use crate::{log, serial_print};
 
 use super::{area_allocator::AreaAllocator, linear_allocator::LinearAllocator};
 
 struct AllocationContext {
     linear_allocator: LinearAllocator,
-    map_access: Option<InactivePageTable>,
+    access_map: Option<InactivePageTable>,
 }
 
 pub struct BuddyAllocator<const ORDER: usize> {
@@ -34,9 +33,8 @@ pub struct BuddyAllocator<const ORDER: usize> {
 
 impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
     fn allocate_frame(&mut self) -> Option<Frame> {
-        return Some(Frame::containing_address(
-            self.allocate(PAGE_SIZE as usize)? as u64,
-        ));
+        self.allocate(PAGE_SIZE as usize)
+            .map(|e| Frame::containing_address(PhysAddr::new(e as u64)))
     }
 
     fn deallocate_frame(&mut self, frame: Frame) {
@@ -49,65 +47,32 @@ impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
 
 impl<const ORDER: usize> BuddyAllocator<ORDER> {
     pub unsafe fn new<'a>(
-        elf: &Elf<'a>,
         mut allocator: LinearAllocator,
         area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
         stack_allocator: &StackAllocator,
+        bootbridge: &BootBridge,
     ) -> Self {
         let map_access = Some(create_mappings(
             |mapper, allocator| {
-                elf.map_self(|start, end, flags| {
-                    let start_frame = Frame::containing_address(start);
-                    let end_frame = Frame::containing_address(end);
-
-                    for frame in Frame::range_inclusive(start_frame, end_frame) {
-                        mapper.identity_map(
-                            frame,
-                            EntryFlags::from_elf_program_flags(&flags),
-                            allocator,
-                        );
-                    }
-                });
-                stack_allocator.original_range().for_each(|e| {
-                    mapper.identity_map(
-                        Frame::containing_address(e.start_address()),
-                        EntryFlags::WRITABLE,
-                        allocator,
-                    )
-                });
-                dwarf_data().map_self(|start, size| {
-                    let start_frame = Frame::containing_address(start);
-                    let end_frame = Frame::containing_address(start + size - 1);
-                    for frame in Frame::range_inclusive(start_frame, end_frame) {
-                        mapper.identity_map(
-                            frame,
-                            EntryFlags::PRESENT | EntryFlags::OVERWRITEABLE,
-                            allocator,
-                        );
-                    }
-                });
-                mapper.identity_map_range(
-                    (allocator.original_start() as u64).into(),
-                    Frame::containing_address(
-                        allocator.original_start() as u64 + allocator.size() as u64 - 1,
-                    ),
-                    EntryFlags::PRESENT | EntryFlags::WRITABLE,
-                    allocator,
-                );
+                mapper.identity_map_object(bootbridge, allocator);
+                mapper.identity_map_object(stack_allocator, allocator);
+                mapper.identity_map_object(dwarf_data(), allocator);
+                mapper.identity_map_object(&allocator.mappings(), allocator);
+                //mapper.identity_map_object(allocator, allocator);
             },
             &mut allocator,
         ));
         let mut init = Self {
-            free_lists: [const { FreeList::new() }; ORDER],
+            free_lists: [const { unsafe { FreeList::new() } }; ORDER],
             max_mem: 0,
             allocated: 0,
             allocation_context: AllocationContext {
                 linear_allocator: allocator,
-                map_access,
+                access_map: map_access,
             },
         };
 
-        init.add_entire_memory_to_area(area_allocator);
+        unsafe { init.add_entire_memory_to_area(area_allocator) };
 
         return init;
     }
@@ -117,7 +82,7 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
         mut area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
     ) {
         while let Some((start, size)) = area_allocator.allocate_entire_buffer() {
-            self.add_area(start, size);
+            unsafe { self.add_area(start, size) };
         }
     }
 
@@ -125,7 +90,8 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
         self.allocated
     }
 
-    unsafe fn add_area(&mut self, mut start_addr: usize, mut size: usize) {
+    unsafe fn add_area(&mut self, start_addr: PhysAddr, mut size: usize) {
+        let mut start_addr = start_addr.as_u64() as usize;
         let unaligned_addr = start_addr;
         if !(start_addr as *const u8).is_aligned_to(MAX_ALIGN) {
             start_addr += (start_addr as *const u8).align_offset(MAX_ALIGN);
@@ -140,16 +106,21 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 break;
             }
 
-            let node = &mut *((start_addr + offset) as *mut usize);
             direct_access(
                 start_addr as u64 + offset as u64,
                 &mut self.allocation_context,
-                || {
-                    *node = 0;
+                || unsafe {
+                    *((start_addr + offset) as *mut usize) = 0;
                 },
             );
-            self.free_lists[order.trailing_zeros() as usize - 1]
-                .push(node, &mut self.allocation_context);
+
+            unsafe {
+                self.free_lists[order.trailing_zeros() as usize - 1].push(
+                    (start_addr + offset) as *mut usize,
+                    &mut self.allocation_context,
+                )
+            };
+
             offset += order;
             self.max_mem += order;
             size -= order;
@@ -277,21 +248,23 @@ fn direct_access<T>(address: u64, ctx: &mut AllocationContext, f: impl FnOnce() 
     // Without interrupts because we didn't have the mappings for the device and apic
     interrupts::without_interrupts(|| {
         let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
-        // Switch to the mapping
-        let current_table = active_table.switch(ctx.map_access.take().unwrap());
-        active_table.identity_map(
-            Frame::containing_address(address),
-            EntryFlags::WRITABLE,
-            &mut ctx.linear_allocator,
-        );
-        if active_table.translate(VirtAddr::new(address)).is_none() {
-            panic!("Failed to map address to the buddy allocator");
-        }
+        // SAFETY: This should be safe if the allocator table is correctly mapped
+        let current_table = unsafe {
+            let current_table = active_table.switch(ctx.access_map.take().unwrap());
+            active_table.identity_map(
+                Frame::containing_address(PhysAddr::new(address)),
+                EntryFlags::WRITABLE,
+                &mut ctx.linear_allocator,
+            );
+            current_table
+        };
         let result = f();
-        active_table.unmap_addr(Page::containing_address(address));
+        // SAFETY: We know that we called identity map above
+        unsafe { active_table.unmap_addr(Page::containing_address(VirtAddr::new(address))) };
         // Switch back
-        let inactive_page_table = active_table.switch(current_table);
-        ctx.map_access = Some(inactive_page_table);
+        // SAFETY: We know that the table is valid beca
+        let inactive_page_table = unsafe { active_table.switch(current_table) };
+        ctx.access_map = Some(inactive_page_table);
         result
     })
 }
@@ -305,7 +278,7 @@ impl FreeList {
 
     unsafe fn push(&mut self, item: *mut usize, ctx: &mut AllocationContext) {
         direct_access(item as u64, ctx, || {
-            *item = self.head as usize;
+            unsafe { *item = self.head as usize };
         });
         self.head = item;
     }
@@ -316,7 +289,7 @@ impl FreeList {
             false => {
                 let item = self.head;
                 direct_access(item as u64, ctx, || {
-                    self.head = *item as *mut usize;
+                    self.head = unsafe { *item as *mut usize };
                 });
                 Some(item)
             }

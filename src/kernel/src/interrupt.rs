@@ -5,10 +5,8 @@ use crate::driver::acpi::acpi;
 use crate::gdt;
 use crate::hlt_loop;
 use crate::log;
-use crate::logger::LOGGER;
-use crate::memory::memory_controller;
+use crate::memory::MemoryContext;
 use crate::println;
-use crate::serial_print;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::local_initializer;
@@ -16,9 +14,9 @@ use crate::smp::CpuLocalBuilder;
 use crate::utils::port::Port8Bit;
 use alloc::boxed::Box;
 use apic::LocalApic;
+use apic::LocalApicArguments;
 use apic::TimerDivide;
 use apic::TimerMode;
-use conquer_once::spin::OnceCell;
 use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
@@ -32,7 +30,6 @@ pub mod io_apic;
 pub const LOCAL_APIC_OFFSET: u8 = 32;
 
 pub static TIMER_COUNT: AtomicUsize = AtomicUsize::new(0);
-static IO_APICS: OnceCell<IoApicManager> = OnceCell::uninit();
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -102,42 +99,48 @@ fn create_idt() -> &'static InterruptDescriptorTable {
     idt
 }
 
-pub fn init() {
-    // FIXME: The apic version doesn't work correctly in the aps because the memory are being
-    // mapped multiple times
+pub fn init(ctx: &mut MemoryContext, boot_bridge: &bootbridge::BootBridge) {
+    let lapic = ctx
+        .mmio_device::<LocalApic, _>(
+            LocalApicArguments {
+                timer_vector: InterruptIndex::TimerVector,
+                error_vector: InterruptIndex::ErrorVector,
+                spurious_vector: InterruptIndex::SpuriousInterruptsVector,
+            },
+            boot_bridge,
+            None,
+        )
+        .unwrap();
     local_initializer()
         .lock()
-        .register(|cpu: &mut CpuLocalBuilder, id| {
+        .register(move |cpu: &mut CpuLocalBuilder, id| {
+            let mut lapic = lapic.clone();
             log!(Info, "Initializing interrupts for CPU: {id}");
             disable_pic();
             let idt = create_idt();
             idt.load();
             cpu.idt(idt);
             x86_64::instructions::interrupts::enable();
-            let mut lapic = LocalApic::new(
-                InterruptIndex::TimerVector,
-                InterruptIndex::ErrorVector,
-                InterruptIndex::SpuriousInterruptsVector,
-            );
-            memory_controller().lock().map_mmio(&mut lapic, true);
+
             lapic.enable();
             lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
             lapic.enable_timer();
             cpu.lapic(lapic);
         });
-    local_initializer().lock().after_bsp(|bsp| {
-        let mut io_apic_manager = IoApicManager::new();
-        acpi()
-            .lock()
-            .io_apics(|addr, gsi_base| io_apic_manager.add_io_apic(addr, gsi_base));
-        acpi().lock().interrupt_overrides(|source_override| {
+    let mut io_apic_manager = IoApicManager::new();
+    acpi().lock().io_apics(ctx, |addr, gsi_base, ctx| {
+        io_apic_manager.add_io_apic(addr, gsi_base, ctx, boot_bridge)
+    });
+    acpi()
+        .lock()
+        .interrupt_overrides(ctx, |source_override, _ctx| {
             io_apic_manager.add_source_override(source_override)
         });
+    local_initializer().lock().after_bsp(move |bsp| {
         io_apic_manager.redirect_legacy_irqs(
             0,
             RedirectionTableEntry::new(InterruptIndex::PITVector, bsp.apic_id()),
         );
-        IO_APICS.init_once(|| io_apic_manager.into());
     });
 }
 
@@ -166,7 +169,7 @@ struct FullInterruptStackFrame {
     pub stack_segment: u64,
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {

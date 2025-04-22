@@ -2,7 +2,11 @@ use core::ptr;
 
 use crate::memory::virt_addr_alloc;
 use alloc::alloc::*;
-use lazy_static::lazy_static;
+use buddy_allocator::BuddyAllocator;
+use pager::{
+    address::{Page, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+};
 
 pub mod area_allocator;
 pub mod buddy_allocator;
@@ -11,11 +15,8 @@ pub mod linked_list;
 
 use self::linked_list::LinkedListAllocator;
 
-use super::memory_controller;
+use super::paging::{table::RecurseLevel4, ActivePageTable};
 
-lazy_static! {
-    pub static ref HEAP_START: u64 = virt_addr_alloc(HEAP_SIZE);
-}
 pub const HEAP_SIZE: u64 = 0x4000000; // 64 Mib
 
 pub fn align_up(addr: usize, align: usize) -> usize {
@@ -47,7 +48,7 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
             let alloc_end = alloc_start.checked_add(size).expect("overflow");
             let excess_size = region.end_addr() - alloc_end;
             if excess_size > 0 {
-                allocator.add_free_region(alloc_end, excess_size);
+                unsafe { allocator.add_free_region(alloc_end, excess_size) };
             }
             alloc_start as *mut u8
         } else {
@@ -57,19 +58,35 @@ unsafe impl GlobalAlloc for Locked<LinkedListAllocator> {
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let (size, _) = LinkedListAllocator::size_align(layout);
-        self.lock().add_free_region(ptr as usize, size);
+        unsafe { self.lock().add_free_region(ptr as usize, size) };
     }
 }
 
 #[global_allocator]
 static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAllocator::new());
 
-pub fn init() {
-    memory_controller().lock().alloc_map(HEAP_SIZE, *HEAP_START);
-
+/// Initialize the kernel heap
+///
+/// SAFETY:
+/// The caller must ensure that this is called on kernel initializaton only
+/// And must be called after the memory controller is initialize
+pub unsafe fn init(
+    active_table: &mut ActivePageTable<RecurseLevel4>,
+    buddy_alloc: &mut BuddyAllocator<64>,
+) {
+    let heap_start = virt_addr_alloc(HEAP_SIZE / PAGE_SIZE);
+    active_table.map_range(
+        heap_start,
+        Page::containing_address(VirtAddr::new(
+            heap_start.start_address().as_u64() + HEAP_SIZE - 1,
+        )),
+        EntryFlags::WRITABLE,
+        buddy_alloc,
+    );
     unsafe {
-        GLOBAL_ALLOCATOR
-            .lock()
-            .init(*HEAP_START as usize, HEAP_SIZE as usize);
+        GLOBAL_ALLOCATOR.lock().init(
+            heap_start.start_address().as_u64() as usize,
+            HEAP_SIZE as usize,
+        );
     }
 }

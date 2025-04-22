@@ -1,11 +1,12 @@
 use core::marker::PhantomData;
 
-use bootbridge::{MemoryDescriptor, MemoryMap, MemoryMapIter, MemoryType};
-
-use crate::{
-    log,
-    memory::{FrameAllocator, PAGE_SIZE},
+use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
+use pager::{
+    address::{Frame, PhysAddr},
+    PAGE_SIZE,
 };
+
+use crate::{log, memory::FrameAllocator};
 
 use super::linear_allocator::LinearAllocator;
 
@@ -16,7 +17,13 @@ pub struct AreaAllocator<'a, I> {
 }
 
 impl<'a> AreaAllocator<'a, ()> {
-    pub fn new(
+    /// # Safety
+    ///
+    /// This is unsafe because we can't gurentee that the memory mapped has already been allocated
+    /// to another allocator or not.
+    ///
+    /// and the [`FrameAllocator::allocate_frame`] require that the allocated address is valid
+    pub unsafe fn new(
         areas: &'a MemoryMap,
     ) -> AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>> {
         let areas = areas.entries().filter(|e| e.ty == MemoryType::CONVENTIONAL);
@@ -35,19 +42,17 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
             None => return,
         }
         .clone();
-        if area.phys_start == 0 {
+        if area.phys_start.is_null() {
             area.phys_start += PAGE_SIZE;
             area.page_count -= 1;
         }
+        // SAFETY: This is safe because the memory map is valid, and is gurenntee by uefi and the bootloader
         self.current_area = Some(unsafe {
-            LinearAllocator::new(
-                area.phys_start as usize,
-                (area.page_count * PAGE_SIZE) as usize,
-            )
+            LinearAllocator::new(area.phys_start, (area.page_count * PAGE_SIZE) as usize)
         });
     }
 
-    pub fn allocate_entire_buffer(&mut self) -> Option<(usize, usize)> {
+    pub fn allocate_entire_buffer(&mut self) -> Option<(PhysAddr, usize)> {
         if self.current_area.is_none() {
             self.next_area();
         }
@@ -59,7 +64,9 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
 
         let result = (
             current_area.current(),
-            current_area.size() - (current_area.current() - current_area.original_start()),
+            current_area.size()
+                - (current_area.current().as_u64() - current_area.original_start().as_u64())
+                    as usize,
         );
         self.current_area = None;
         Some(result)
@@ -67,7 +74,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
 }
 
 impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAllocator<'a, I> {
-    fn allocate_frame(&mut self) -> Option<crate::memory::Frame> {
+    fn allocate_frame(&mut self) -> Option<Frame> {
         if self.current_area.is_none() {
             self.next_area();
         }
@@ -83,7 +90,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAlloca
         })
     }
 
-    fn deallocate_frame(&mut self, frame: crate::memory::Frame) {
+    fn deallocate_frame(&mut self, frame: Frame) {
         log!(
             Warning,
             "deallocate called on area allocator with frame: {:#x}",

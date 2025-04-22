@@ -11,6 +11,10 @@ pub use std::{string::String, vec::Vec};
 
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 pub use alloc::{string::String, vec::Vec};
+use pager::{
+    address::{Frame, PhysAddr},
+    DataBuffer, EntryFlags, IdentityMappable,
+};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"BAKE");
 
@@ -32,7 +36,7 @@ struct BakerySymbol {
 
 #[derive(Debug)]
 pub struct DwarfBaker<'a> {
-    data: &'a [u8],
+    data: DataBuffer<'a>,
 }
 
 pub struct Bakery {
@@ -92,11 +96,13 @@ impl Default for Bakery {
 impl<'a> DwarfBaker<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         assert!(data[0..4] == MAGIC.to_le_bytes());
-        Self { data }
+        Self {
+            data: DataBuffer::new(data),
+        }
     }
 
     fn symbol(&self, index: usize) -> Option<BakerySymbol> {
-        let mut data = self.data;
+        let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
         let file_len =
             usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
@@ -115,7 +121,7 @@ impl<'a> DwarfBaker<'a> {
     }
 
     fn symbol_len(&self) -> usize {
-        let mut data = self.data;
+        let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
         let file_len =
             usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
@@ -123,7 +129,7 @@ impl<'a> DwarfBaker<'a> {
     }
 
     fn string_table(&self) -> &'a str {
-        let mut data = self.data;
+        let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
         let file_len =
             usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
@@ -163,15 +169,10 @@ impl<'a> DwarfBaker<'a> {
 
         None
     }
+}
 
-    /// Start, Size
-    pub fn map_self<M>(&self, mut mapper: M)
-    where
-        M: FnMut(u64, u64),
-    {
-        mapper(
-            self.data as *const [u8] as *const u8 as u64,
-            self.data.len() as u64,
-        );
+impl IdentityMappable for DwarfBaker<'_> {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        self.data.map(mapper);
     }
 }

@@ -7,3 +7,4 @@ description = "An 64 bit elf loader"
 [dependencies]
 bitflags = "2.9.0"
 c_enum = { path = "../c_enum" }
+pager = { path = "../pager" }

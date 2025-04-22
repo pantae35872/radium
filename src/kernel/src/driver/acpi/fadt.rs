@@ -1,4 +1,4 @@
-use crate::inline_if;
+use crate::{inline_if, memory::MemoryContext};
 
 use super::{dsdt::Dsdt, AcpiSdt, AcpiSdtData};
 
@@ -68,13 +68,16 @@ struct GenericAddressStructure {
 }
 
 impl AcpiSdt<Fadt> {
-    pub fn dsdt(&self) -> &'static AcpiSdt<Dsdt> {
+    pub fn dsdt(&self, ctx: &mut MemoryContext) -> &'static AcpiSdt<Dsdt> {
         unsafe {
-            AcpiSdt::<Dsdt>::new(inline_if!(
-                self.data.x_dsdt != 0,
-                self.data.x_dsdt,
-                self.data.dsdt as u64
-            ))
+            AcpiSdt::<Dsdt>::new(
+                inline_if!(
+                    self.data.x_dsdt != 0,
+                    self.data.x_dsdt,
+                    self.data.dsdt as u64
+                ),
+                ctx,
+            )
             .expect("Invalid dsdt pointer in fadt")
         }
     }

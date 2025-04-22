@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use crate::memory::Frame;
+use pager::address::{Frame, PhysAddr};
 
 use super::EntryFlags;
 
@@ -28,7 +28,10 @@ impl Entry {
     }
     pub fn pointed_frame(&self) -> Option<Frame> {
         if self.flags().contains(EntryFlags::PRESENT) {
-            Some(Frame::containing_address(self.0 & 0x000fffff_fffff000))
+            // SAFETY: We already mask the 52-63 (inclusive) bits
+            Some(Frame::containing_address(unsafe {
+                PhysAddr::new_unchecked(self.0 & 0x000fffff_fffff000)
+            }))
         } else {
             None
         }
