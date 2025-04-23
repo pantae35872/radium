@@ -12,4 +12,6 @@ struct MainScheduler {
 
 struct Thread {}
 
-fn init() {}
+struct Dispatcher;
+
+impl Dispatcher {}

@@ -41,6 +41,7 @@ use core::{ffi::c_void, sync::atomic::AtomicBool};
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
+use driver::display::vga;
 use driver::{
     acpi::{self},
     pit,
@@ -68,8 +69,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     interrupt::init(&mut phase3);
     pit::init();
     smp::init_aps(phase3);
-    //graphics::init(&mut memory_ctx, &boot_bridge);
-    //smp::init_aps(&boot_bridge, &mut memory_ctx);
     //driver::init(&boot_bridge);
 }
 
