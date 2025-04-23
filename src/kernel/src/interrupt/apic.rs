@@ -1,9 +1,11 @@
 use core::{marker::PhantomData, ops::RangeBounds, usize};
 
 use bit_field::BitField;
-use pager::address::{PhysAddr, VirtAddr};
+use pager::{
+    address::{PhysAddr, VirtAddr},
+    registers::Msr,
+};
 use raw_cpuid::CpuId;
-use x86_64::registers::model_specific::Msr;
 
 use crate::{
     inline_if, log,

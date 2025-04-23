@@ -129,16 +129,3 @@ impl IdentityMappable for DataBuffer<'_> {
         };
     }
 }
-
-bitflags! {
-    /// Contains the [`cr3 flags`] (bits 3-4)
-    ///
-    /// [`cr3 flags`] https://wiki.osdev.org/CPU_Registers_x86#CR3
-    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct Cr3Flags: u64 {
-        /// Use a writethrough cache policy for the table (otherwise a writeback policy is used).
-        const PAGE_LEVEL_WRITETHROUGH = 1 << 3;
-        /// Disable caching for the table.
-        const PAGE_LEVEL_CACHE_DISABLE = 1 << 4;
-    }
-}

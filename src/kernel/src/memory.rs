@@ -7,13 +7,13 @@ use allocator::{
 use bootbridge::{BootBridge, MemoryType, RawData};
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
+    registers::{Cr0, Cr0Flags, Efer, EferFlags},
     EntryFlags, PAGE_SIZE,
 };
 use paging::{
     early_map_kernel, mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable,
 };
 use stack_allocator::StackAllocator;
-use x86_64::registers::control::{Cr0Flags, EferFlags};
 
 use crate::{
     driver::acpi::Acpi,
@@ -124,19 +124,11 @@ unsafe fn init_allocator(
 }
 
 unsafe fn enable_write_protect_bit() {
-    use x86_64::registers::control::Cr0;
-
-    let mut cr0 = Cr0::read();
-    cr0.insert(Cr0Flags::WRITE_PROTECT);
-    unsafe { Cr0::write(cr0) };
+    unsafe { Cr0::write_or(Cr0Flags::WriteProtect) };
 }
 
 unsafe fn enable_nxe_bit() {
-    use x86_64::registers::model_specific::Efer;
-
-    let mut efer = Efer::read();
-    efer.insert(EferFlags::NO_EXECUTE_ENABLE);
-    unsafe { Efer::write(efer) };
+    unsafe { Efer::write_or(EferFlags::NoExecuteEnable) };
 }
 
 const VIRT_BASE_ADDR: u64 = 0xFFFFFFFF00000000;

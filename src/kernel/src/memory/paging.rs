@@ -8,8 +8,8 @@ use crate::{dwarf_data, log};
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use pager::address::{Frame, Page, PhysAddr};
-use pager::registers::Cr3;
-use pager::{Cr3Flags, EntryFlags, PAGE_SIZE};
+use pager::registers::{Cr3, Cr3Flags};
+use pager::{EntryFlags, PAGE_SIZE};
 use table::{
     AnyLevel, DirectLevel4, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create,
     TableLevel, TableLevel4,
