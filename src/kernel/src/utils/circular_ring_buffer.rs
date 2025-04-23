@@ -124,7 +124,7 @@ pub mod lockfree {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use x86_64::instructions::interrupts;
+    use crate::interrupt;
 
     /// Lock free circular ring buffer
     /// this buffer if overflowed will overwrite the oldest data
@@ -236,7 +236,7 @@ pub mod lockfree {
             // on the same core it's will *almost* be a dead lock, if the system can gureentee that no
             // thread will be stay on the cpu forever, this will causes no dead lock. but if it's in an interrupts
             // or in an kernel panic. this that "thread" may stay forever causing a dead lock
-            interrupts::without_interrupts(|| loop {
+            interrupt::without_interrupts(|| loop {
                 match self
                     .state
                     .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
@@ -264,7 +264,7 @@ pub mod lockfree {
         }
 
         fn take(&self) -> Option<T> {
-            interrupts::without_interrupts(|| loop {
+            interrupt::without_interrupts(|| loop {
                 match self
                     .state
                     .compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed)

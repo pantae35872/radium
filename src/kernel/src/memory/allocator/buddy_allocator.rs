@@ -3,9 +3,9 @@ use core::{marker::PhantomData, ptr};
 use bootbridge::MemoryDescriptor;
 use pager::address::{Page, PhysAddr, VirtAddr};
 use pager::EntryFlags;
-use x86_64::instructions::interrupts;
 
 use crate::initialization_context::{InitializationContext, Phase0};
+use crate::interrupt;
 use crate::memory::stack_allocator::StackAllocator;
 use crate::{
     dwarf_data,
@@ -245,7 +245,7 @@ impl FreeNode {
 
 fn direct_access<T>(address: u64, ctx: &mut AllocationContext, f: impl FnOnce() -> T) -> T {
     // Without interrupts because we didn't have the mappings for the device and apic
-    interrupts::without_interrupts(|| {
+    interrupt::without_interrupts(|| {
         let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
         // SAFETY: This should be safe if the allocator table is correctly mapped
         let current_table = unsafe {

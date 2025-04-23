@@ -3,10 +3,9 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Phase2};
-use crate::log;
+use crate::{interrupt, log};
 use conquer_once::spin::OnceCell;
 use spin::Mutex;
-use x86_64::instructions::interrupts;
 
 use self::ttf_renderer::TtfRenderer;
 
@@ -22,7 +21,7 @@ macro_rules! print {
 }
 
 pub fn _print(args: Arguments) {
-    interrupts::without_interrupts(|| {
+    interrupt::without_interrupts(|| {
         if let Some(driver) = DRIVER.get() {
             driver.lock().write_fmt(args).unwrap();
         } else {

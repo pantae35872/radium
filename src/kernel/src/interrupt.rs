@@ -1,3 +1,4 @@
+use core::arch::asm;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
@@ -19,6 +20,9 @@ use apic::TimerMode;
 use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
+use pager::registers::Cr2;
+use pager::registers::RFlags;
+use pager::registers::RFlagsFlags;
 use x86_64::structures::idt::PageFaultErrorCode;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
 use x86_64::VirtAddr;
@@ -116,7 +120,7 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
         let idt = create_idt();
         idt.load();
         cpu.idt(idt);
-        x86_64::instructions::interrupts::enable();
+        enable();
 
         lapic.enable();
         lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
@@ -163,9 +167,39 @@ struct FullInterruptStackFrame {
     pub rax: u64,
     pub instruction_pointer: VirtAddr,
     pub code_segment: u64,
-    pub cpu_flags: u64,
+    pub cpu_flags: RFlagsFlags,
     pub stack_pointer: VirtAddr,
     pub stack_segment: u64,
+}
+
+#[inline(always)]
+pub fn disable() {
+    // SAFETY: Enabling and Disabling interrupt is considered safe in kernel context
+    unsafe { asm!("cli", options(nomem, nostack)) }
+}
+
+#[inline(always)]
+pub fn enable() {
+    // SAFETY: Enabling and Disabling interrupt is considered safe in kernel context
+    unsafe { asm!("sti", options(nomem, nostack)) }
+}
+
+#[inline(always)]
+pub fn without_interrupts<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let was_enable = RFlags::read().contains(RFlagsFlags::InterruptEnable);
+    if was_enable {
+        disable();
+    }
+
+    let ret = f();
+
+    if was_enable {
+        enable();
+    }
+    ret
 }
 
 #[unsafe(no_mangle)]
@@ -173,6 +207,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
             serial_println!("APIC timer on cpu: {}", cpu_local().cpu_id());
+            serial_println!("Flags: {:?}", stack_frame.cpu_flags);
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {
             TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -293,8 +328,6 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
-    use x86_64::registers::control::Cr2;
-
     log!(Critical, "EXCEPTION: PAGE FAULT");
     log!(Critical, "Accessed Address: {:?}", Cr2::read());
     log!(Critical, "Error Code: {:?}", error_code);

@@ -2,7 +2,7 @@ use core::arch::asm;
 
 use bitflags::bitflags;
 
-use crate::address::{Frame, PhysAddr};
+use crate::address::{Frame, PhysAddr, VirtAddr};
 
 /// Respresent a [`Cr3`] register in a processor
 ///
@@ -63,12 +63,37 @@ bitflags! {
         const UpperAddressIgnoreEnable = 1 << 20;
         const AutomaticIBRSEnable = 1 << 21;
     }
+
+
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct RFlagsFlags: u64 {
+        const Carry = 1 << 0;
+        const ParityFlag = 1 << 2;
+        const AuxiliaryCarry = 1 << 4;
+        const Zero = 1 << 6;
+        const Sign = 1 << 7;
+        const Trap = 1 << 8;
+        const InterruptEnable = 1 << 9;
+        const Direction = 1 << 10;
+        const Overflow = 1 << 11;
+        const NestedTask = 1 << 14;
+        const Resume = 1 << 16;
+        const Virtual8086 = 1 << 17;
+        const AlignmentCheck = 1 << 18;
+        const VirtualInterrupt = 1 << 19;
+        const VirtualInterruptPending = 1 << 20;
+        const ID = 1 << 21;
+    }
 }
 
 #[derive(Debug)]
 pub struct Msr(u32);
 
 pub struct Cr0;
+
+pub struct Cr2;
+
+pub struct RFlags;
 
 pub struct Efer;
 
@@ -104,8 +129,22 @@ impl Cr3 {
     }
 }
 
-impl Cr0 {
+impl Cr2 {
     /// Read from the cr0 flags
+    #[inline(always)]
+    pub fn read() -> VirtAddr {
+        let result: u64;
+        // SAFETY: We reading the cr0 is safe we're not setting it
+        unsafe {
+            asm!("mov {}, cr2", out(reg) result, options(nostack, preserves_flags));
+        }
+
+        VirtAddr::new(result)
+    }
+}
+
+impl Cr0 {
+    /// Read from the cr0 into flags
     #[inline(always)]
     pub fn read() -> Cr0Flags {
         let result: u64;
@@ -215,6 +254,17 @@ impl Efer {
     pub unsafe fn write(flags: EferFlags) {
         let msr = Self::IA32_EFER_MSR;
         unsafe { msr.write(flags.bits()) };
+    }
+}
+
+impl RFlags {
+    pub fn read() -> RFlagsFlags {
+        let value: u64;
+        unsafe {
+            asm!("pushfq; pop {:r}", out(reg) value, options(nomem, preserves_flags));
+        }
+
+        RFlagsFlags::from_bits_truncate(value)
     }
 }
 

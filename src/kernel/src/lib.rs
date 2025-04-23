@@ -50,6 +50,7 @@ use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
+use utils::port::Port32Bit;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
@@ -171,7 +172,7 @@ pub fn test_runner(_tests: &[&dyn Testable]) {
     exit_qemu(QemuExitCode::Success);
 }
 
-pub fn test_panic_handler(info: &PanicInfo) -> ! {
+pub fn test_panic_handler(_info: &PanicInfo) -> ! {
     serial_println!("[failed]");
     exit_qemu(QemuExitCode::Failed);
 }
@@ -184,10 +185,8 @@ pub enum QemuExitCode {
 }
 
 pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
-    use x86_64::instructions::port::Port;
-
     unsafe {
-        let mut port = Port::new(0xf4);
+        let port = Port32Bit::new(0xf4);
         port.write(exit_code as u32);
     }
 
