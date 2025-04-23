@@ -17,7 +17,9 @@ use stack_allocator::StackAllocator;
 
 use crate::{
     driver::acpi::Acpi,
-    initialization_context::{InitializationContext, Phase0, Phase1, Phase2, Phase3},
+    initialization_context::{
+        select_context, InitializationContext, Phase0, Phase1, Phase2, Phase3,
+    },
     initialize_guard, log,
 };
 
@@ -236,100 +238,48 @@ impl MMIOBufferInfo {
     }
 }
 
-impl InitializationContext<Phase3> {
-    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
-        let ctx = self.context_mut();
-        ctx.active_table
-            .mapper_with_allocator(&mut ctx.buddy_allocator)
+select_context! {
+    (Phase2, Phase3) => {
+        pub fn mmio_device<T: MMIODevice<A>, A>(
+            &mut self,
+            args: A,
+            depends: Option<MMIOBufferInfo>,
+        ) -> Option<T> {
+            let info = T::boot_bridge(&self.context().boot_bridge)
+                .or_else(|| T::acpi(self.context().acpi()))
+                .or_else(|| T::other())
+                .or_else(|| depends)?;
+            let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
+            let ctx = self.context_mut();
+            // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
+            unsafe {
+                ctx.active_table.map_to_range(
+                    Page::containing_address(vaddr.start_address()),
+                    Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
+                    Frame::containing_address(info.addr()),
+                    Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
+                    EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
+                    &mut ctx.buddy_allocator,
+                )
+            };
+            let buf = MMIOBuffer {
+                start: vaddr.start_address().align_to(info.addr()),
+                size_in_pages: info.size_in_pages(),
+            };
+            Some(T::new(buf, args))
+        }
     }
+    (Phase1, Phase2, Phase3) => {
+        pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
+            let ctx = self.context_mut();
+            ctx.stack_allocator.with_table(&mut ctx.active_table)
+        }
 
-    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
-        let ctx = self.context_mut();
-        ctx.stack_allocator.with_table(&mut ctx.active_table)
-    }
-
-    pub fn mmio_device<T: MMIODevice<A>, A>(
-        &mut self,
-        args: A,
-        depends: Option<MMIOBufferInfo>,
-    ) -> Option<T> {
-        let info = T::boot_bridge(&self.context().boot_bridge)
-            .or_else(|| T::acpi(self.context().acpi()))
-            .or_else(|| T::other())
-            .or_else(|| depends)?;
-        let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
-        let ctx = self.context_mut();
-        // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
-        unsafe {
-            ctx.active_table.map_to_range(
-                Page::containing_address(vaddr.start_address()),
-                Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
-                Frame::containing_address(info.addr()),
-                Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
-                &mut ctx.buddy_allocator,
-            )
-        };
-        let buf = MMIOBuffer {
-            start: vaddr.start_address().align_to(info.addr()),
-            size_in_pages: info.size_in_pages(),
-        };
-        Some(T::new(buf, args))
-    }
-}
-
-impl InitializationContext<Phase2> {
-    pub fn mmio_device<T: MMIODevice<A>, A>(
-        &mut self,
-        args: A,
-        depends: Option<MMIOBufferInfo>,
-    ) -> Option<T> {
-        let info = T::boot_bridge(&self.context().boot_bridge)
-            .or_else(|| T::acpi(self.context().acpi()))
-            .or_else(|| T::other())
-            .or_else(|| depends)?;
-        let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
-        let ctx = self.context_mut();
-        // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
-        unsafe {
-            ctx.active_table.map_to_range(
-                Page::containing_address(vaddr.start_address()),
-                Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
-                Frame::containing_address(info.addr()),
-                Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
-                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
-                &mut ctx.buddy_allocator,
-            )
-        };
-        let buf = MMIOBuffer {
-            start: vaddr.start_address().align_to(info.addr()),
-            size_in_pages: info.size_in_pages(),
-        };
-        Some(T::new(buf, args))
-    }
-
-    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
-        let ctx = self.context_mut();
-        ctx.active_table
-            .mapper_with_allocator(&mut ctx.buddy_allocator)
-    }
-
-    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
-        let ctx = self.context_mut();
-        ctx.stack_allocator.with_table(&mut ctx.active_table)
-    }
-}
-
-impl InitializationContext<Phase1> {
-    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
-        let ctx = self.context_mut();
-        ctx.active_table
-            .mapper_with_allocator(&mut ctx.buddy_allocator)
-    }
-
-    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
-        let ctx = self.context_mut();
-        ctx.stack_allocator.with_table(&mut ctx.active_table)
+        pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
+            let ctx = self.context_mut();
+            ctx.active_table
+                .mapper_with_allocator(&mut ctx.buddy_allocator)
+        }
     }
 }
 

@@ -121,6 +121,19 @@ macro_rules! create_initialization_chain {
    }
 }
 
+macro_rules! select_context {
+    ($(
+        ($($phase:ty),*) => $body:tt
+    )*) => {$(
+        $(
+            impl InitializationContext<$phase> $body
+        )*
+    )*};
+}
+
+#[allow(unused_imports)]
+pub(crate) use select_context;
+
 create_initialization_chain! {
     Phase0 {
         boot_bridge: BootBridge,
