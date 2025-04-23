@@ -47,7 +47,7 @@ impl Vga {
         }
     }
 
-    unsafe fn write_registers(&self, registers_slice: &mut [u8]) {
+    unsafe fn write_registers(&self, registers_slice: &mut [u8]) { unsafe {
         let mut registers = registers_slice.iter();
         self.misc_port.write(*registers.next().unwrap_or(&0));
         for i in 0..5 {
@@ -86,7 +86,7 @@ impl Vga {
 
         self.attribute_controller_reset_port.read();
         self.attribute_controller_index_port.write(0x20);
-    }
+    }}
 
     fn support_mode(width: u32, height: u32, colordepth: u32) -> bool {
         width == 320 && height == 200 && colordepth == 8

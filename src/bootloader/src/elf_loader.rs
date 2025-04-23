@@ -1,6 +1,6 @@
 use core::ptr::write_bytes;
 
-use santa::{Elf, ProgramType, SectionHeaderFlags};
+use santa::{Elf, ProgramType};
 use uefi::table::boot::{AllocateType, MemoryType};
 use uefi_services::{println, system_table};
 

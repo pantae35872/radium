@@ -2,7 +2,6 @@ use core::fmt::Display;
 
 use alloc::{fmt, vec::Vec};
 use aml::{AmlContext, AmlHandle};
-use bootbridge::BootBridge;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
@@ -10,11 +9,10 @@ use pager::{
 };
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
-use spin::{Mutex, Once};
 
 use crate::{
     initialization_context::{
-        AnyInitializationPhase, InitializationContext, Phase1, Phase2, Phase3,
+        InitializationContext, Phase1, Phase2,
     },
     log,
     memory::{virt_addr_alloc, MMIOBufferInfo},

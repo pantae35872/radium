@@ -11,10 +11,8 @@ pub use std::{string::String, vec::Vec};
 
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 pub use alloc::{string::String, vec::Vec};
-use pager::{
-    address::{Frame, PhysAddr},
-    DataBuffer, EntryFlags, IdentityMappable,
-};
+
+use pager::{DataBuffer, IdentityMappable};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"BAKE");
 

@@ -5,7 +5,6 @@ use crate::{
     memory::virt_addr_alloc,
 };
 use alloc::alloc::*;
-use buddy_allocator::BuddyAllocator;
 use pager::{
     address::{Page, VirtAddr},
     EntryFlags, Mapper, PAGE_SIZE,
@@ -18,7 +17,6 @@ pub mod linked_list;
 
 use self::linked_list::LinkedListAllocator;
 
-use super::paging::{table::RecurseLevel4, ActivePageTable};
 
 pub const HEAP_SIZE: u64 = 0x4000000; // 64 Mib
 

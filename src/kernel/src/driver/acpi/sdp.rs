@@ -1,7 +1,7 @@
 use alloc::string::String;
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
-    EntryFlags, Mapper, PAGE_SIZE,
+    EntryFlags, Mapper,
 };
 
 use crate::{

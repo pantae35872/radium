@@ -1,12 +1,11 @@
 use core::{marker::PhantomData, ptr};
 
-use bootbridge::{BootBridge, MemoryDescriptor};
+use bootbridge::MemoryDescriptor;
 use pager::address::{Page, PhysAddr, VirtAddr};
 use pager::EntryFlags;
 use x86_64::instructions::interrupts;
 
 use crate::initialization_context::{InitializationContext, Phase0};
-use crate::logger::LOGGER;
 use crate::memory::stack_allocator::StackAllocator;
 use crate::{
     dwarf_data,
@@ -16,7 +15,6 @@ use crate::{
     },
     utils::NumberUtils,
 };
-use crate::{log, serial_print};
 
 use super::{area_allocator::AreaAllocator, linear_allocator::LinearAllocator};
 

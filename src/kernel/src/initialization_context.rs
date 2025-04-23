@@ -3,14 +3,13 @@ use bootbridge::BootBridge;
 
 use crate::{
     driver::acpi::{madt::IoApicInterruptSourceOverride, Acpi},
-    interrupt::io_apic::IoApicManager,
     memory::{
         allocator::buddy_allocator::BuddyAllocator,
         paging::{table::RecurseLevel4, ActivePageTable},
         stack_allocator::StackAllocator,
         MMIOBufferInfo,
     },
-    smp::{ApInitializer, LocalInitializer},
+    smp::LocalInitializer,
 };
 
 macro_rules! create_initialization_chain {

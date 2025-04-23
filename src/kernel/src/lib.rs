@@ -41,7 +41,6 @@ use core::{ffi::c_void, sync::atomic::AtomicBool};
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
-use driver::display::vga;
 use driver::{
     acpi::{self},
     pit,

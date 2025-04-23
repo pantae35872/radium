@@ -2,7 +2,7 @@ use core::slice::{self};
 
 use alloc::boxed::Box;
 
-use crate::initialization_context::{InitializationContext, Phase1, Phase3};
+use crate::initialization_context::{InitializationContext, Phase1};
 
 use super::{AcpiSdt, AcpiSdtData, EmptySdt};
 

@@ -12,10 +12,8 @@ use core::iter::Iterator;
 use core::option::Option;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
-    DataBuffer, EntryFlags, IdentityMappable,
+    DataBuffer, EntryFlags, IdentityMappable, PAGE_SIZE,
 };
-
-pub const PAGE_SIZE: u64 = 4096;
 
 // TODO: Add testing
 pub struct Elf<'a> {

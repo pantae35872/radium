@@ -9,7 +9,7 @@ use crc::{
     Hasher64,
 };
 
-use crate::utils::circular_ring_buffer::{self, lockfree::CircularRingBuffer, singlethreaded};
+use crate::utils::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
 
 use super::{CallbackFormatter, LogLevel};
 

@@ -356,7 +356,7 @@ impl PciHeader {
         return self.function;
     }
 
-    pub unsafe fn read<T>(&self, offset: u32) -> u32 {
+    pub unsafe fn read<T>(&self, offset: u32) -> u32 { unsafe {
         let bus = self.bus() as u32;
         let device = self.device() as u32;
         let func = self.function() as u32;
@@ -373,9 +373,9 @@ impl PciHeader {
             4 => value,
             width => unreachable!("unknown PCI read width: {}", width),
         }
-    }
+    }}
 
-    unsafe fn write<T>(&self, offset: u32, value: u32) {
+    unsafe fn write<T>(&self, offset: u32, value: u32) { unsafe {
         let current = self.read::<u32>(offset);
 
         let bus = self.bus() as u32;
@@ -400,7 +400,7 @@ impl PciHeader {
             4 => self.data_port.write(value), // u32
             width => unreachable!("unknown PCI write width: {}", width),
         }
-    }
+    }}
 
     pub fn enable_mmio(&self) {
         let command = unsafe { self.read::<u16>(0x04) };

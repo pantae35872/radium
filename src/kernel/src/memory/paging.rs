@@ -5,7 +5,6 @@ use self::temporary_page::TemporaryPage;
 use crate::initialization_context::{InitializationContext, Phase0};
 use crate::memory::FrameAllocator;
 use crate::{dwarf_data, log};
-use bootbridge::BootBridge;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use pager::address::{Frame, Page, PhysAddr};

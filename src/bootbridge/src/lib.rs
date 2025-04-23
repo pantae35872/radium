@@ -8,7 +8,7 @@ use pager::{
     address::{Frame, PhysAddr, VirtAddr},
     DataBuffer, EntryFlags, IdentityMappable,
 };
-use santa::{Elf, PAGE_SIZE};
+use santa::Elf;
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {

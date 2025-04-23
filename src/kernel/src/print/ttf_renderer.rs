@@ -1,7 +1,6 @@
 use core::{isize, usize};
 
 use alloc::{string::String, vec::Vec};
-use bootbridge::BootBridge;
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 use pager::{EntryFlags, Mapper};
