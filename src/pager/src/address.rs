@@ -292,14 +292,14 @@ impl VirtAddr {
     }
 
     pub fn align_to(&self, phys: PhysAddr) -> Self {
-        if (phys.as_u64() as *const u8).is_aligned_to(PAGE_SIZE as usize) {
-            return unsafe { Self::new_unchecked(self.0) };
-        }
-        Self::new(
-            self.as_u64()
-                + (PAGE_SIZE
-                    - (phys.as_u64() as *const u8).align_offset(PAGE_SIZE as usize) as u64),
-        )
+        let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
+        // add it on to the virtual base
+        let raw = self
+            .as_u64()
+            .checked_add(misalignment)
+            .expect("VirtAddr overflow in align_to");
+        // we know that (self + misalignment) stays canonical if self was
+        unsafe { VirtAddr::new_unchecked(raw) }
     }
 
     /// Create a new virtual address from u64

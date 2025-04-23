@@ -302,7 +302,7 @@ impl InitializationContext<Phase2> {
             )
         };
         let buf = MMIOBuffer {
-            start: vaddr.start_address(),
+            start: vaddr.start_address().align_to(info.addr()),
             size_in_pages: info.size_in_pages(),
         };
         Some(T::new(buf, args))

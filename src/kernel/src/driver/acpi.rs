@@ -11,9 +11,7 @@ use rsdt::Xrsdt;
 use sdp::Xrsdp;
 
 use crate::{
-    initialization_context::{
-        InitializationContext, Phase1, Phase2,
-    },
+    initialization_context::{InitializationContext, Phase1, Phase2},
     log,
     memory::{virt_addr_alloc, MMIOBufferInfo},
 };
