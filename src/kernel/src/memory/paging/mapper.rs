@@ -1,5 +1,5 @@
 use pager::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
-use pager::{tlb, IdentityMappable, PAGE_SIZE};
+use pager::{registers::tlb, IdentityMappable, PAGE_SIZE};
 
 use super::table::{
     DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,

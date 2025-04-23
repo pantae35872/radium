@@ -5,9 +5,10 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
+use pager::registers::Cr3;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
-    Cr3, EntryFlags, Mapper,
+    EntryFlags, Mapper,
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;

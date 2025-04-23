@@ -8,7 +8,6 @@ opt-level = 0
 
 [profile.release]
 panic = "unwind"
-opt-level = 3 
-debug = true
+opt-level = 3
 
 [workspace.dependencies]

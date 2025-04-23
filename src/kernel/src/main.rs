@@ -22,7 +22,7 @@ use radium::{hlt_loop, print, println, serial_print};
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
-    println!("Hello, world!!");
+    println!("Hello, world!!!");
     //#[cfg(not(feature = "testing"))]
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
     //println!("Time Test: {:?}", uefi_runtime().get_time());

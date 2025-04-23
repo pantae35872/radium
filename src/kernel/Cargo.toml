@@ -34,7 +34,9 @@ default-features = false
 features = ["alloc"]
 
 [dependencies.unwinding]
-version = "0.2.5"
+# FIXME: If the author fix the unsafe(naked) in latest nightly change to crates.io version instead of git
+git = "https://github.com/nbdd0121/unwinding"
+rev = "8670d9b8d3971ce7eb0a27e31043463cbc014281"
 default-features = false
 features = ["unwinder", "fde-static", "personality", "panic", "dwarf-expr", "hide-trace"]
 
