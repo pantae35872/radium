@@ -186,7 +186,7 @@ impl MMIOBufferInfo {
 impl From<RawData> for MMIOBufferInfo {
     fn from(value: RawData) -> Self {
         // SAFETY: We know this is safe because the raw data is only created at bootloader time
-        unsafe { Self::new_raw(value.start(), value.size() / PAGE_SIZE as usize) }
+        unsafe { Self::new_raw(value.start(), value.size() / PAGE_SIZE as usize + 1) }
     }
 }
 
@@ -271,7 +271,7 @@ impl InitializationContext<Phase3> {
             )
         };
         let buf = MMIOBuffer {
-            start: vaddr.start_address(),
+            start: vaddr.start_address().align_to(info.addr()),
             size_in_pages: info.size_in_pages(),
         };
         Some(T::new(buf, args))

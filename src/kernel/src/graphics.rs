@@ -333,8 +333,9 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
 pub fn init(ctx: &mut InitializationContext<Phase2>) {
     log!(Trace, "Registering graphic");
     let graphics_info = ctx.context().boot_bridge().graphics_info();
-    let start =
-        virt_addr_alloc(ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE);
+    let start = virt_addr_alloc(
+        ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE + 1,
+    );
     let frame_buffer_data = ctx.context().boot_bridge().framebuffer_data();
     ctx.mapper().map_range(
         start,

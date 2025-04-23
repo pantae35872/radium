@@ -152,14 +152,16 @@ where
         let p3 = p4.next_table_create(page.p4_index(), allocator);
         let p2 = p3.next_table_create(page.p3_index(), allocator);
         let p1 = p2.next_table_create(page.p2_index(), allocator);
-        if !p1[page.p1_index() as usize].is_unused() {
+        if !(p1[page.p1_index() as usize].is_unused()
+            || p1[page.p1_index() as usize].overwriteable())
+        {
             log!(
                 Error,
                 "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
                 page.start_address(),
                 p1[page.p1_index() as usize]
                     .pointed_frame()
-                    .unwrap()
+                    .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
                     .start_address()
             );
             log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
