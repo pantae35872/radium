@@ -110,7 +110,7 @@ where
     boot_bridge: OnceCell<*mut RawBootBridge>,
 }
 
-pub struct BootBridge(pub *mut RawBootBridge);
+pub struct BootBridge(*mut RawBootBridge);
 
 impl BootBridge {
     pub fn new(ptr: *mut RawBootBridge) -> Self {
