@@ -2,7 +2,7 @@ use core::slice::{self};
 
 use alloc::boxed::Box;
 
-use crate::memory::MemoryContext;
+use crate::initialization_context::{InitializationContext, Phase1, Phase3};
 
 use super::{AcpiSdt, AcpiSdtData, EmptySdt};
 
@@ -23,7 +23,7 @@ pub enum Xrsdt {
 }
 
 impl Xrsdt {
-    pub unsafe fn new(address: u64, ctx: &mut MemoryContext) -> Option<Self> {
+    pub unsafe fn new(address: u64, ctx: &mut InitializationContext<Phase1>) -> Option<Self> {
         unsafe { AcpiSdt::<Rsdt>::new(address, ctx).map(|e| Self::RSDT(e)) }
             .or_else(|| unsafe { AcpiSdt::<Xsdt>::new(address, ctx) }.map(|e| Self::XSDT(e)))
     }
@@ -35,7 +35,10 @@ impl Xrsdt {
         }
     }
 
-    pub fn get<T: AcpiSdtData>(&self, ctx: &mut MemoryContext) -> Option<&'static AcpiSdt<T>> {
+    pub fn get<T: AcpiSdtData>(
+        &self,
+        ctx: &mut InitializationContext<Phase1>,
+    ) -> Option<&'static AcpiSdt<T>> {
         self.iter()
             .find_map(|e| unsafe { AcpiSdt::<T>::new(e, ctx) })
     }

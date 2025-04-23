@@ -1,14 +1,7 @@
-use core::{
-    any::Any,
-    marker::PhantomData,
-    mem::MaybeUninit,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use core::sync::atomic::{AtomicU64, Ordering};
 
-use alloc::{boxed::Box, vec::Vec};
 use allocator::{
-    area_allocator::AreaAllocator,
-    buddy_allocator::{self, BuddyAllocator},
+    area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator,
     linear_allocator::LinearAllocator,
 };
 use bootbridge::{BootBridge, MemoryType, RawData};
@@ -19,18 +12,13 @@ use pager::{
 use paging::{
     early_map_kernel, mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable,
 };
-use paste::paste;
-use spin::Mutex;
-use stack_allocator::{Stack, StackAllocator};
-use x86_64::registers::control::{Cr0Flags, Cr3, EferFlags};
+use stack_allocator::StackAllocator;
+use x86_64::registers::control::{Cr0Flags, EferFlags};
 
 use crate::{
-    driver::acpi::{acpi, Acpi},
+    driver::acpi::Acpi,
+    initialization_context::{InitializationContext, Phase0, Phase1, Phase2, Phase3},
     initialize_guard, log,
-    logger::LOGGER,
-    serial_print,
-    smp::local_initializer,
-    utils::VolatileCell,
 };
 
 pub use self::paging::remap_the_kernel;
@@ -44,35 +32,29 @@ pub const MAX_ALIGN: usize = 8192;
 /// Initialize the memory
 ///
 /// If this is being called outside kernel initialization this will panic
-pub fn init(bootbridge: &BootBridge) -> MemoryContext {
+pub fn init(ctx: InitializationContext<Phase0>) -> InitializationContext<Phase1> {
     initialize_guard!();
     // SAFETY: This safe because the initialize_guard_above
     unsafe { prepare_flags() };
 
     // SAFETY: This safe because the initialize_guard_above
-    let (mut allocator, stack_allocator) = unsafe { init_allocator(bootbridge) };
-    let mut active_table =
-        unsafe { remap_the_kernel(&mut allocator, &stack_allocator, bootbridge) };
-
-    unsafe {
-        // SAFETY: This is called after the memory controller is initialize above
-        allocator::init(&mut active_table, &mut allocator);
-    }
-
-    // SAFETY: This is safe because we're sure that the initializer is only being called on
-    // processor initialization
-    //
-    // NOTE: Altho we already prepare the flags above we have to still register it for ap cores
-    local_initializer().lock().register(|_, _| unsafe {
-        prepare_flags();
-    });
+    let (mut allocator, stack_allocator) = unsafe { init_allocator(&ctx) };
+    let active_table = unsafe { remap_the_kernel(&mut allocator, &stack_allocator, &ctx) };
 
     log!(
         Info,
         "Usable memory: {:.2} GB",
         allocator.max_mem() as f32 / (1 << 30) as f32 // TO GB
     );
-    MemoryContext::new(active_table, allocator, stack_allocator)
+
+    let mut ctx = ctx.next((active_table, allocator, stack_allocator));
+
+    unsafe {
+        // SAFETY: This is called after the memory controller is initialize above
+        allocator::init(&mut ctx);
+    }
+
+    ctx
 }
 
 /// Prepare the processor flags
@@ -80,7 +62,7 @@ pub fn init(bootbridge: &BootBridge) -> MemoryContext {
 ///
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
-unsafe fn prepare_flags() {
+pub unsafe fn prepare_flags() {
     unsafe {
         enable_nxe_bit();
         enable_write_protect_bit();
@@ -92,8 +74,11 @@ unsafe fn prepare_flags() {
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 /// and the bootbridge memory map is valid
-unsafe fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackAllocator) {
-    let mut area_allocator = unsafe { AreaAllocator::new(bootbridge.memory_map()) };
+unsafe fn init_allocator(
+    ctx: &InitializationContext<Phase0>,
+) -> (BuddyAllocator<64>, StackAllocator) {
+    let mut area_allocator =
+        unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
     let buddy_allocator_allocator = area_allocator
         .linear_allocator(128)
         .expect("Not enough contiguous chunk of memory to boot the kernel");
@@ -113,7 +98,8 @@ unsafe fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackA
         kernel_stack_range.end()
     );
     log!(Info, "UEFI memory map usable:");
-    bootbridge
+    ctx.context()
+        .boot_bridge()
         .memory_map()
         .entries()
         .filter(|e| e.ty == MemoryType::CONVENTIONAL)
@@ -126,17 +112,12 @@ unsafe fn init_allocator(bootbridge: &BootBridge) -> (BuddyAllocator<64>, StackA
             );
         });
     unsafe {
-        early_map_kernel(bootbridge, &buddy_allocator_allocator);
+        early_map_kernel(ctx, &buddy_allocator_allocator);
     }
     let stack_alloc = unsafe { StackAllocator::new(kernel_stack_range.range_page()) };
     (
         unsafe {
-            BuddyAllocator::new(
-                buddy_allocator_allocator,
-                area_allocator,
-                &stack_alloc,
-                bootbridge,
-            )
+            BuddyAllocator::new(buddy_allocator_allocator, area_allocator, &stack_alloc, ctx)
         },
         stack_alloc,
     )
@@ -168,12 +149,6 @@ pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
     page
 }
 
-pub struct MemoryContext {
-    active_table: ActivePageTable<RecurseLevel4>,
-    buddy_allocator: BuddyAllocator<64>,
-    stack_allocator: StackAllocator,
-}
-
 pub struct WithTable<'a, T> {
     table: &'a mut ActivePageTable<RecurseLevel4>,
     with_table: &'a mut T,
@@ -196,6 +171,7 @@ pub struct MMIOBuffer {
     size_in_pages: usize,
 }
 
+#[derive(Clone)]
 pub struct MMIOBufferInfo {
     addr: PhysAddr,
     size_in_pages: usize,
@@ -243,6 +219,10 @@ pub trait MMIODevice<Args> {
         None
     }
 
+    fn acpi(acpi: &Acpi) -> Option<MMIOBufferInfo> {
+        None
+    }
+
     fn other() -> Option<MMIOBufferInfo> {
         None
     }
@@ -264,43 +244,69 @@ impl MMIOBufferInfo {
     }
 }
 
-impl MemoryContext {
-    pub fn new(
-        active_table: ActivePageTable<RecurseLevel4>,
-        buddy_allocator: BuddyAllocator<64>,
-        stack_allocator: StackAllocator,
-    ) -> Self {
-        Self {
-            active_table,
-            buddy_allocator,
-            stack_allocator,
-        }
+impl InitializationContext<Phase3> {
+    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
+        let ctx = self.context_mut();
+        ctx.active_table
+            .mapper_with_allocator(&mut ctx.buddy_allocator)
     }
 
-    pub fn mapper(&mut self) -> MapperWithAllocator<'_, RecurseLevel4, BuddyAllocator<64>> {
-        self.active_table
-            .mapper_with_allocator(&mut self.buddy_allocator)
+    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
+        let ctx = self.context_mut();
+        ctx.stack_allocator.with_table(&mut ctx.active_table)
     }
 
     pub fn mmio_device<T: MMIODevice<A>, A>(
         &mut self,
         args: A,
-        bootbridge: &BootBridge,
         depends: Option<MMIOBufferInfo>,
     ) -> Option<T> {
-        let info = T::boot_bridge(bootbridge)
+        let info = T::boot_bridge(&self.context().boot_bridge)
+            .or_else(|| T::acpi(self.context().acpi()))
             .or_else(|| T::other())
             .or_else(|| depends)?;
         let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
+        let ctx = self.context_mut();
         // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
         unsafe {
-            self.active_table.map_to_range(
+            ctx.active_table.map_to_range(
                 Page::containing_address(vaddr.start_address()),
                 Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
-                Frame::containing_address(info.addr),
-                Frame::containing_address(info.addr + info.size_in_bytes() - 1),
+                Frame::containing_address(info.addr()),
+                Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
                 EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
-                &mut self.buddy_allocator,
+                &mut ctx.buddy_allocator,
+            )
+        };
+        let buf = MMIOBuffer {
+            start: vaddr.start_address(),
+            size_in_pages: info.size_in_pages(),
+        };
+        Some(T::new(buf, args))
+    }
+}
+
+impl InitializationContext<Phase2> {
+    pub fn mmio_device<T: MMIODevice<A>, A>(
+        &mut self,
+        args: A,
+        depends: Option<MMIOBufferInfo>,
+    ) -> Option<T> {
+        let info = T::boot_bridge(&self.context().boot_bridge)
+            .or_else(|| T::acpi(self.context().acpi()))
+            .or_else(|| T::other())
+            .or_else(|| depends)?;
+        let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
+        let ctx = self.context_mut();
+        // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
+        unsafe {
+            ctx.active_table.map_to_range(
+                Page::containing_address(vaddr.start_address()),
+                Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
+                Frame::containing_address(info.addr()),
+                Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
+                EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
+                &mut ctx.buddy_allocator,
             )
         };
         let buf = MMIOBuffer {
@@ -310,8 +316,28 @@ impl MemoryContext {
         Some(T::new(buf, args))
     }
 
+    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
+        let ctx = self.context_mut();
+        ctx.active_table
+            .mapper_with_allocator(&mut ctx.buddy_allocator)
+    }
+
     pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
-        self.stack_allocator.with_table(&mut self.active_table)
+        let ctx = self.context_mut();
+        ctx.stack_allocator.with_table(&mut ctx.active_table)
+    }
+}
+
+impl InitializationContext<Phase1> {
+    pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
+        let ctx = self.context_mut();
+        ctx.active_table
+            .mapper_with_allocator(&mut ctx.buddy_allocator)
+    }
+
+    pub fn stack_allocator(&mut self) -> WithTable<StackAllocator> {
+        let ctx = self.context_mut();
+        ctx.stack_allocator.with_table(&mut ctx.active_table)
     }
 }
 

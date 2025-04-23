@@ -9,8 +9,9 @@ use pager::{address::Page, EntryFlags, Mapper, PAGE_SIZE};
 use spin::mutex::Mutex;
 
 use crate::{
+    initialization_context::{InitializationContext, Phase2},
     log,
-    memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice, MemoryContext},
+    memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
 
 pub mod color;
@@ -329,13 +330,15 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
     }
 }
 
-pub fn init(ctx: &mut MemoryContext, boot_bridge: &BootBridge) {
+pub fn init(ctx: &mut InitializationContext<Phase2>) {
     log!(Trace, "Registering graphic");
-    let graphics_info = boot_bridge.graphics_info();
-    let start = virt_addr_alloc(boot_bridge.framebuffer_data().size() as u64 / PAGE_SIZE);
+    let graphics_info = ctx.context().boot_bridge().graphics_info();
+    let start =
+        virt_addr_alloc(ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE);
+    let frame_buffer_data = ctx.context().boot_bridge().framebuffer_data();
     ctx.mapper().map_range(
         start,
-        Page::containing_address(start.start_address() + boot_bridge.framebuffer_data().size() - 1),
+        Page::containing_address(start.start_address() + frame_buffer_data.size() - 1),
         EntryFlags::WRITABLE,
     );
     let graphics = ctx
@@ -344,12 +347,11 @@ pub fn init(ctx: &mut MemoryContext, boot_bridge: &BootBridge) {
                 unsafe {
                     core::slice::from_raw_parts_mut(
                         start.start_address().as_mut_ptr::<u32>(),
-                        boot_bridge.framebuffer_data().size() / size_of::<u32>(),
+                        frame_buffer_data.size() / size_of::<u32>(),
                     )
                 },
                 graphics_info,
             ),
-            boot_bridge,
             None,
         )
         .expect("Failed to create graphics driver");

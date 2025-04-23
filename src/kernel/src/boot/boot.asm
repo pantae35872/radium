@@ -22,6 +22,9 @@ from_long:
   mov rsp, qword [0x7010] 
   mov rbp, qword [0x7018] 
 
+  ; The initialization context Arc
+  mov rdi, qword [0x7020]
+
   jmp ap_startup
   hlt
 

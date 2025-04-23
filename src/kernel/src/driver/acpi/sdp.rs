@@ -5,8 +5,9 @@ use pager::{
 };
 
 use crate::{
+    initialization_context::{InitializationContext, Phase1},
     log,
-    memory::{virt_addr_alloc, MemoryContext},
+    memory::virt_addr_alloc,
 };
 
 use super::{rsdt::Xrsdt, AcpiRevisions};
@@ -35,7 +36,7 @@ pub enum Xrsdp {
 }
 
 impl Xrsdp {
-    pub unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut MemoryContext) -> Self {
+    pub unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut InitializationContext<Phase1>) -> Self {
         // Map sdp for revision checking
         unsafe {
             ctx.mapper().identity_map_by_size(
@@ -106,7 +107,7 @@ impl Xrsdp {
             .collect::<String>()
     }
 
-    pub unsafe fn xrsdt(&self, ctx: &mut MemoryContext) -> Xrsdt {
+    pub unsafe fn xrsdt(&self, ctx: &mut InitializationContext<Phase1>) -> Xrsdt {
         match self {
             Self::XSDP(xsdp) => unsafe { Xrsdt::new(xsdp.xsdt, ctx).expect("") },
             Self::RSDP(rsdp) => unsafe { Xrsdt::new(rsdp.rsdt_addr as u64, ctx).expect("") },

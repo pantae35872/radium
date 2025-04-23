@@ -3,12 +3,11 @@ use core::{
     u64,
 };
 
-use alloc::{boxed::Box, vec::Vec};
-use bootbridge::BootBridge;
+use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
-    Cr3, EntryFlags, Mapper, PAGE_SIZE,
+    Cr3, EntryFlags, Mapper,
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
@@ -19,24 +18,24 @@ use x86_64::{
 };
 
 use crate::{
-    driver::acpi::acpi,
     gdt::Gdt,
     hlt_loop,
+    initialization_context::{InitializationContext, Phase2, Phase3},
     interrupt::{apic::LocalApic, TIMER_COUNT},
     log,
     memory::{
+        self,
         allocator::linear_allocator::LinearAllocator,
         paging::{
             table::{DirectLevel4, Table},
             ActivePageTable,
         },
-        FrameAllocator, MemoryContext,
+        FrameAllocator,
     },
 };
 
 pub const MAX_CPU: usize = 64;
 
-static LOCAL_INITIALIZER: Mutex<LocalInitializer> = Mutex::new(LocalInitializer::new());
 static APIC_ID_TO_CPU_ID: OnceCell<Mutex<[Option<usize>; MAX_CPU]>> = OnceCell::uninit();
 static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
 
@@ -59,14 +58,15 @@ struct SmpInitializationData {
     real_page_table: u64,
     stack: VirtAddr,
     stack_bottom: VirtAddr,
+    ap_context: VirtAddr,
 }
 
-struct ApInitializer {
+pub struct ApInitializer {
     ap_bootstrap_page_table: Frame,
 }
 
 impl ApInitializer {
-    fn new(boot_bridge: &BootBridge, ctx: &mut MemoryContext) -> Self {
+    fn new(ctx: &mut InitializationContext<Phase3>) -> Self {
         let trampoline_size = unsafe {
             &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
         };
@@ -91,7 +91,7 @@ impl ApInitializer {
             )
         };
 
-        bootstrap_table.identity_map_object(boot_bridge, &mut boot_alloc);
+        bootstrap_table.identity_map_object(ctx.context().boot_bridge(), &mut boot_alloc);
 
         unsafe {
             bootstrap_table.identity_map_range(
@@ -121,7 +121,9 @@ impl ApInitializer {
         }
     }
 
-    fn prepare_stack_and_info(&self, ctx: &mut MemoryContext) {
+    fn prepare_stack_and_info(&self, ctx: Arc<Mutex<InitializationContext<Phase3>>>) {
+        let ctx_ap = Arc::clone(&ctx);
+        let mut ctx = ctx.lock();
         let stack = ctx
             .stack_allocator()
             .alloc_stack(8)
@@ -133,6 +135,7 @@ impl ApInitializer {
             real_page_table: Cr3::read().0.start_address().as_u64(),
             stack: stack.top(),
             stack_bottom: stack.bottom(),
+            ap_context: VirtAddr::new(Arc::into_raw(ctx_ap) as u64),
         };
 
         log!(Trace, "AP Bootstrap page table at {:#x}", data.page_table);
@@ -152,7 +155,7 @@ impl ApInitializer {
         }
     }
 
-    fn boot_ap(&self, apic_id: usize, ctx: &mut MemoryContext) {
+    fn boot_ap(&self, apic_id: usize, ctx: Arc<Mutex<InitializationContext<Phase3>>>) {
         self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
@@ -174,15 +177,22 @@ impl ApInitializer {
 static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ap_startup() -> ! {
-    local_initializer().lock().initialize_current();
+pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<Phase3>>) -> ! {
+    // SAFETY: This is safe if not we'll explode
+    unsafe { memory::prepare_flags() };
+    // SAFETY: This is safe because we called into_raw in the ap startup code and pass through rdi
+    // register in the boot.asm
+    let ctx = unsafe { Arc::from_raw(ctx) };
+    ctx.lock().initialize_current();
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
     hlt_loop();
 }
 
 pub struct LocalInitializer {
-    local_initializers: Vec<Box<dyn Fn(&mut CpuLocalBuilder, usize) + Send + Sync>>,
+    local_initializers: Vec<
+        Box<dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<Phase3>, usize) + Send + Sync>,
+    >,
     after_bsps: Vec<Box<dyn FnOnce(&CpuLocal) + Send + Sync>>,
 }
 
@@ -253,19 +263,22 @@ impl LocalInitializer {
 
     pub fn register(
         &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder, usize) + Send + Sync + 'static,
+        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<Phase3>, usize)
+            + Send
+            + Sync
+            + 'static,
     ) {
         self.local_initializers.push(Box::new(initializer));
     }
 
-    fn initialize_current(&mut self) {
+    fn initialize_current(&mut self, ctx: &mut InitializationContext<Phase3>) {
         let mut cpu_local_builder = CpuLocalBuilder::new();
         let id = apic_id_to_cpu_id(apic_id());
         log!(Debug, "Initializing cpu: {id}");
 
         self.local_initializers
             .iter()
-            .for_each(|e| e(&mut cpu_local_builder, id));
+            .for_each(|e| e(&mut cpu_local_builder, ctx, id));
 
         init_local(cpu_local_builder, id);
 
@@ -345,16 +358,27 @@ fn clunky_wait(ms: usize) {
     }
 }
 
-pub fn local_initializer() -> &'static Mutex<LocalInitializer> {
-    &LOCAL_INITIALIZER
+impl InitializationContext<Phase3> {
+    pub fn initialize_current(&mut self) {
+        let mut initializer = self.context_mut().local_initializer.take().unwrap();
+        initializer.initialize_current(self);
+        self.context_mut().local_initializer = Some(initializer);
+    }
+
+    pub fn local_initializer(&mut self, f: impl FnOnce(&mut LocalInitializer)) {
+        let mut initializer = self.context_mut().local_initializer.take().unwrap();
+        f(&mut initializer);
+        self.context_mut().local_initializer = Some(initializer);
+    }
 }
 
-pub fn init(ctx: &mut MemoryContext) {
+pub fn init(ctx: InitializationContext<Phase2>) -> InitializationContext<Phase3> {
+    let processors = ctx.context().processors();
     APIC_ID_TO_CPU_ID.init_once(|| {
         let mut id = [None; MAX_CPU];
         let mut current_id = 0;
         let bsp_apic_id = apic_id();
-        acpi().lock().processors(ctx, |apic_id, _| {
+        processors.iter().copied().for_each(|apic_id| {
             log!(
                 Info,
                 "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}"
@@ -367,17 +391,19 @@ pub fn init(ctx: &mut MemoryContext) {
         });
         id.into()
     });
-
-    local_initializer().lock().initialize_current();
+    ctx.next(Some(LocalInitializer::new()))
 }
 
-pub fn init_aps(boot_bridge: &BootBridge, ctx: &mut MemoryContext) {
-    let ap_initializer = ApInitializer::new(boot_bridge, ctx);
+pub fn init_aps(mut ctx: InitializationContext<Phase3>) {
+    ctx.initialize_current();
 
-    acpi().lock().processors(ctx, |apic_id, ctx| {
+    let ap_initializer = ApInitializer::new(&mut ctx);
+    let ctx = Arc::new(Mutex::new(ctx));
+    let processors = ctx.lock().context().processors().clone();
+    processors.iter().copied().for_each(|apic_id| {
         if apic_id == cpu_local().apic_id() {
             return;
         }
-        ap_initializer.boot_ap(apic_id, ctx);
+        ap_initializer.boot_ap(apic_id, ctx.clone());
     });
 }

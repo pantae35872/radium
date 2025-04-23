@@ -25,6 +25,7 @@ extern crate spin;
 pub mod driver;
 pub mod gdt;
 pub mod graphics;
+pub mod initialization_context;
 pub mod interrupt;
 pub mod logger;
 pub mod memory;
@@ -46,6 +47,7 @@ use driver::{
 };
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
+use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
@@ -56,21 +58,19 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     let mut boot_bridge = BootBridge::new(boot_bridge);
     DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
     logger::init(&boot_bridge);
-    let mut memory_ctx = memory::init(&boot_bridge);
-    acpi::init(&boot_bridge, &mut memory_ctx);
-    gdt::init_gdt(&mut memory_ctx);
-    interrupt::init(&mut memory_ctx, &boot_bridge);
+    let phase0 = InitializationContext::<Phase0>::start(boot_bridge);
+    let phase1 = memory::init(phase0);
+    let mut phase2 = acpi::init(phase1);
+    graphics::init(&mut phase2);
+    print::init(&mut phase2, Color::new(209, 213, 219), BACKGROUND_COLOR);
+    let mut phase3 = smp::init(phase2);
+    gdt::init_gdt(&mut phase3);
+    interrupt::init(&mut phase3);
     pit::init();
-    smp::init(&mut memory_ctx);
-    graphics::init(&mut memory_ctx, &boot_bridge);
-    print::init(
-        &boot_bridge,
-        &mut memory_ctx,
-        Color::new(209, 213, 219),
-        BACKGROUND_COLOR,
-    );
-    smp::init_aps(&boot_bridge, &mut memory_ctx);
-    driver::init(&boot_bridge);
+    smp::init_aps(phase3);
+    //graphics::init(&mut memory_ctx, &boot_bridge);
+    //smp::init_aps(&boot_bridge, &mut memory_ctx);
+    //driver::init(&boot_bridge);
 }
 
 pub fn dwarf_data() -> &'static DwarfBaker<'static> {

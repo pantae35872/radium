@@ -2,6 +2,7 @@ pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::{RecurseLevel4, Table};
 use self::temporary_page::TemporaryPage;
+use crate::initialization_context::{InitializationContext, Phase0};
 use crate::memory::FrameAllocator;
 use crate::{dwarf_data, log};
 use bootbridge::BootBridge;
@@ -266,7 +267,7 @@ impl InactivePageTable {
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 pub unsafe fn early_map_kernel(
-    bootbridge: &BootBridge,
+    ctx: &InitializationContext<Phase0>,
     buddy_allocator_allocator: &LinearAllocator,
 ) {
     unsafe extern "C" {
@@ -285,7 +286,7 @@ pub unsafe fn early_map_kernel(
         )
     };
 
-    active_table.identity_map_object(bootbridge, &mut allocator);
+    active_table.identity_map_object(ctx.context().boot_bridge(), &mut allocator);
     active_table.identity_map_object(dwarf_data(), &mut allocator);
     active_table.identity_map_object(&buddy_allocator_allocator.mappings(), &mut allocator);
 
@@ -325,7 +326,7 @@ where
 pub unsafe fn remap_the_kernel<A>(
     allocator: &mut A,
     stack_allocator: &StackAllocator,
-    bootbridge: &BootBridge,
+    bootbridge: &InitializationContext<Phase0>,
 ) -> ActivePageTable<RecurseLevel4>
 where
     A: FrameAllocator,
@@ -335,7 +336,7 @@ where
     let mut active_table = unsafe { ActivePageTable::new() };
     let mut new_table = InactivePageTable::new(allocator, &mut active_table, &mut temporary_page);
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        mapper.identity_map_object(bootbridge, allocator);
+        mapper.identity_map_object(bootbridge.context().boot_bridge(), allocator);
         mapper.identity_map_object(stack_allocator, allocator);
         mapper.identity_map_object(dwarf_data(), allocator);
     });

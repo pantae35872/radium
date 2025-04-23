@@ -4,9 +4,9 @@ use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::{PrivilegeLevel, VirtAddr};
 
+use crate::initialization_context::{InitializationContext, Phase3};
 use crate::log;
-use crate::memory::MemoryContext;
-use crate::smp::local_initializer;
+use crate::smp::CpuLocalBuilder;
 
 pub struct Gdt {
     table: [u64; 8],
@@ -61,33 +61,35 @@ impl Gdt {
     }
 }
 
-pub fn init_gdt(ctx: &mut MemoryContext) {
-    let double_fault = ctx
-        .stack_allocator()
-        .alloc_stack(1)
-        .expect("Failed to allocator stack for double fault handler");
-    local_initializer().lock().register(move |cpu, id| {
-        log!(Trace, "Initializing gdt for core: {id}");
-        use x86_64::instructions::tables::load_tss;
-        log!(
-            Debug,
-            "Double fault handler stack, Top: {:#x}, Bottom: {:#x}",
-            double_fault.top(),
-            double_fault.bottom()
-        );
-        let tss = Box::leak(TaskStateSegment::new().into());
-        tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
-            x86_64::VirtAddr::new(double_fault.top().as_u64());
-        let gdt = Box::leak(Gdt::new().into());
-        let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-        let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));
-        gdt.load();
-        unsafe {
-            CS::set_reg(code_selector);
-            load_tss(tss_selector);
-        }
-        cpu.gdt(gdt);
-    });
+pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
+    let gdt_initializer =
+        |cpu: &mut CpuLocalBuilder, ctx: &mut InitializationContext<Phase3>, id| {
+            let double_fault = ctx
+                .stack_allocator()
+                .alloc_stack(1)
+                .expect("Failed to allocator stack for double fault handler");
+            log!(Trace, "Initializing gdt for core: {id}");
+            use x86_64::instructions::tables::load_tss;
+            log!(
+                Debug,
+                "Double fault handler stack, Top: {:#x}, Bottom: {:#x}",
+                double_fault.top(),
+                double_fault.bottom()
+            );
+            let tss = Box::leak(TaskStateSegment::new().into());
+            tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
+                x86_64::VirtAddr::new(double_fault.top().as_u64());
+            let gdt = Box::leak(Gdt::new().into());
+            let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
+            let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));
+            gdt.load();
+            unsafe {
+                CS::set_reg(code_selector);
+                load_tss(tss_selector);
+            }
+            cpu.gdt(gdt);
+        };
+    ctx.local_initializer(|initializer| initializer.register(gdt_initializer));
 }
 
 pub enum Descriptor {

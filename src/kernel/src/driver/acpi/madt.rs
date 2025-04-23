@@ -49,7 +49,7 @@ pub struct IoApic {
     global_system_interrupt_base: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(C, packed)]
 pub struct IoApicInterruptSourceOverride {
     bus_source: u8,

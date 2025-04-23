@@ -1,6 +1,6 @@
 use core::fmt::Display;
 
-use alloc::fmt;
+use alloc::{fmt, vec::Vec};
 use aml::{AmlContext, AmlHandle};
 use bootbridge::BootBridge;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
@@ -13,8 +13,11 @@ use sdp::Xrsdp;
 use spin::{Mutex, Once};
 
 use crate::{
+    initialization_context::{
+        AnyInitializationPhase, InitializationContext, Phase1, Phase2, Phase3,
+    },
     log,
-    memory::{virt_addr_alloc, MMIOBufferInfo, MemoryContext},
+    memory::{virt_addr_alloc, MMIOBufferInfo},
 };
 
 mod aml;
@@ -24,16 +27,17 @@ pub mod madt;
 mod rsdt;
 mod sdp;
 
-static ACPI: Once<Mutex<Acpi>> = Once::new();
-
-pub fn init(boot_bridge: &BootBridge, ctx: &mut MemoryContext) {
+pub fn init(mut ctx: InitializationContext<Phase1>) -> InitializationContext<Phase2> {
     log!(Trace, "Initializing acpi");
-    let acpi = unsafe { Acpi::new(boot_bridge.rsdp(), ctx) };
-    ACPI.call_once(|| acpi.into());
-}
-
-pub fn acpi() -> &'static Mutex<Acpi> {
-    ACPI.get().expect("acpi is not initialized")
+    let acpi = unsafe { Acpi::new(&mut ctx) };
+    let info = (
+        acpi.processors(&mut ctx),
+        acpi.local_apic_mmio(&mut ctx),
+        acpi.io_apics(&mut ctx),
+        acpi.interrupt_overrides(&mut ctx),
+        acpi,
+    );
+    ctx.next(info)
 }
 
 #[allow(unused)]
@@ -52,7 +56,8 @@ impl AmlHandle for AcpiHandle {
 }
 
 impl Acpi {
-    unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut MemoryContext) -> Self {
+    unsafe fn new(ctx: &mut InitializationContext<Phase1>) -> Self {
+        let rsdp_addr = ctx.context().boot_bridge().rsdp();
         let xrsdp = unsafe { Xrsdp::new(rsdp_addr, ctx) };
         let xrsdt = unsafe { xrsdp.xrsdt(ctx) };
         Self {
@@ -62,7 +67,7 @@ impl Acpi {
         }
     }
 
-    pub fn local_apic_mmio(&self, ctx: &mut MemoryContext) -> MMIOBufferInfo {
+    fn local_apic_mmio(&self, ctx: &mut InitializationContext<Phase1>) -> MMIOBufferInfo {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -71,11 +76,7 @@ impl Acpi {
         unsafe { MMIOBufferInfo::new_raw(PhysAddr::new(madt.lapic_base().into()), 1) }
     }
 
-    pub fn io_apics(
-        &self,
-        ctx: &mut MemoryContext,
-        mut callback: impl FnMut(MMIOBufferInfo, usize, &mut MemoryContext),
-    ) {
+    fn io_apics(&self, ctx: &mut InitializationContext<Phase1>) -> Vec<(MMIOBufferInfo, usize)> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -85,20 +86,19 @@ impl Acpi {
                 InterruptControllerStructure::IoApic(io_apic) => Some(io_apic),
                 _ => None,
             })
-            .for_each(|io_apic| {
-                (callback)(
+            .map(|io_apic| {
+                (
                     unsafe { MMIOBufferInfo::new_raw(io_apic.addr(), 1) },
                     io_apic.gsi_base(),
-                    ctx,
                 )
-            });
+            })
+            .collect()
     }
 
     pub fn interrupt_overrides(
         &self,
-        ctx: &mut MemoryContext,
-        mut callback: impl FnMut(&IoApicInterruptSourceOverride, &mut MemoryContext),
-    ) {
+        ctx: &mut InitializationContext<Phase1>,
+    ) -> Vec<IoApicInterruptSourceOverride> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -110,15 +110,12 @@ impl Acpi {
                 }
                 _ => None,
             })
-            .for_each(|e| (callback)(e, ctx));
+            .cloned()
+            .collect()
     }
 
     /// Call the callback with a list of apic or x2apic id
-    pub fn processors(
-        &self,
-        ctx: &mut MemoryContext,
-        mut callback: impl FnMut(usize, &mut MemoryContext),
-    ) {
+    fn processors(&self, ctx: &mut InitializationContext<Phase1>) -> Vec<usize> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -131,7 +128,7 @@ impl Acpi {
                 InterruptControllerStructure::LocalX2Apic(processor) => Some(processor.apic_id()),
                 _ => None,
             })
-            .for_each(|e| (callback)(e, ctx));
+            .collect()
     }
 }
 
@@ -162,8 +159,12 @@ impl AcpiSdtData for EmptySdt {
 }
 
 impl<T: AcpiSdtData> AcpiSdt<T> {
-    unsafe fn new(address: u64, ctx: &mut MemoryContext) -> Option<&'static AcpiSdt<T>> {
+    unsafe fn new(
+        address: u64,
+        ctx: &mut InitializationContext<Phase1>,
+    ) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
+        let ctx = ctx.as_mut();
         unsafe {
             ctx.mapper().identity_map_by_size(
                 Frame::containing_address(PhysAddr::new(address)),

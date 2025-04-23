@@ -1,15 +1,14 @@
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-use crate::driver::acpi::acpi;
 use crate::gdt;
 use crate::hlt_loop;
+use crate::initialization_context::InitializationContext;
+use crate::initialization_context::Phase3;
 use crate::log;
-use crate::memory::MemoryContext;
 use crate::println;
 use crate::serial_println;
 use crate::smp::cpu_local;
-use crate::smp::local_initializer;
 use crate::smp::CpuLocalBuilder;
 use crate::utils::port::Port8Bit;
 use alloc::boxed::Box;
@@ -99,7 +98,7 @@ fn create_idt() -> &'static InterruptDescriptorTable {
     idt
 }
 
-pub fn init(ctx: &mut MemoryContext, boot_bridge: &bootbridge::BootBridge) {
+pub fn init(ctx: &mut InitializationContext<Phase3>) {
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
             LocalApicArguments {
@@ -107,40 +106,40 @@ pub fn init(ctx: &mut MemoryContext, boot_bridge: &bootbridge::BootBridge) {
                 error_vector: InterruptIndex::ErrorVector,
                 spurious_vector: InterruptIndex::SpuriousInterruptsVector,
             },
-            boot_bridge,
             None,
         )
         .unwrap();
-    local_initializer()
-        .lock()
-        .register(move |cpu: &mut CpuLocalBuilder, id| {
-            let mut lapic = lapic.clone();
-            log!(Info, "Initializing interrupts for CPU: {id}");
-            disable_pic();
-            let idt = create_idt();
-            idt.load();
-            cpu.idt(idt);
-            x86_64::instructions::interrupts::enable();
+    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Phase3>, id| {
+        let mut lapic = lapic.clone();
+        log!(Info, "Initializing interrupts for CPU: {id}");
+        disable_pic();
+        let idt = create_idt();
+        idt.load();
+        cpu.idt(idt);
+        x86_64::instructions::interrupts::enable();
 
-            lapic.enable();
-            lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
-            lapic.enable_timer();
-            cpu.lapic(lapic);
-        });
+        lapic.enable();
+        lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
+        lapic.enable_timer();
+        cpu.lapic(lapic);
+    };
+    ctx.local_initializer(|e| e.register(lapic));
     let mut io_apic_manager = IoApicManager::new();
-    acpi().lock().io_apics(ctx, |addr, gsi_base, ctx| {
-        io_apic_manager.add_io_apic(addr, gsi_base, ctx, boot_bridge)
-    });
-    acpi()
-        .lock()
-        .interrupt_overrides(ctx, |source_override, _ctx| {
-            io_apic_manager.add_source_override(source_override)
+    let io_apics = ctx.context().io_apics().clone();
+    io_apics
+        .iter()
+        .for_each(|(addr, gsi_base)| io_apic_manager.add_io_apic(addr.clone(), *gsi_base, ctx));
+    ctx.context()
+        .interrupt_source_overrides()
+        .iter()
+        .for_each(|source_override| io_apic_manager.add_source_override(source_override));
+    ctx.local_initializer(|initializer| {
+        initializer.after_bsp(move |bsp| {
+            io_apic_manager.redirect_legacy_irqs(
+                0,
+                RedirectionTableEntry::new(InterruptIndex::PITVector, bsp.apic_id()),
+            );
         });
-    local_initializer().lock().after_bsp(move |bsp| {
-        io_apic_manager.redirect_legacy_irqs(
-            0,
-            RedirectionTableEntry::new(InterruptIndex::PITVector, bsp.apic_id()),
-        );
     });
 }
 

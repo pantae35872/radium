@@ -1,11 +1,14 @@
 use core::ptr;
 
-use crate::memory::virt_addr_alloc;
+use crate::{
+    initialization_context::{InitializationContext, Phase1},
+    memory::virt_addr_alloc,
+};
 use alloc::alloc::*;
 use buddy_allocator::BuddyAllocator;
 use pager::{
     address::{Page, VirtAddr},
-    EntryFlags, PAGE_SIZE,
+    EntryFlags, Mapper, PAGE_SIZE,
 };
 
 pub mod area_allocator;
@@ -70,18 +73,14 @@ static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAll
 /// SAFETY:
 /// The caller must ensure that this is called on kernel initializaton only
 /// And must be called after the memory controller is initialize
-pub unsafe fn init(
-    active_table: &mut ActivePageTable<RecurseLevel4>,
-    buddy_alloc: &mut BuddyAllocator<64>,
-) {
+pub unsafe fn init(ctx: &mut InitializationContext<Phase1>) {
     let heap_start = virt_addr_alloc(HEAP_SIZE / PAGE_SIZE);
-    active_table.map_range(
+    ctx.mapper().map_range(
         heap_start,
         Page::containing_address(VirtAddr::new(
             heap_start.start_address().as_u64() + HEAP_SIZE - 1,
         )),
         EntryFlags::WRITABLE,
-        buddy_alloc,
     );
     unsafe {
         GLOBAL_ALLOCATOR.lock().init(

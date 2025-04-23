@@ -2,7 +2,6 @@ use core::{cmp::Ordering, u8};
 
 use alloc::vec::Vec;
 use bit_field::BitField;
-use bootbridge::BootBridge;
 use pager::address::VirtAddr;
 
 use crate::{
@@ -10,8 +9,9 @@ use crate::{
         self,
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
+    initialization_context::{InitializationContext, Phase3},
     log,
-    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice, MemoryContext},
+    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
 
@@ -127,12 +127,11 @@ impl IoApicManager {
         &mut self,
         base: MMIOBufferInfo,
         gsi_base: usize,
-        ctx: &mut MemoryContext,
-        boot_bridge: &BootBridge,
+        ctx: &mut InitializationContext<Phase3>,
     ) {
         log!(Debug, "Found IoApic at: {:#x}", base.addr());
         let io_apic = ctx
-            .mmio_device::<IoApic, _>(gsi_base, boot_bridge, Some(base))
+            .mmio_device::<IoApic, _>(gsi_base, Some(base))
             .expect("Failed to create some io apic");
         let io_apic_max = io_apic.registers.max_redirection_entry();
         let io_apic_gsi_ranges = gsi_base..io_apic_max;

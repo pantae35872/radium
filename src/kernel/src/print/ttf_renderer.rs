@@ -8,7 +8,7 @@ use pager::{EntryFlags, Mapper};
 
 use crate::{
     graphics::{color::Color, graphic},
-    memory::MemoryContext,
+    initialization_context::{InitializationContext, Phase2},
 };
 
 #[derive(Hash, PartialEq, Eq)]
@@ -33,12 +33,11 @@ pub struct TtfRenderer {
 // TODO: ts needs a rewrite
 impl TtfRenderer {
     pub fn new(
-        boot_info: &BootBridge,
-        ctx: &mut MemoryContext,
+        ctx: &mut InitializationContext<Phase2>,
         foreground_color: Color,
         background_color: Color,
     ) -> Self {
-        let font = boot_info.font_data();
+        let font = ctx.context().boot_bridge().font_data();
 
         unsafe {
             ctx.mapper().identity_map_by_size(
@@ -62,7 +61,7 @@ impl TtfRenderer {
             initial_offset: 0,
             cache: HashMap::with_capacity(255),
             glyph_cache: HashMap::with_capacity(255),
-            pixel_size: boot_info.font_size(),
+            pixel_size: ctx.context().boot_bridge().font_size(),
         }
     }
 

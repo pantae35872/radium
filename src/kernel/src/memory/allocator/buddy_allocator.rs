@@ -5,6 +5,7 @@ use pager::address::{Page, PhysAddr, VirtAddr};
 use pager::EntryFlags;
 use x86_64::instructions::interrupts;
 
+use crate::initialization_context::{InitializationContext, Phase0};
 use crate::logger::LOGGER;
 use crate::memory::stack_allocator::StackAllocator;
 use crate::{
@@ -50,11 +51,11 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
         mut allocator: LinearAllocator,
         area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
         stack_allocator: &StackAllocator,
-        bootbridge: &BootBridge,
+        ctx: &InitializationContext<Phase0>,
     ) -> Self {
         let map_access = Some(create_mappings(
             |mapper, allocator| {
-                mapper.identity_map_object(bootbridge, allocator);
+                mapper.identity_map_object(ctx.context().boot_bridge(), allocator);
                 mapper.identity_map_object(stack_allocator, allocator);
                 mapper.identity_map_object(dwarf_data(), allocator);
                 mapper.identity_map_object(&allocator.mappings(), allocator);

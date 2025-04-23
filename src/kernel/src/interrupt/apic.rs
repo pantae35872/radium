@@ -260,6 +260,10 @@ impl LocalApic {
 
     pub fn enable(&mut self) {
         // FIXME: APIC timer interrupts now working on legacy apic mode
+        // EDIT:
+        // Umm idk if this is fixed or not it's suddenly just started working in apic mode
+        // I tried git diff and i really didn't change anything it think it's the problem with
+        // qemu, i can't reproduce it now
         if self.x2apic {
             self.registers.base.write_bit(10, true);
         }
