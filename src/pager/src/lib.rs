@@ -1,9 +1,9 @@
 #![no_std]
 #![feature(pointer_is_aligned_to)]
 
-use core::{arch::asm, fmt::Display, ops::Deref};
+use core::{fmt::Display, ops::Deref};
 
-use address::{Frame, Page, PhysAddr, VirtAddr};
+use address::{Frame, Page, PhysAddr};
 use bitflags::bitflags;
 
 pub mod address;
