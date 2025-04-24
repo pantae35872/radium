@@ -5,7 +5,7 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
-use pager::registers::Cr3;
+use pager::registers::{Cr3, GsBase, KernelGsBase};
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
     EntryFlags, Mapper,
@@ -14,7 +14,6 @@ use raw_cpuid::CpuId;
 use spin::Mutex;
 use x86_64::{
     instructions::{self},
-    registers::model_specific::Msr,
     structures::idt::InterruptDescriptorTable,
 };
 
@@ -39,9 +38,6 @@ pub const MAX_CPU: usize = 64;
 
 static APIC_ID_TO_CPU_ID: OnceCell<Mutex<[Option<usize>; MAX_CPU]>> = OnceCell::uninit();
 static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
-
-const IA32_KERNEL_GS_BASE: u32 = 0xc0000102;
-const IA32_GS_BASE: u32 = 0xc0000101;
 
 pub const TRAMPOLINE_START: PhysAddr = PhysAddr::new(0x7000);
 pub const TRAMPOLINE_END: PhysAddr = PhysAddr::new(0x9000);
@@ -327,10 +323,11 @@ fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
         cpu_local as *const CpuLocal as u64
     );
     let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
-    let mut msr = Msr::new(IA32_KERNEL_GS_BASE);
-    unsafe { msr.write(ptr as *const u64 as u64) };
-    let mut msr = Msr::new(IA32_GS_BASE);
-    unsafe { msr.write(ptr as *const u64 as u64) };
+    // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
+    unsafe {
+        KernelGsBase::write(VirtAddr::new(ptr as *const u64 as u64));
+        GsBase::write(VirtAddr::new(ptr as *const u64 as u64));
+    }
 }
 
 fn apic_id_to_cpu_id(apic_id: usize) -> usize {

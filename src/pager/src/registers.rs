@@ -88,14 +88,50 @@ bitflags! {
 
 #[derive(Debug)]
 pub struct Msr(u32);
-
 pub struct Cr0;
-
 pub struct Cr2;
-
 pub struct RFlags;
-
 pub struct Efer;
+pub struct KernelGsBase;
+pub struct GsBase;
+
+impl KernelGsBase {
+    const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
+
+    /// Read from the kernel gs base msr as [`VirtAddr`]
+    pub fn read() -> VirtAddr {
+        unsafe { VirtAddr::new(Self::IA32_KERNEL_GS_MSR.read()) }
+    }
+
+    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
+    /// memory and mapped
+    pub unsafe fn write(addr: VirtAddr) {
+        unsafe { Self::IA32_KERNEL_GS_MSR.write(addr.as_u64()) };
+    }
+}
+
+impl GsBase {
+    const IA32_GS_MSR: Msr = Msr::new(0xc0000101);
+
+    /// Read from the kernel gs base msr as [`VirtAddr`]
+    pub fn read() -> VirtAddr {
+        unsafe { VirtAddr::new(Self::IA32_GS_MSR.read()) }
+    }
+
+    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
+    /// memory and mapped
+    pub unsafe fn write(addr: VirtAddr) {
+        unsafe { Self::IA32_GS_MSR.write(addr.as_u64()) };
+    }
+}
 
 impl Cr3 {
     /// Read a [`Frame`] and [`Cr3Flags`] from the cr3 register
