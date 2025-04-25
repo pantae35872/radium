@@ -7,7 +7,6 @@
 #![feature(custom_test_frameworks)]
 #![feature(core_intrinsics)]
 #![feature(str_from_utf16_endian)]
-#![feature(naked_functions)]
 #![feature(pointer_is_aligned_to)]
 #![feature(sync_unsafe_cell)]
 #![feature(iter_next_chunk)]
@@ -36,6 +35,7 @@ pub mod smp;
 pub mod utils;
 
 use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
 
 use bakery::DwarfBaker;
@@ -93,9 +93,15 @@ pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
     hlt_loop();
 }
 
+pub fn hlt() {
+    unsafe {
+        core::arch::asm!("hlt", options(nostack, preserves_flags, nomem));
+    }
+}
+
 pub fn hlt_loop() -> ! {
     loop {
-        x86_64::instructions::hlt();
+        hlt();
     }
 }
 
@@ -106,8 +112,23 @@ pub trait Testable {
 pub const TESTING: bool = cfg!(test) | cfg!(feature = "testing");
 pub const QEMU_EXIT_PANIC: bool = cfg!(feature = "panic_exit");
 
+static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    match PANIC_COUNT.fetch_add(1, Ordering::SeqCst) {
+        0 => {}
+        1 => {
+            log!(Critical, "DOUBLE PANIC STOPPING...");
+            LOGGER.flush_select();
+            hlt_loop();
+        }
+        2 => {
+            serial_println!("TRIPLE PANIC, theres a bug in the logger code");
+            hlt_loop();
+        }
+        _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
+    };
     log!(Critical, "{}", info);
 
     log!(Info, "Backtrace:");
@@ -132,17 +153,7 @@ fn panic(info: &PanicInfo) -> ! {
     let mut data = CallbackData { counter: 0 };
     _Unwind_Backtrace(callback, &mut data as *mut _ as _);
 
-    LOGGER.flush_all(if print::DRIVER.get().is_none() {
-        log!(
-            Warning,
-            "Screen print not avaiable logging into serial ports"
-        );
-        &[|s| serial_print!("{s}")]
-    } else if TESTING {
-        &[|s| serial_print!("{s}")]
-    } else {
-        &[|s| serial_print!("{s}"), |s| print!("{s}")]
-    });
+    LOGGER.flush_select();
 
     if TESTING {
         test_panic_handler(info);

@@ -94,6 +94,11 @@ pub struct RFlags;
 pub struct Efer;
 pub struct KernelGsBase;
 pub struct GsBase;
+pub struct CS;
+
+#[derive(Clone, Copy)]
+#[repr(transparent)]
+pub struct SegmentSelector(pub u16);
 
 impl KernelGsBase {
     const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
@@ -220,6 +225,36 @@ impl Cr0 {
     }
 }
 
+impl CS {
+    /// Read from the cs segment register
+    #[inline(always)]
+    pub fn read() -> SegmentSelector {
+        let result: u16;
+        // SAFETY: We reading the cs is safe we're not setting it
+        unsafe {
+            asm!("mov {0:x}, cs", out(reg) result, options(nostack, nomem, preserves_flags));
+        }
+
+        SegmentSelector(result)
+    }
+
+    #[inline(always)]
+    pub unsafe fn set(sel: SegmentSelector) {
+        unsafe {
+            asm!(
+                "push {sel}",
+                "lea {tmp}, [55f + rip]",
+                "push {tmp}",
+                "retfq",
+                "55:",
+                sel = in(reg) u64::from(sel.0),
+                tmp = lateout(reg) _,
+                options(preserves_flags),
+            );
+        }
+    }
+}
+
 impl Msr {
     #[inline(always)]
     pub const fn new(msr: u32) -> Self {
@@ -301,6 +336,20 @@ impl RFlags {
         }
 
         RFlagsFlags::from_bits_truncate(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed(2))]
+pub struct DescriptorTablePointer {
+    pub limit: u16,
+    pub base: VirtAddr,
+}
+
+#[inline(always)]
+pub unsafe fn lidt(idt: &DescriptorTablePointer) {
+    unsafe {
+        asm!("lidt [{}]", in(reg) idt, options(readonly, nostack, preserves_flags));
     }
 }
 

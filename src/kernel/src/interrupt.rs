@@ -3,11 +3,9 @@ use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
 use crate::gdt;
-use crate::hlt_loop;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
 use crate::log;
-use crate::println;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
@@ -17,17 +15,19 @@ use apic::LocalApic;
 use apic::LocalApicArguments;
 use apic::TimerDivide;
 use apic::TimerMode;
+use idt::Idt;
+use idt::InterruptStackFrame;
+use idt::PageFaultErrorCode;
 use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
+use pager::address::VirtAddr;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
 use pager::registers::RFlagsFlags;
-use x86_64::structures::idt::PageFaultErrorCode;
-use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame};
-use x86_64::VirtAddr;
 
 pub mod apic;
+pub mod idt;
 pub mod io_apic;
 
 pub const LOCAL_APIC_OFFSET: u8 = 32;
@@ -61,38 +61,11 @@ fn disable_pic() {
     }
 }
 
-fn create_idt() -> &'static InterruptDescriptorTable {
-    let idt = Box::leak(InterruptDescriptorTable::new().into());
-    idt.breakpoint.set_handler_fn(breakpoint_handle);
-    idt.page_fault.set_handler_fn(page_fault_handler);
-    idt.overflow.set_handler_fn(overflow_handler);
-    idt.divide_error.set_handler_fn(divide_handler);
-    idt.debug.set_handler_fn(debug_handler);
-    idt.invalid_tss.set_handler_fn(tss_handler);
-    idt.machine_check.set_handler_fn(machine_check_handler);
-    idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
-    idt.hv_injection_exception
-        .set_handler_fn(hv_injection_handler);
-    idt.device_not_available
-        .set_handler_fn(device_not_available_handler);
-    idt.vmm_communication_exception
-        .set_handler_fn(vmm_communication_exception_handler);
-    idt.virtualization.set_handler_fn(virtualization_handler);
-    idt.security_exception
-        .set_handler_fn(security_exception_handler);
-    idt.alignment_check.set_handler_fn(alignment_check_handler);
-    idt.x87_floating_point
-        .set_handler_fn(x87_floating_point_handler);
-    idt.segment_not_present
-        .set_handler_fn(segment_not_present_handler);
-    idt.general_protection_fault
+fn create_idt() -> &'static Idt {
+    let idt = Box::leak(Idt::new().into());
+    idt.general_protection
         .set_handler_fn(general_protection_fault_handler);
-    idt.cp_protection_exception
-        .set_handler_fn(cp_protection_exception_handler);
-    idt.stack_segment_fault
-        .set_handler_fn(stack_segment_fault_handler);
-    idt.simd_floating_point
-        .set_handler_fn(simd_floating_point_handler);
+    idt.page_fault.set_handler_fn(page_fault_handler);
     unsafe {
         idt.double_fault
             .set_handler_fn(double_fault_handler)
@@ -235,36 +208,6 @@ fn eoi() {
     cpu_local().lapic().eoi();
 }
 
-extern "x86-interrupt" fn simd_floating_point_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn x87_floating_point_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn virtualization_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn device_not_available_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn hv_injection_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn invalid_opcode_handler(_stack_frame: InterruptStackFrame) {
-    panic!("Inavlid opcode");
-}
-
-extern "x86-interrupt" fn machine_check_handler(_stack_frame: InterruptStackFrame) -> ! {
-    hlt_loop();
-}
-
-extern "x86-interrupt" fn stack_segment_fault_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
-extern "x86-interrupt" fn cp_protection_exception_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
 extern "x86-interrupt" fn general_protection_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
@@ -275,53 +218,14 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     );
 }
 
-extern "x86-interrupt" fn segment_not_present_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
-extern "x86-interrupt" fn alignment_check_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
-extern "x86-interrupt" fn security_exception_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
-extern "x86-interrupt" fn vmm_communication_exception_handler(
-    _stack_frame: InterruptStackFrame,
-    _error_code: u64,
-) {
-}
-
-extern "x86-interrupt" fn tss_handler(_stack_frame: InterruptStackFrame, _error_code: u64) {
-    panic!("INVALID TSS");
-}
-
-extern "x86-interrupt" fn debug_handler(_stack_frame: InterruptStackFrame) {}
-
-extern "x86-interrupt" fn divide_handler(stack_frame: InterruptStackFrame) {
-    println!("EXCEPTION: DIVISION\n{:#?}", stack_frame);
-}
-
-extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-    println!("EXCEPTION: OVERFLOW\n{:#?}", stack_frame);
-}
-
-extern "x86-interrupt" fn breakpoint_handle(_stack_frame: InterruptStackFrame) {
-    println!("BreakPoint");
-}
-
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
-    _error_code: u64,
+    error_code: u64,
 ) -> ! {
-    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
+    panic!(
+        "EXCEPTION: DOUBLE FAULT\n{:#?}, ERROR_CODE: {}",
+        stack_frame, error_code
+    );
 }
 
 extern "x86-interrupt" fn page_fault_handler(
@@ -329,7 +233,7 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: PageFaultErrorCode,
 ) {
     log!(Critical, "EXCEPTION: PAGE FAULT");
-    log!(Critical, "Accessed Address: {:?}", Cr2::read());
+    log!(Critical, "Accessed Address: {:x?}", Cr2::read());
     log!(Critical, "Error Code: {:?}", error_code);
     log!(Critical, "{:#?}", stack_frame);
     panic!("PAGE FAULT");

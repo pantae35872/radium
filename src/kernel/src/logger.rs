@@ -7,7 +7,7 @@ use bootbridge::BootBridge;
 use c_enum::c_enum;
 use static_log::StaticLog;
 
-use crate::initialize_guard;
+use crate::{initialize_guard, print, serial_print};
 
 mod static_log;
 
@@ -86,9 +86,11 @@ impl MainLogger {
     }
 
     /// SAFETY: the caller must ensure that this is only being called on kernel initialization
-    pub unsafe fn set_level(&self, level: u64) { unsafe {
-        *self.level.get() = LogLevel(level);
-    }}
+    pub unsafe fn set_level(&self, level: u64) {
+        unsafe {
+            *self.level.get() = LogLevel(level);
+        }
+    }
 
     pub fn write(&self, level: LogLevel, formatter: Arguments) {
         // SAFETY: This is safe because the function that mutates the level only being called on
@@ -113,6 +115,20 @@ impl MainLogger {
                 "\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes"
             ));
         }
+    }
+
+    pub fn flush_select(&self) {
+        self.flush_all(if crate::print::DRIVER.get().is_none() {
+            log!(
+                Warning,
+                "Screen print not avaiable logging into serial ports"
+            );
+            &[|s| serial_print!("{s}")]
+        } else if crate::TESTING {
+            &[|s| serial_print!("{s}")]
+        } else {
+            &[|s| serial_print!("{s}"), |s| print!("{s}")]
+        });
     }
 }
 

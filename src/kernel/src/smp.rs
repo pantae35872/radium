@@ -12,16 +12,12 @@ use pager::{
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
-use x86_64::{
-    instructions::{self},
-    structures::idt::InterruptDescriptorTable,
-};
 
 use crate::{
     gdt::Gdt,
     hlt_loop,
     initialization_context::{InitializationContext, Phase2, Phase3},
-    interrupt::{apic::LocalApic, TIMER_COUNT},
+    interrupt::{apic::LocalApic, idt::Idt, TIMER_COUNT},
     log,
     memory::{
         self,
@@ -197,14 +193,14 @@ pub struct CpuLocal {
     cpu_id: usize,
     apic_id: usize,
     lapic: LocalApic,
-    idt: &'static InterruptDescriptorTable,
+    idt: &'static Idt,
     gdt: &'static Gdt,
 }
 
 pub struct CpuLocalBuilder {
     lapic: Option<LocalApic>,
     gdt: Option<&'static Gdt>,
-    idt: Option<&'static InterruptDescriptorTable>,
+    idt: Option<&'static Idt>,
 }
 
 impl CpuLocalBuilder {
@@ -221,7 +217,7 @@ impl CpuLocalBuilder {
         self
     }
 
-    pub fn idt(&mut self, idt: &'static InterruptDescriptorTable) -> &mut Self {
+    pub fn idt(&mut self, idt: &'static Idt) -> &mut Self {
         self.idt = Some(idt);
         self
     }
@@ -352,7 +348,7 @@ pub fn cpu_local() -> &'static mut CpuLocal {
 fn clunky_wait(ms: usize) {
     let end_time = TIMER_COUNT.load(Ordering::Relaxed) + ms;
     while TIMER_COUNT.load(Ordering::Relaxed) < end_time {
-        instructions::hlt();
+        crate::hlt();
     }
 }
 
