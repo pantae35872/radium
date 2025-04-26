@@ -3,12 +3,11 @@ use core::marker::PhantomData;
 use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use pager::{
     address::{Frame, PhysAddr},
+    allocator::{linear_allocator::LinearAllocator, FrameAllocator},
     PAGE_SIZE,
 };
 
-use crate::{log, memory::FrameAllocator};
-
-use super::linear_allocator::LinearAllocator;
+use crate::log;
 
 pub struct AreaAllocator<'a, I> {
     areas: I,

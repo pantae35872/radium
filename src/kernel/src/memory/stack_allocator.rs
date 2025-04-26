@@ -1,12 +1,10 @@
 use pager::{
     address::{Frame, PageIter, PhysAddr, VirtAddr},
+    paging::{table::RecurseLevel4, ActivePageTable},
     EntryFlags, IdentityMappable, PAGE_SIZE,
 };
 
-use super::{
-    paging::{table::RecurseLevel4, ActivePageTable},
-    WithTable,
-};
+use super::WithTable;
 
 pub struct StackAllocator {
     range: PageIter,

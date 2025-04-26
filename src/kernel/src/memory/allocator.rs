@@ -12,11 +12,9 @@ use pager::{
 
 pub mod area_allocator;
 pub mod buddy_allocator;
-pub mod linear_allocator;
 pub mod linked_list;
 
 use self::linked_list::LinkedListAllocator;
-
 
 pub const HEAP_SIZE: u64 = 0x4000000; // 64 Mib
 

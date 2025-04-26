@@ -1,18 +1,15 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use allocator::{
-    area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator,
-    linear_allocator::LinearAllocator,
-};
+use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
+    paging::{mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable},
     registers::{Cr0, Cr0Flags, Efer, EferFlags},
     EntryFlags, PAGE_SIZE,
 };
-use paging::{
-    early_map_kernel, mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable,
-};
+use paging::early_map_kernel;
 use stack_allocator::StackAllocator;
 
 use crate::{
@@ -281,45 +278,4 @@ select_context! {
                 .mapper_with_allocator(&mut ctx.buddy_allocator)
         }
     }
-}
-
-pub trait FrameAllocator {
-    fn linear_allocator(&mut self, size_in_frames: u64) -> Option<LinearAllocator> {
-        let mut last_address = 0;
-        let mut counter = size_in_frames;
-        let mut start_frame = Frame::null();
-        loop {
-            let frame = match self.allocate_frame() {
-                Some(frame) => frame,
-                None => return None,
-            };
-            if start_frame.start_address().as_u64() == 0 {
-                start_frame = frame.clone();
-            }
-            // If the memory is not contiguous, reset the counter
-            if last_address + PAGE_SIZE != frame.start_address().as_u64() && last_address != 0 {
-                counter = size_in_frames;
-                start_frame = frame.clone();
-            }
-            last_address = frame.start_address().as_u64();
-            counter -= 1;
-            if counter == 0 {
-                break;
-            }
-        }
-        assert!(start_frame.start_address().as_u64() != 0);
-        // We know that the frame allocator is valid
-        Some(unsafe {
-            LinearAllocator::new(
-                start_frame.start_address(),
-                (size_in_frames * PAGE_SIZE) as usize,
-            )
-        })
-    }
-
-    // SAFETY: The implementor of this function must gurentee that the return frame is valid and is
-    // the only ownership of that physical frame
-    fn allocate_frame(&mut self) -> Option<Frame>;
-
-    fn deallocate_frame(&mut self, frame: Frame);
 }

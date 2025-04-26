@@ -73,6 +73,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let (_system_table, mut memory_map) =
         system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
     memory_map.sort();
+
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
     let len = entries.len() * entry_size;

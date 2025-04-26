@@ -1,7 +1,8 @@
-use crate::memory::FrameAllocator;
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
 use core::ptr::Unique;
+
+use crate::allocator::FrameAllocator;
 
 use super::{Entry, EntryFlags, ENTRY_COUNT};
 

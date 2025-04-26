@@ -1,11 +1,11 @@
-use pager::address::{Frame, VirtAddr};
+use crate::address::{Frame, Page, VirtAddr};
+use crate::allocator::FrameAllocator;
+use crate::EntryFlags;
 
 use super::table::{
     HierarchicalLevel, NextTableAddress, RecurseLevel1, Table, TableLevel, TableLevel4,
 };
-use super::{ActivePageTable, Page};
-use crate::memory::paging::EntryFlags;
-use crate::memory::FrameAllocator;
+use super::ActivePageTable;
 
 pub struct TemporaryPage {
     mapped: bool,

@@ -2,6 +2,10 @@ use core::{marker::PhantomData, ptr};
 
 use bootbridge::MemoryDescriptor;
 use pager::address::{Page, PhysAddr, VirtAddr};
+use pager::allocator::linear_allocator::LinearAllocator;
+use pager::allocator::FrameAllocator;
+use pager::paging::table::RecurseLevel4;
+use pager::paging::{create_mappings, ActivePageTable, InactivePageTable};
 use pager::EntryFlags;
 
 use crate::initialization_context::{InitializationContext, Phase0};
@@ -9,14 +13,11 @@ use crate::interrupt;
 use crate::memory::stack_allocator::StackAllocator;
 use crate::{
     dwarf_data,
-    memory::{
-        paging::{create_mappings, table::RecurseLevel4, ActivePageTable, InactivePageTable},
-        Frame, FrameAllocator, MAX_ALIGN, PAGE_SIZE,
-    },
+    memory::{Frame, MAX_ALIGN, PAGE_SIZE},
     utils::NumberUtils,
 };
 
-use super::{area_allocator::AreaAllocator, linear_allocator::LinearAllocator};
+use super::area_allocator::AreaAllocator;
 
 struct AllocationContext {
     linear_allocator: LinearAllocator,

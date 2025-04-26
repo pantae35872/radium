@@ -5,10 +5,18 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
-use pager::registers::{Cr3, GsBase, KernelGsBase};
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
+    paging::{
+        table::{DirectLevel4, Table},
+        ActivePageTable,
+    },
     EntryFlags, Mapper,
+};
+use pager::{
+    allocator::linear_allocator::LinearAllocator,
+    registers::{Cr3, GsBase, KernelGsBase},
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
@@ -19,15 +27,7 @@ use crate::{
     initialization_context::{InitializationContext, Phase2, Phase3},
     interrupt::{apic::LocalApic, idt::Idt, TIMER_COUNT},
     log,
-    memory::{
-        self,
-        allocator::linear_allocator::LinearAllocator,
-        paging::{
-            table::{DirectLevel4, Table},
-            ActivePageTable,
-        },
-        FrameAllocator,
-    },
+    memory::{self},
 };
 
 pub const MAX_CPU: usize = 64;

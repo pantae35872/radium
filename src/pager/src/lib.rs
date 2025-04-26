@@ -1,5 +1,7 @@
 #![no_std]
 #![feature(pointer_is_aligned_to)]
+#![feature(ptr_internals)]
+#![allow(internal_features)]
 
 use core::{fmt::Display, ops::Deref};
 
@@ -7,6 +9,8 @@ use address::{Frame, Page, PhysAddr, VirtAddr};
 use bitflags::bitflags;
 
 pub mod address;
+pub mod allocator;
+pub mod paging;
 pub mod registers;
 
 pub const PAGE_SIZE: u64 = 4096;

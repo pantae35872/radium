@@ -1,6 +1,6 @@
 use core::fmt::Debug;
 
-use pager::address::{Frame, PhysAddr};
+use crate::address::{Frame, PhysAddr};
 
 use super::EntryFlags;
 
