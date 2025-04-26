@@ -159,6 +159,12 @@ impl Cr3 {
         )
     }
 
+    /// Reload the cr3 invalidating all tlb
+    pub fn reload() {
+        let (frame, flags) = Cr3::read();
+        unsafe { Cr3::write(frame, flags) }
+    }
+
     /// Write into cr3 register containing the provided [`Frame`] and [`Cr3Flags`]
     ///
     /// # Safety

@@ -115,23 +115,20 @@ where
     ) where
         F: FnOnce(&mut Mapper<P4>),
     {
-        use x86_64::instructions::tlb;
-        {
-            let (level_4_table_frame, _) = Cr3::read();
-            let backup = level_4_table_frame.clone();
+        let (level_4_table_frame, _) = Cr3::read();
+        let backup = level_4_table_frame.clone();
 
-            // SAFETY: We know that the frame is valid because we're reading it from the cr3
-            // which if it's is indeed invalid, this code shoulnt be even executing
-            let p4_table = unsafe { temporary_page.map_table_frame(backup.clone(), self) };
+        // SAFETY: We know that the frame is valid because we're reading it from the cr3
+        // which if it's is indeed invalid, this code shoulnt be even executing
+        let p4_table = unsafe { temporary_page.map_table_frame(backup.clone(), self) };
 
-            self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
-            tlb::flush_all();
+        self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+        Cr3::reload();
 
-            f(self);
+        f(self);
 
-            p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
-            tlb::flush_all();
-        }
+        p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+        Cr3::reload();
 
         temporary_page.unmap(self);
     }
