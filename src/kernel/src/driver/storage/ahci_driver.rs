@@ -13,9 +13,9 @@ use alloc::alloc::alloc;
 use alloc::sync::Arc;
 use bit_field::BitField;
 use lazy_static::lazy_static;
+use pager::address::{PhysAddr, VirtAddr};
 use spin::mutex::Mutex;
 use spin::Once;
-use x86_64::{PhysAddr, VirtAddr};
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
 use crate::log;

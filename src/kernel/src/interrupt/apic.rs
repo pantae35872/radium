@@ -397,12 +397,7 @@ impl Clone for LocalApic {
 }
 
 fn lapic_base() -> PhysAddr {
-    unsafe {
-        PhysAddr::new(
-            x86_64::registers::model_specific::Msr::new(IA32_APIC_BASE_MSR).read()
-                & 0xFFFFFF000 as u64,
-        )
-    }
+    unsafe { PhysAddr::new(Msr::new(IA32_APIC_BASE_MSR).read() & 0xFFFFFF000 as u64) }
 }
 
 impl MMIODevice<LocalApicArguments> for LocalApic {

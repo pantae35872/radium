@@ -5,10 +5,12 @@ use core::{ptr, u8, usize};
 
 use alloc::alloc::alloc;
 use conquer_once::spin::OnceCell;
+use pager::address::VirtAddr;
 use spin::Mutex;
-use x86_64::VirtAddr;
 
 use crate::utils::port::Port8Bit;
+
+// WARNING: This module is no longer used, and update.
 
 pub struct Vga {
     misc_port: Port8Bit,
@@ -47,46 +49,48 @@ impl Vga {
         }
     }
 
-    unsafe fn write_registers(&self, registers_slice: &mut [u8]) { unsafe {
-        let mut registers = registers_slice.iter();
-        self.misc_port.write(*registers.next().unwrap_or(&0));
-        for i in 0..5 {
-            self.sequencer_index_port.write(i);
-            self.sequencer_data_port
-                .write(*registers.next().unwrap_or(&0));
-        }
+    unsafe fn write_registers(&self, registers_slice: &mut [u8]) {
+        unsafe {
+            let mut registers = registers_slice.iter();
+            self.misc_port.write(*registers.next().unwrap_or(&0));
+            for i in 0..5 {
+                self.sequencer_index_port.write(i);
+                self.sequencer_data_port
+                    .write(*registers.next().unwrap_or(&0));
+            }
 
-        self.crtc_index_port.write(0x03);
-        self.crtc_data_port.write(self.crtc_data_port.read() | 0x80);
-        self.crtc_index_port.write(0x11);
-        self.crtc_data_port
-            .write(self.crtc_data_port.read() & !0x80);
-        drop(registers);
-        registers_slice[0x03] = registers_slice[0x03] | 0x80;
-        registers_slice[0x11] = registers_slice[0x11] & !0x80;
-        let mut registers = registers_slice.iter().skip(6);
+            self.crtc_index_port.write(0x03);
+            self.crtc_data_port.write(self.crtc_data_port.read() | 0x80);
+            self.crtc_index_port.write(0x11);
+            self.crtc_data_port
+                .write(self.crtc_data_port.read() & !0x80);
+            drop(registers);
+            registers_slice[0x03] = registers_slice[0x03] | 0x80;
+            registers_slice[0x11] = registers_slice[0x11] & !0x80;
+            let mut registers = registers_slice.iter().skip(6);
 
-        for i in 0..25 {
-            self.crtc_index_port.write(i);
-            self.crtc_data_port.write(*registers.next().unwrap_or(&0));
-        }
+            for i in 0..25 {
+                self.crtc_index_port.write(i);
+                self.crtc_data_port.write(*registers.next().unwrap_or(&0));
+            }
 
-        for i in 0..9 {
-            self.graphic_controller_index_port.write(i);
-            self.graphic_controller_data_port
-                .write(*registers.next().unwrap_or(&0));
-        }
+            for i in 0..9 {
+                self.graphic_controller_index_port.write(i);
+                self.graphic_controller_data_port
+                    .write(*registers.next().unwrap_or(&0));
+            }
 
-        for i in 0..21 {
+            for i in 0..21 {
+                self.attribute_controller_reset_port.read();
+                self.attribute_controller_index_port.write(i);
+                self.attribute_controller_write_port
+                    .write(*registers.next().unwrap_or(&0));
+            }
+
             self.attribute_controller_reset_port.read();
-            self.attribute_controller_index_port.write(i);
-            self.attribute_controller_write_port
-                .write(*registers.next().unwrap_or(&0));
+            self.attribute_controller_index_port.write(0x20);
         }
-
-        self.attribute_controller_reset_port.read();
-        self.attribute_controller_index_port.write(0x20);
-    }}
+    }
 
     fn support_mode(width: u32, height: u32, colordepth: u32) -> bool {
         width == 320 && height == 200 && colordepth == 8

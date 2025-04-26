@@ -7,7 +7,7 @@ use core::future::Future;
 use core::{f64, slice};
 
 use alloc::vec::Vec;
-use x86_64::PhysAddr;
+use pager::address::PhysAddr;
 
 use crate::inline_if;
 use crate::memory::memory_controller;

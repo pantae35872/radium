@@ -485,7 +485,6 @@ dependencies = [
  "uguid",
  "unwinding",
  "uuid",
- "x86_64 0.14.13",
 ]
 
 [[package]]

@@ -13,7 +13,6 @@ features = ["spin_no_std"]
 
 [dependencies]
 spin = "0.9.8"
-x86_64 = "0.14.11"
 uart_16550 = "0.2.0"
 bitflags = "2.4.1"
 uguid = "2.2.0"
