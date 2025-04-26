@@ -3,13 +3,35 @@
 
 use core::{fmt::Display, ops::Deref};
 
-use address::{Frame, Page, PhysAddr};
+use address::{Frame, Page, PhysAddr, VirtAddr};
 use bitflags::bitflags;
 
 pub mod address;
 pub mod registers;
 
 pub const PAGE_SIZE: u64 = 4096;
+
+/// The kernel uses higher half canonical address as it's address space
+/// heres are the visualization
+///
+/// Canonical high addresses: 0xFFFF_8000_0000_0000 -> 0xFFFF_FFFF_FFFF_FFFF
+/// +----------------------------+ 0xFFFF_8000_0000_0000
+/// | Kernel ELF                 |
+/// +----------------------------+ 0xFFFF_8000_FFFF_FFFF
+///
+/// +----------------------------+ 0xFFFF_9000_0000_0000
+/// | Direct Physical Map        |
+/// | (1:1 virtual -> physical)  |
+/// +----------------------------+ 0xFFFF_A000_0000_0000
+///
+/// +----------------------------+ 0xFFFF_B000_0000_0000
+/// | General Kernel Use         |
+/// | (dynamic memory, stack,    |
+/// |  kernel heap, etc)         |
+/// +----------------------------+ 0xFFFF_FFFF_FFFF_FFFF
+pub const KERNEL_START: VirtAddr = VirtAddr::canonical_higher_half();
+pub const KERNEL_DIRECT_PHYSICAL_MAP: VirtAddr = VirtAddr::new(0xFFFF_9000_0000_0000);
+pub const KERNEL_GENERAL_USE: VirtAddr = VirtAddr::new(0xFFFF_B000_0000_0000);
 
 pub trait Mapper {
     unsafe fn identity_map_range(

@@ -291,6 +291,12 @@ impl VirtAddr {
         }
     }
 
+    /// Create a virtual address containing the upper canonical half of 48-bit addressing
+    /// (ffff_8000_0000_0000)
+    pub const fn canonical_higher_half() -> Self {
+        Self::new(0xffff_8000_0000_0000)
+    }
+
     /// Create a new null virtual address
     #[inline(always)]
     pub const fn null() -> Self {
