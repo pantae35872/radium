@@ -111,6 +111,33 @@ impl<'a> DataBuffer<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(u16)]
+pub enum PrivilegeLevel {
+    Ring0 = 0,
+    Ring1 = 1,
+    Ring2 = 2,
+    Ring3 = 3,
+}
+
+impl PrivilegeLevel {
+    /// Create privilege level from u16 and truncate the upper bits
+    pub fn from_u16_truncate(level: u16) -> Self {
+        let level = level & 0b11;
+        match level {
+            0 => Self::Ring0,
+            1 => Self::Ring1,
+            2 => Self::Ring2,
+            3 => Self::Ring3,
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn as_u16(&self) -> u16 {
+        *self as u16
+    }
+}
+
 impl<'a> Deref for DataBuffer<'a> {
     type Target = [u8];
 

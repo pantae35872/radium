@@ -4,15 +4,13 @@ use core::{
     ops::{Index, IndexMut},
 };
 
-use alloc::boxed::Box;
 use bit_field::BitField;
 use pager::{
     address::VirtAddr,
     registers::{lidt, Cr2, DescriptorTablePointer, SegmentSelector, CS},
 };
-use x86_64::structures::idt::InterruptDescriptorTable;
 
-use crate::{hlt_loop, log};
+use crate::log;
 
 #[derive(Clone, Copy)]
 pub struct GateInterrupt;

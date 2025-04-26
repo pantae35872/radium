@@ -291,6 +291,12 @@ impl VirtAddr {
         }
     }
 
+    /// Create a new null virtual address
+    #[inline(always)]
+    pub const fn null() -> Self {
+        unsafe { Self::new_unchecked(0) }
+    }
+
     pub fn align_to(&self, phys: PhysAddr) -> Self {
         let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
         // add it on to the virtual base

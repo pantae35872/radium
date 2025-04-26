@@ -1,8 +1,7 @@
 use alloc::boxed::Box;
-use x86_64::registers::segmentation::{Segment, CS};
-use x86_64::structures::gdt::SegmentSelector;
-use x86_64::structures::tss::TaskStateSegment;
-use x86_64::{PrivilegeLevel, VirtAddr};
+use pager::address::VirtAddr;
+use pager::registers::{lgdt, load_tss, DescriptorTablePointer, SegmentSelector, CS};
+use pager::PrivilegeLevel;
 
 use crate::initialization_context::{InitializationContext, Phase3};
 use crate::log;
@@ -35,7 +34,6 @@ impl Gdt {
 
     pub fn load(&'static self) {
         use core::mem::size_of;
-        use x86_64::instructions::tables::{lgdt, DescriptorTablePointer};
 
         let ptr = DescriptorTablePointer {
             base: VirtAddr::new(self.table.as_ptr() as u64),
@@ -69,7 +67,6 @@ pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
                 .alloc_stack(1)
                 .expect("Failed to allocator stack for double fault handler");
             log!(Trace, "Initializing gdt for core: {id}");
-            use x86_64::instructions::tables::load_tss;
             log!(
                 Debug,
                 "Double fault handler stack, Top: {:#x}, Bottom: {:#x}",
@@ -77,19 +74,44 @@ pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
                 double_fault.bottom()
             );
             let tss = Box::leak(TaskStateSegment::new().into());
-            tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] =
-                x86_64::VirtAddr::new(double_fault.top().as_u64());
+            tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = double_fault.top();
             let gdt = Box::leak(Gdt::new().into());
             let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
             let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));
             gdt.load();
             unsafe {
-                CS::set_reg(code_selector);
+                CS::set(code_selector);
                 load_tss(tss_selector);
             }
             cpu.gdt(gdt);
         };
     ctx.local_initializer(|initializer| initializer.register(gdt_initializer));
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed(4))]
+pub struct TaskStateSegment {
+    _reserved_1: u32,
+    pub privilege_stack_table: [VirtAddr; 3],
+    _reserved_2: u64,
+    pub interrupt_stack_table: [VirtAddr; 7],
+    _reserved_3: u64,
+    _reserved_4: u16,
+    pub iomap_base: u16,
+}
+
+impl TaskStateSegment {
+    pub const fn new() -> TaskStateSegment {
+        TaskStateSegment {
+            privilege_stack_table: [VirtAddr::null(); 3],
+            interrupt_stack_table: [VirtAddr::null(); 7],
+            iomap_base: size_of::<TaskStateSegment>() as u16,
+            _reserved_1: 0,
+            _reserved_2: 0,
+            _reserved_3: 0,
+            _reserved_4: 0,
+        }
+    }
 }
 
 pub enum Descriptor {

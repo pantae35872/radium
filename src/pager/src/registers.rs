@@ -2,7 +2,10 @@ use core::arch::asm;
 
 use bitflags::bitflags;
 
-use crate::address::{Frame, PhysAddr, VirtAddr};
+use crate::{
+    address::{Frame, PhysAddr, VirtAddr},
+    PrivilegeLevel,
+};
 
 /// Respresent a [`Cr3`] register in a processor
 ///
@@ -225,6 +228,20 @@ impl Cr0 {
     }
 }
 
+impl SegmentSelector {
+    pub fn new(index: u16, rpl: PrivilegeLevel) -> Self {
+        Self(index << 3 | rpl.as_u16())
+    }
+
+    pub fn index(&self) -> u16 {
+        self.0 >> 3
+    }
+
+    pub fn privilege_level(&self) -> PrivilegeLevel {
+        PrivilegeLevel::from_u16_truncate(self.0)
+    }
+}
+
 impl CS {
     /// Read from the cs segment register
     #[inline(always)]
@@ -350,6 +367,20 @@ pub struct DescriptorTablePointer {
 pub unsafe fn lidt(idt: &DescriptorTablePointer) {
     unsafe {
         asm!("lidt [{}]", in(reg) idt, options(readonly, nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+pub unsafe fn lgdt(gdt: &DescriptorTablePointer) {
+    unsafe {
+        asm!("lgdt [{}]", in(reg) gdt, options(readonly, nostack, preserves_flags));
+    }
+}
+
+#[inline(always)]
+pub unsafe fn load_tss(selector: SegmentSelector) {
+    unsafe {
+        asm!("ltr {0:x}", in(reg) selector.0, options(nostack, preserves_flags));
     }
 }
 
