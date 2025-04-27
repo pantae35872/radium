@@ -87,11 +87,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     boot_bridge.memory_map(memory_map_bytes, entry_size);
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 
-    gdt.load();
-    unsafe {
-        CS::set(selector);
-    }
-
     unsafe {
         asm!(
         r#"

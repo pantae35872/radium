@@ -24,7 +24,7 @@ pub fn prepare_kernel_page(
     config: &BootConfig,
     elf: &Elf<'static>,
     kernel_phys_start: PhysAddr,
-) -> (u64, &'static Gdt, SegmentSelector) {
+) -> u64 {
     let system_table = system_table();
     let kernel_pages_table = system_table
         .boot_services()
@@ -93,34 +93,10 @@ pub fn prepare_kernel_page(
                 EntryFlags::PRESENT,
             );
     };
-
-    let gdt = system_table
-        .boot_services()
-        .allocate_pool(MemoryType::LOADER_DATA, size_of::<Gdt>())
-        .expect("FAiled to allocate temporary gdt");
-
-    unsafe {
-        write_bytes(gdt, 0, size_of::<Gdt>());
-    }
-
-    let gdt = unsafe { &mut *(gdt as *mut Gdt) };
-    *gdt = Gdt::new();
-    let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
-
-    unsafe {
-        kernel_table
-            .mapper_with_allocator(&mut kernel_page_allocator)
-            .identity_map_by_size(
-                Frame::containing_address(PhysAddr::new(gdt as *const Gdt as u64)),
-                size_of::<Gdt>(),
-                EntryFlags::PRESENT,
-            )
-    };
-
     // Do a recursive map
     kernel_table.p4_mut()[511] = Entry(
         p4_frame.start_address().as_u64() | (EntryFlags::PRESENT | EntryFlags::WRITABLE).bits(),
     );
 
-    (kernel_pages_table, gdt, code_selector)
+    kernel_pages_table
 }

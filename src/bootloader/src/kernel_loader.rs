@@ -29,13 +29,13 @@ pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
 pub fn load_kernel(
     boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
     config: &BootConfig,
-) -> (u64, u64, &'static Gdt, SegmentSelector) {
+) -> (u64, u64) {
     let system_table = system_table();
     let kernel_font = config.font_file().permanent();
     let kernel_file = config.kernel_file().permanent();
     let dwarf_file = config.dwarf_file().permanent();
 
-    let (entrypoint, table, gdt, segment) = load_elf(boot_bridge, config, kernel_file);
+    let (entrypoint, table) = load_elf(boot_bridge, config, kernel_file);
 
     boot_bridge
         .font_data(kernel_font.as_ptr() as u64, kernel_font.len())
@@ -43,5 +43,5 @@ pub fn load_kernel(
         .kernel_config(config.kernel_config())
         .rsdp(find_rsdp(system_table.config_table()).expect("Failed to find RSDP"));
 
-    (entrypoint, table, gdt, segment)
+    (entrypoint, table)
 }

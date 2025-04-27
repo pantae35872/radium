@@ -1,7 +1,7 @@
 use core::ptr::write_bytes;
 
 use bootbridge::BootBridgeBuilder;
-use pager::{address::PhysAddr, gdt::Gdt, registers::SegmentSelector};
+use pager::address::PhysAddr;
 use santa::{Elf, ProgramType};
 use uefi::table::boot::{AllocateType, MemoryType};
 use uefi_services::{println, system_table};
@@ -12,7 +12,7 @@ pub fn load_elf(
     boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
     config: &BootConfig,
     buffer: &'static [u8],
-) -> (u64, u64, &'static Gdt, SegmentSelector) {
+) -> (u64, u64) {
     let elf = Elf::new(buffer).expect("Failed to create elf file from the kernel file buffer");
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
@@ -86,10 +86,9 @@ pub fn load_elf(
     }
     let entry = elf.entry_point();
 
-    let (table, gdt, segment) =
-        prepare_kernel_page(config, &elf, PhysAddr::new(program_ptr as u64));
+    let table = prepare_kernel_page(config, &elf, PhysAddr::new(program_ptr as u64));
 
     boot_bridge.kernel_elf(elf);
 
-    return (entry, table, gdt, segment);
+    return (entry, table);
 }
