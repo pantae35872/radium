@@ -21,7 +21,6 @@ use radium::{hlt_loop, print, println, serial_print};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
-    hlt_loop();
     radium::init(boot_bridge);
     println!("Hello, world!!!");
     //#[cfg(not(feature = "testing"))]

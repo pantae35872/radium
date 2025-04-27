@@ -67,7 +67,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
     let config: BootConfig = BootConfig::parse(&config);
 
-    let (entrypoint, table, gdt, selector) = load_kernel(&mut boot_bridge, &config);
+    let (entrypoint, table) = load_kernel(&mut boot_bridge, &config);
 
     if config.any_key_boot() {
         any_key_boot(&mut system_table);
