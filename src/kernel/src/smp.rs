@@ -8,6 +8,7 @@ use conquer_once::spin::OnceCell;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
+    gdt::Gdt,
     paging::{
         table::{DirectLevel4, Table},
         ActivePageTable,
@@ -22,7 +23,6 @@ use raw_cpuid::CpuId;
 use spin::Mutex;
 
 use crate::{
-    gdt::Gdt,
     hlt_loop,
     initialization_context::{InitializationContext, Phase2, Phase3},
     interrupt::{apic::LocalApic, idt::Idt, TIMER_COUNT},

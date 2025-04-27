@@ -423,6 +423,14 @@ impl fmt::LowerHex for VirtAddr {
     }
 }
 
+impl Sub<VirtAddr> for VirtAddr {
+    type Output = VirtAddr;
+
+    fn sub(self, rhs: VirtAddr) -> Self::Output {
+        Self::new(self.0 - rhs.0)
+    }
+}
+
 impl Sub<usize> for VirtAddr {
     type Output = VirtAddr;
 

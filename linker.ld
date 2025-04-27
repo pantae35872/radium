@@ -15,7 +15,7 @@ PHDRS
 }
 
 SECTIONS {
-  . = 1M;
+  . = 0xffff800000000000;
   
   .trampoline ALIGN(4K):
   {

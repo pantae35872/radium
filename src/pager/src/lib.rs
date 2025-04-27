@@ -10,6 +10,7 @@ use bitflags::bitflags;
 
 pub mod address;
 pub mod allocator;
+pub mod gdt;
 pub mod paging;
 pub mod registers;
 
@@ -109,6 +110,10 @@ bitflags! {
 
 pub trait IdentityMappable {
     fn map(&self, mapper: &mut impl Mapper);
+}
+
+pub trait VirtuallyMappable {
+    fn virt_map(&self, mapper: &mut impl Mapper, phys_start: PhysAddr);
 }
 
 impl Display for EntryFlags {

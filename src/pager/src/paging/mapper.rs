@@ -1,7 +1,7 @@
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::registers::tlb;
-use crate::{IdentityMappable, PAGE_SIZE};
+use crate::{IdentityMappable, VirtuallyMappable, PAGE_SIZE};
 
 use super::table::{
     DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
@@ -269,6 +269,16 @@ where
     ) {
         let mut mapper = self.mapper_with_allocator(allocator);
         obj.map(&mut mapper);
+    }
+
+    pub fn virtually_map_object<O: VirtuallyMappable, A: FrameAllocator>(
+        &mut self,
+        obj: &O,
+        phys_start: PhysAddr,
+        allocator: &mut A,
+    ) {
+        let mut mapper = self.mapper_with_allocator(allocator);
+        obj.virt_map(&mut mapper, phys_start);
     }
 
     pub fn mapper_with_allocator<'a, A: FrameAllocator>(

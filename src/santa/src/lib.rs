@@ -11,13 +11,16 @@ use core::fmt::Debug;
 use core::iter::Iterator;
 use core::option::Option;
 use pager::{
-    address::{Frame, PhysAddr, VirtAddr},
-    DataBuffer, EntryFlags, IdentityMappable, PAGE_SIZE,
+    address::{Frame, Page, PhysAddr, VirtAddr},
+    DataBuffer, EntryFlags, IdentityMappable, VirtuallyMappable, PAGE_SIZE,
 };
 
 // TODO: Add testing
 pub struct Elf<'a> {
     buffer: DataBuffer<'a>,
+    mem_min: Option<VirtAddr>,
+    mem_max: Option<VirtAddr>,
+    max_alignment: Option<u64>,
 }
 
 //  Reference from https://wiki.osdev.org/ELF
@@ -205,13 +208,62 @@ impl<'a> Elf<'a> {
                 magic: buffer[0..4].try_into().expect("Should not failed"),
             });
         }
-        let s = Self {
+        let mut s = Self {
             buffer: DataBuffer::new(buffer),
+            mem_min: None,
+            mem_max: None,
+            max_alignment: None,
         };
         if s.header().bits != ElfBits::B64 {
             return Err(ElfError::InvalidHeader);
         }
+        s.calculate_layout();
         Ok(s)
+    }
+
+    fn calculate_layout(&mut self) {
+        let mut max_alignment: u64 = 4096;
+        let mut mem_min: u64 = u64::MAX;
+        let mut mem_max: u64 = 0;
+
+        for header in self.program_header_iter() {
+            if header.segment_type() != ProgramType::Load {
+                continue;
+            }
+
+            if max_alignment < header.alignment() {
+                max_alignment = header.alignment();
+            }
+
+            let mut header_begin = header.vaddr().as_u64();
+            let mut header_end = header.vaddr().as_u64() + header.memsize() + max_alignment - 1;
+
+            header_begin &= !(max_alignment - 1);
+            header_end &= !(max_alignment - 1);
+
+            if header_begin < mem_min {
+                mem_min = header_begin;
+            }
+            if header_end > mem_max {
+                mem_max = header_end;
+            }
+        }
+
+        self.mem_min = Some(VirtAddr::new(mem_min));
+        self.mem_max = Some(VirtAddr::new(mem_max));
+        self.max_alignment = Some(max_alignment);
+    }
+
+    pub fn max_alignment(&self) -> u64 {
+        self.max_alignment.unwrap()
+    }
+
+    pub fn mem_min(&self) -> VirtAddr {
+        self.mem_min.unwrap()
+    }
+
+    pub fn mem_max(&self) -> VirtAddr {
+        self.mem_max.unwrap()
     }
 
     fn header(&self) -> ElfHeader {
@@ -312,6 +364,32 @@ impl<'a> Elf<'a> {
 
     pub fn entry_point(&self) -> u64 {
         self.header().program_entry_offset
+    }
+}
+
+impl VirtuallyMappable for Elf<'_> {
+    fn virt_map(&self, mapper: &mut impl pager::Mapper, phys_start: PhysAddr) {
+        for section in self.program_header_iter() {
+            if section.segment_type() != ProgramType::Load {
+                continue;
+            }
+            assert!(
+                section.vaddr().as_u64() % PAGE_SIZE == 0,
+                "sections need to be page aligned"
+            );
+            let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
+
+            // SAFETY: We know this is safe because we're parsing the elf correctly
+            unsafe {
+                mapper.map_to_range(
+                    Page::containing_address(section.vaddr()),
+                    Page::containing_address(section.vaddr() + section.memsize() - 1),
+                    Frame::containing_address(phys_start + relative_offset),
+                    Frame::containing_address(phys_start + relative_offset + section.memsize() - 1),
+                    EntryFlags::from_elf_program_flags(&section.flags()),
+                )
+            };
+        }
     }
 }
 
