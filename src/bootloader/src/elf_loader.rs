@@ -10,10 +10,6 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
     let mut mem_min: u64 = u64::MAX;
     let mut mem_max: u64 = 0;
 
-    elf.program_header_iter()
-        .filter(|e| e.segment_type() == ProgramType::Load)
-        .for_each(|e| println!("{e:?}"));
-
     for header in elf.program_header_iter() {
         if header.segment_type() != ProgramType::Load {
             continue;

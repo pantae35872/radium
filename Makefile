@@ -128,8 +128,8 @@ $(BAKER_BIN):
 	cd src/baker && cargo build --release
 
 $(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(BOOTLOADER_BIN)
-	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=24 status=none
-	mkfs.vfat $(FAT_IMG)
+	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=64 status=none
+	mkfs.vfat -F32 $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
 	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 
