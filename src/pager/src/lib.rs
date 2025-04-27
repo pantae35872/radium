@@ -187,3 +187,12 @@ impl IdentityMappable for DataBuffer<'_> {
         };
     }
 }
+
+impl Display for DataBuffer<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let buf_start = PhysAddr::new(self.buffer as *const [u8] as *const u8 as u64);
+        let buf_end = PhysAddr::new(buf_start.as_u64() + self.buffer.len() as u64 - 1);
+
+        write!(f, "[{:#x}-{:#x}]", buf_start, buf_end)
+    }
+}

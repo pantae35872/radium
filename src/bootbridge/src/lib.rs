@@ -1,6 +1,9 @@
 #![no_std]
 
-use core::{cell::OnceCell, fmt::Debug};
+use core::{
+    cell::OnceCell,
+    fmt::{Debug, Display},
+};
 
 use bakery::DwarfBaker;
 use c_enum::c_enum;
@@ -100,7 +103,6 @@ pub struct RawBootBridge {
     rsdp: PhysAddr,
 }
 
-#[derive(Debug)]
 pub struct BootBridgeBuilder<A>
 where
     A: Fn(usize) -> *mut u8,
@@ -162,6 +164,23 @@ impl BootBridge {
     }
 }
 
+impl<A> IdentityMappable for BootBridgeBuilder<A>
+where
+    A: Fn(usize) -> *mut u8,
+{
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        let boot_bridge = *self.boot_bridge.get().unwrap();
+        unsafe {
+            mapper.identity_map_by_size(
+                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
+                size_of::<RawBootBridge>(),
+                EntryFlags::WRITABLE,
+            );
+            (*boot_bridge).dwarf_data.as_ref().unwrap().map(mapper);
+        };
+    }
+}
+
 impl IdentityMappable for BootBridge {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         unsafe {
@@ -175,6 +194,12 @@ impl IdentityMappable for BootBridge {
         };
         self.deref().memory_map.memory_map.map(mapper);
         self.deref().kernel_elf.map(mapper);
+    }
+}
+
+impl<A: Fn(usize) -> *mut u8> Debug for BootBridgeBuilder<A> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:#x?}", self.boot_bridge.get())
     }
 }
 
@@ -259,11 +284,11 @@ where
 
     /// Build the boot bridge and const return a pointer to it
     /// Failed if the boot bridge is not initialized
-    pub fn build(self) -> Option<*const RawBootBridge> {
+    pub fn build(self) -> Option<*mut RawBootBridge> {
         self.boot_bridge
             .get()
             .copied()
-            .map(|e| e as *const RawBootBridge)
+            .map(|e| e as *mut RawBootBridge)
     }
 }
 
@@ -344,7 +369,8 @@ impl Debug for BootBridge {
         let boot_bridge = self.deref();
         write!(
             f,
-            "BootBridge {{ framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {} }}",
+            "BootBridge {{ ptr: {:#x}, framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {} }}",
+            self.0 as u64,
             boot_bridge.framebuffer_data,
             boot_bridge.font_data,
             boot_bridge.kernel_elf,

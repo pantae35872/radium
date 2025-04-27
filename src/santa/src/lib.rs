@@ -395,26 +395,6 @@ impl VirtuallyMappable for Elf<'_> {
 
 impl IdentityMappable for Elf<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
-        for section in self.program_header_iter() {
-            if section.segment_type() != ProgramType::Load {
-                continue;
-            }
-            assert!(
-                section.vaddr().as_u64() % PAGE_SIZE == 0,
-                "sections need to be page aligned"
-            );
-
-            // SAFETY: We know this is safe because we're parsing the elf correctly
-            unsafe {
-                mapper.identity_map_range(
-                    Frame::containing_address(PhysAddr::new(section.vaddr().as_u64())),
-                    Frame::containing_address(PhysAddr::new(
-                        section.vaddr().as_u64() + section.memsize() - 1,
-                    )),
-                    EntryFlags::from_elf_program_flags(&section.flags()),
-                )
-            };
-        }
         self.buffer.map(mapper);
     }
 }

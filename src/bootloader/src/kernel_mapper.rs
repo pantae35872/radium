@@ -1,5 +1,6 @@
 use core::ptr::write_bytes;
 
+use bootbridge::BootBridgeBuilder;
 use pager::{
     address::{Frame, PhysAddr},
     allocator::{linear_allocator::LinearAllocator, FrameAllocator},
@@ -22,9 +23,10 @@ use crate::config::BootConfig;
 
 pub fn prepare_kernel_page(
     config: &BootConfig,
+    boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
     elf: &Elf<'static>,
     kernel_phys_start: PhysAddr,
-) -> u64 {
+) -> (u64, LinearAllocator) {
     let system_table = system_table();
     let kernel_pages_table = system_table
         .boot_services()
@@ -93,10 +95,11 @@ pub fn prepare_kernel_page(
                 EntryFlags::PRESENT,
             );
     };
+
     // Do a recursive map
     kernel_table.p4_mut()[511] = Entry(
         p4_frame.start_address().as_u64() | (EntryFlags::PRESENT | EntryFlags::WRITABLE).bits(),
     );
 
-    kernel_pages_table
+    (kernel_pages_table, kernel_page_allocator)
 }

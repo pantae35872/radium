@@ -5,21 +5,23 @@
 
 use core::arch::asm;
 
-use alloc::boxed::Box;
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
-use bootbridge::BootBridgeBuilder;
+use bootbridge::{BootBridge, BootBridgeBuilder};
 use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use pager::{
-    gdt::{Descriptor, Gdt},
+    paging::{
+        table::{DirectLevel4, RecurseLevel4, Table},
+        ActivePageTable,
+    },
     registers::{Cr3Flags, CS},
 };
 use uefi::{
     entry,
     table::{
-        boot::{AllocateType, MemoryDescriptor, MemoryType},
+        boot::{MemoryDescriptor, MemoryType},
         Boot, SystemTable,
     },
     Handle, Status,
@@ -67,7 +69,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
     let config: BootConfig = BootConfig::parse(&config);
 
-    let (entrypoint, table) = load_kernel(&mut boot_bridge, &config);
+    let (entrypoint, table, mut allocator) = load_kernel(&mut boot_bridge, &config);
+
+    println!("Kernel P4 Table at: {table:#x}");
+
+    println!("{:?}", boot_bridge);
 
     if config.any_key_boot() {
         any_key_boot(&mut system_table);
@@ -85,6 +91,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let len = entries.len() * entry_size;
     let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
     boot_bridge.memory_map(memory_map_bytes, entry_size);
+
+    let mut kernel_table =
+        unsafe { ActivePageTable::new_custom(table as *mut Table<DirectLevel4>) };
+    kernel_table.identity_map_object(&boot_bridge, &mut allocator);
+
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 
     unsafe {
