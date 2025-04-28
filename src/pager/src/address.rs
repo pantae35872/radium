@@ -303,6 +303,11 @@ impl VirtAddr {
         unsafe { Self::new_unchecked(0) }
     }
 
+    #[inline(always)]
+    pub const fn max() -> Self {
+        unsafe { Self::new_unchecked(0xffff_ffff_ffff_ffff) }
+    }
+
     pub fn align_to(&self, phys: PhysAddr) -> Self {
         let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
         // add it on to the virtual base
@@ -420,6 +425,14 @@ impl fmt::LowerHex for PhysAddr {
 impl fmt::LowerHex for VirtAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl Sub<VirtAddr> for VirtAddr {
+    type Output = VirtAddr;
+
+    fn sub(self, rhs: VirtAddr) -> Self::Output {
+        Self::new(self.0 - rhs.0)
     }
 }
 

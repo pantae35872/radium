@@ -1,13 +1,11 @@
 use alloc::vec::Vec;
 use bootbridge::BootBridge;
+use pager::paging::{table::RecurseLevel4, ActivePageTable};
 
 use crate::{
     driver::acpi::{madt::IoApicInterruptSourceOverride, Acpi},
     memory::{
-        allocator::buddy_allocator::BuddyAllocator,
-        paging::{table::RecurseLevel4, ActivePageTable},
-        stack_allocator::StackAllocator,
-        MMIOBufferInfo,
+        allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator, MMIOBufferInfo,
     },
     smp::LocalInitializer,
 };

@@ -1,18 +1,22 @@
 use core::ptr::write_bytes;
 
+use bootbridge::BootBridgeBuilder;
+use pager::{address::PhysAddr, allocator::linear_allocator::LinearAllocator};
 use santa::{Elf, ProgramType};
 use uefi::table::boot::{AllocateType, MemoryType};
 use uefi_services::{println, system_table};
 
-pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
+use crate::{config::BootConfig, kernel_mapper::prepare_kernel_page};
+
+pub fn load_elf(
+    boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
+    config: &BootConfig,
+    buffer: &'static [u8],
+) -> (u64, u64, LinearAllocator) {
     let elf = Elf::new(buffer).expect("Failed to create elf file from the kernel file buffer");
     let mut max_alignment: u64 = 4096;
     let mut mem_min: u64 = u64::MAX;
     let mut mem_max: u64 = 0;
-
-    elf.program_header_iter()
-        .filter(|e| e.segment_type() == ProgramType::Load)
-        .for_each(|e| println!("{e:?}"));
 
     for header in elf.program_header_iter() {
         if header.segment_type() != ProgramType::Load {
@@ -45,8 +49,8 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
     };
 
     let program_ptr = match system_table().boot_services().allocate_pages(
-        AllocateType::Address(mem_min),
-        MemoryType::RUNTIME_SERVICES_CODE,
+        AllocateType::AnyPages,
+        MemoryType::LOADER_CODE,
         page_count,
     ) {
         Ok(ptr) => ptr as *mut u8,
@@ -74,8 +78,12 @@ pub fn load_elf(buffer: &'static [u8]) -> (u64, u64, u64, Elf<'static>) {
             core::ptr::copy(src as *const u8, dst as *mut u8, len as usize);
         }
     }
+    let entry = elf.entry_point();
 
-    let entry_point = program_ptr as u64 + (elf.entry_point() - mem_min);
+    let (table, allocator) =
+        prepare_kernel_page(config, boot_bridge, &elf, PhysAddr::new(program_ptr as u64));
 
-    return (entry_point, mem_min, mem_max, elf);
+    boot_bridge.kernel_elf(elf);
+
+    return (entry, table, allocator);
 }

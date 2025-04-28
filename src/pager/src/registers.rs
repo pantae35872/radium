@@ -384,6 +384,20 @@ pub unsafe fn lgdt(gdt: &DescriptorTablePointer) {
 }
 
 #[inline(always)]
+pub fn sgdt() -> DescriptorTablePointer {
+    let result = DescriptorTablePointer {
+        base: VirtAddr::null(),
+        limit: 0,
+    };
+
+    unsafe {
+        asm!("sgdt [{}]", in(reg) &result, options(readonly, nostack, preserves_flags));
+    }
+
+    result
+}
+
+#[inline(always)]
 pub unsafe fn load_tss(selector: SegmentSelector) {
     unsafe {
         asm!("ltr {0:x}", in(reg) selector.0, options(nostack, preserves_flags));

@@ -22,6 +22,7 @@ use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
 use pager::address::VirtAddr;
+use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
 use pager::registers::RFlagsFlags;
@@ -69,7 +70,7 @@ fn create_idt() -> &'static Idt {
     unsafe {
         idt.double_fault
             .set_handler_fn(double_fault_handler)
-            .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+            .set_stack_index(DOUBLE_FAULT_IST_INDEX);
     }
     fill_idt!();
     idt

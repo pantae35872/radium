@@ -38,6 +38,7 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
 
+use alloc::boxed::Box;
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
@@ -56,10 +57,9 @@ static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
 pub fn init(boot_bridge: *mut RawBootBridge) {
-    let mut boot_bridge = BootBridge::new(boot_bridge);
-    DWARF_DATA.init_once(|| boot_bridge.dwarf_baker());
-    logger::init(&boot_bridge);
+    let boot_bridge = BootBridge::new(boot_bridge);
     let phase0 = InitializationContext::<Phase0>::start(boot_bridge);
+    logger::init(&phase0);
     let phase1 = memory::init(phase0);
     let mut phase2 = acpi::init(phase1);
     graphics::init(&mut phase2);
@@ -70,10 +70,6 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     pit::init();
     smp::init_aps(phase3);
     //driver::init(&boot_bridge);
-}
-
-pub fn dwarf_data() -> &'static DwarfBaker<'static> {
-    DWARF_DATA.get().expect("How could this happen")
 }
 
 #[macro_export]
@@ -139,15 +135,21 @@ fn panic(info: &PanicInfo) -> ! {
         let data = unsafe { &mut *(arg as *mut CallbackData) };
         data.counter += 1;
         let ip = _Unwind_GetIP(unwind_ctx);
-        let (line_num, name, location) = dwarf_data()
-            .by_addr(ip as u64)
-            .unwrap_or((0, "unknown", "unknown"));
-        log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
-        log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
-        if name == "start" {
-            UnwindReasonCode::END_OF_STACK
+        if let Some(dwarf) = DWARF_DATA.get() {
+            let (line_num, name, location) = dwarf
+                .by_addr(ip as u64)
+                .unwrap_or((0, "unknown", "unknown"));
+            log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
+            log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
+            if name == "start" {
+                UnwindReasonCode::END_OF_STACK
+            } else {
+                UnwindReasonCode::NO_REASON
+            }
         } else {
-            UnwindReasonCode::NO_REASON
+            // Since we can't know the name if the dwarf data is not initialized we assumed end of
+            // stack for safety
+            UnwindReasonCode::END_OF_STACK
         }
     }
     let mut data = CallbackData { counter: 0 };

@@ -3,11 +3,12 @@ use core::{isize, usize};
 use alloc::{string::String, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
-use pager::{EntryFlags, Mapper};
+use pager::{EntryFlags, Mapper, PAGE_SIZE};
 
 use crate::{
     graphics::{color::Color, graphic},
     initialization_context::{InitializationContext, Phase2},
+    memory::virt_addr_alloc,
 };
 
 #[derive(Hash, PartialEq, Eq)]
@@ -38,15 +39,22 @@ impl TtfRenderer {
     ) -> Self {
         let font = ctx.context().boot_bridge().font_data();
 
+        let font_addr = virt_addr_alloc((font.size() / PAGE_SIZE as usize + 1) as u64);
         unsafe {
-            ctx.mapper().identity_map_by_size(
+            ctx.mapper().map_to_range_by_size(
+                font_addr,
                 font.start().into(),
                 font.size(),
-                EntryFlags::WRITABLE | EntryFlags::PRESENT | EntryFlags::NO_CACHE,
+                EntryFlags::WRITABLE,
             )
         };
         let font = Font::from_bytes(
-            unsafe { core::slice::from_raw_parts(font.start().as_u64() as *const u8, font.size()) },
+            unsafe {
+                core::slice::from_raw_parts(
+                    font_addr.start_address().align_to(font.start()).as_ptr(),
+                    font.size(),
+                )
+            },
             FontSettings::default(),
         )
         .unwrap();

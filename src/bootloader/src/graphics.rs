@@ -2,7 +2,7 @@ use bootbridge::{BootBridgeBuilder, PixelBitmask, PixelFormat};
 use uefi::{
     proto::console::{
         gop::{self, GraphicsOutput},
-        text::{Color, OutputMode},
+        text::Color,
     },
     table::{
         boot::{OpenProtocolAttributes, OpenProtocolParams},
@@ -13,17 +13,7 @@ use uefi::{
 use crate::config::BootConfig;
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
-    let mut largest_mode: Option<OutputMode> = None;
-    let mut largest_size = 0;
-
-    for mode in system_table.stdout().modes() {
-        if mode.rows() + mode.columns() > largest_size {
-            largest_size = mode.rows() + mode.columns();
-            largest_mode = Some(mode);
-        }
-    }
-
-    if let Some(mode) = largest_mode {
+    if let Some(mode) = system_table.stdout().modes().max_by(|l, r| l.cmp(r)) {
         system_table
             .stdout()
             .set_mode(mode)

@@ -7,10 +7,15 @@ extern ap_startup
 section .trampoline
 bits 64
 from_long:
-  mov rax, qword [0x7008]
-  or rax, 0x8
-  mov cr3, rax
+  mov rsp, qword [0x7010] 
+  mov rbp, qword [0x7018] 
 
+  ; The initialization context Arc
+  mov rdi, qword [0x7020]
+
+  mov rax, qword [0x7008]
+  mov cr3, rax
+  
   ; clear segment register
   mov ax, 0
   mov ss, ax
@@ -19,12 +24,6 @@ from_long:
   mov fs, ax
   mov gs, ax
 
-  mov rsp, qword [0x7010] 
-  mov rbp, qword [0x7018] 
-
-  ; The initialization context Arc
-  mov rdi, qword [0x7020]
-
   jmp ap_startup
   hlt
 
@@ -32,6 +31,7 @@ section .text
 bits 64
 boot_start:
   ; setup the stack
+
   mov rsp, stack_top
   mov rbp, stack_bottom
 
@@ -48,8 +48,6 @@ boot_start:
 
 section .bss
 align 4096
-early_alloc:
-  resb 4096 * 64
 stack_bottom:
   resb 1024 * 1024 ; 1M Stack
 stack_top:

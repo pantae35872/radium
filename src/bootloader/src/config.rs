@@ -1,6 +1,7 @@
 use alloc::format;
 use boot_cfg_parser::toml::parser::TomlValue;
 use bootbridge::KernelConfig;
+use uefi::table::boot::PAGE_SIZE;
 
 use crate::boot_services::LoaderFile;
 
@@ -15,6 +16,7 @@ pub struct BootConfig<'a> {
     any_key_boot: bool,
     font_size: usize,
     log_level: u64,
+    early_boot_kernel_page_table_page_count: usize,
 }
 
 impl<'a> BootConfig<'a> {
@@ -30,6 +32,10 @@ impl<'a> BootConfig<'a> {
             .expect("No kernel file found in the info file")
             .as_string()
             .expect("Kernel file is not a string value in file info");
+        let early_boot_kernel_page_table_page_count = toml.get("early_boot_kernel_page_table_page_count")
+            .expect("early_boot_kernel_page_table_page_count no found in the config file (required for kernel page tables)")
+            .as_integer()
+            .expect("early_boot_kernel_page_table_page_count is not an interger") as usize;
         let font_file: &str = toml
             .get("font_file")
             .expect("No font file found in the info file")
@@ -78,6 +84,7 @@ impl<'a> BootConfig<'a> {
             any_key_boot,
             font_size,
             log_level,
+            early_boot_kernel_page_table_page_count,
         }
     }
 
@@ -118,5 +125,13 @@ impl<'a> BootConfig<'a> {
             font_pixel_size: self.font_size,
             log_level: self.log_level,
         }
+    }
+
+    pub fn early_boot_kernel_page_table_byte_count(&self) -> usize {
+        self.early_boot_kernel_page_table_page_count * PAGE_SIZE
+    }
+
+    pub fn early_boot_kernel_page_table_page_count(&self) -> usize {
+        self.early_boot_kernel_page_table_page_count
     }
 }

@@ -98,7 +98,7 @@ dbg-run: $(DISK_FILE) $(OVMF)
 	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s -serial stdio 
 
 dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio -d int
+	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -serial stdio
 
 $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
 	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
@@ -128,8 +128,8 @@ $(BAKER_BIN):
 	cd src/baker && cargo build --release
 
 $(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(BOOTLOADER_BIN)
-	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=24 status=none
-	mkfs.vfat $(FAT_IMG)
+	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=64 status=none
+	mkfs.vfat -F32 $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
 	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 

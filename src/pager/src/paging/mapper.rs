@@ -1,13 +1,17 @@
-use pager::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
-use pager::{registers::tlb, IdentityMappable, PAGE_SIZE};
+use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
+use crate::allocator::virt_allocator::VirtualAllocator;
+use crate::allocator::FrameAllocator;
+use crate::registers::tlb;
+use crate::{
+    IdentityMappable, MapperWithVirtualAllocator, VirtuallyMappable, VirtuallyReplaceable,
+    PAGE_SIZE,
+};
 
 use super::table::{
     DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
     TableLevel4,
 };
 use super::{EntryFlags, ENTRY_COUNT};
-use crate::log;
-use crate::memory::FrameAllocator;
 use core::ptr::Unique;
 
 pub struct Mapper<P4: TableLevel4> {
@@ -155,16 +159,17 @@ where
         if !(p1[page.p1_index() as usize].is_unused()
             || p1[page.p1_index() as usize].overwriteable())
         {
-            log!(
-                Error,
-                "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
-                page.start_address(),
-                p1[page.p1_index() as usize]
-                    .pointed_frame()
-                    .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
-                    .start_address()
-            );
-            log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
+            // FIXME: NEW LOGGING INFRASTRUCTURE
+            //log!(
+            //    Error,
+            //    "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
+            //    page.start_address(),
+            //    p1[page.p1_index() as usize]
+            //        .pointed_frame()
+            //        .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
+            //        .start_address()
+            //);
+            //log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
         }
         assert!(
             p1[page.p1_index() as usize].is_unused()
@@ -270,6 +275,27 @@ where
         obj.map(&mut mapper);
     }
 
+    pub fn virtually_replace<O: VirtuallyReplaceable, A: FrameAllocator>(
+        &mut self,
+        obj: &mut O,
+        allocator: &mut A,
+        virtual_allocator: &VirtualAllocator,
+    ) {
+        let mut mapper = self.mapper_with_allocator(allocator);
+        let mut mapper = MapperWithVirtualAllocator::new(&mut mapper, virtual_allocator);
+        obj.replace(&mut mapper)
+    }
+
+    pub fn virtually_map_object<O: VirtuallyMappable, A: FrameAllocator>(
+        &mut self,
+        obj: &O,
+        phys_start: PhysAddr,
+        allocator: &mut A,
+    ) {
+        let mut mapper = self.mapper_with_allocator(allocator);
+        obj.virt_map(&mut mapper, phys_start);
+    }
+
     pub fn mapper_with_allocator<'a, A: FrameAllocator>(
         &'a mut self,
         allocator: &'a mut A,
@@ -373,7 +399,7 @@ where
     }
 }
 
-impl<'a, P4, A: FrameAllocator> pager::Mapper for MapperWithAllocator<'a, P4, A>
+impl<'a, P4, A: FrameAllocator> crate::Mapper for MapperWithAllocator<'a, P4, A>
 where
     P4: HierarchicalLevel + TableLevel4,
     P4::Marker: NextTableAddress,

@@ -7,10 +7,19 @@ use core::arch::asm;
 
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
-use bootbridge::BootBridgeBuilder;
+use bootbridge::{BootBridge, BootBridgeBuilder};
 use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
+use pager::{
+    address::{PhysAddr, VirtAddr},
+    paging::{
+        table::{DirectLevel4, RecurseLevel4, Table},
+        ActivePageTable,
+    },
+    registers::{Cr0, Cr0Flags, Cr3Flags, Efer, EferFlags, CS},
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+};
 use uefi::{
     entry,
     table::{
@@ -28,6 +37,7 @@ pub mod config;
 pub mod elf_loader;
 pub mod graphics;
 pub mod kernel_loader;
+pub mod kernel_mapper;
 
 fn any_key_boot(system_table: &mut SystemTable<Boot>) {
     println!("press any key to boot...");
@@ -61,7 +71,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
     let config: BootConfig = BootConfig::parse(&config);
 
-    let entrypoint = load_kernel(&mut boot_bridge, &config);
+    let (entrypoint, table, mut allocator) = load_kernel(&mut boot_bridge, &config);
 
     if config.any_key_boot() {
         any_key_boot(&mut system_table);
@@ -73,18 +83,55 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let (_system_table, mut memory_map) =
         system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
     memory_map.sort();
+
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
     let len = entries.len() * entry_size;
     let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
+
+    let mut kernel_table =
+        unsafe { ActivePageTable::new_custom(table as *mut Table<DirectLevel4>) };
+    kernel_table.identity_map_object(&boot_bridge, &mut allocator);
+    kernel_table.identity_map_object(
+        &bootbridge::MemoryMap::new(memory_map_bytes, entry_size),
+        &mut allocator,
+    );
+
+    assert!(memory_map
+        .entries()
+        .next()
+        .is_some_and(|e| e.phys_start == 0));
+
+    for usable in memory_map
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+    {
+        let size = (usable.page_count * PAGE_SIZE) as usize;
+        unsafe {
+            kernel_table
+                .mapper_with_allocator(&mut allocator)
+                .map_to_range_by_size(
+                    VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start).into(),
+                    PhysAddr::new(usable.phys_start).into(),
+                    size,
+                    EntryFlags::WRITABLE,
+                )
+        };
+    }
+
     boot_bridge.memory_map(memory_map_bytes, entry_size);
+
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 
     unsafe {
+        Efer::write_or(EferFlags::NoExecuteEnable);
+        Cr0::write_or(Cr0Flags::WriteProtect);
         asm!(
-            r#"
+        r#"
+            mov cr3, {}
             jmp {}
         "#,
+        in(reg) table,
         in(reg) entrypoint,
         in("rdi") boot_bridge
         );

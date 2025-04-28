@@ -1,12 +1,11 @@
 use pager::{
-    address::{Frame, PageIter, PhysAddr, VirtAddr},
+    address::{Frame, Page, PageIter, PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
+    paging::{table::RecurseLevel4, ActivePageTable},
     EntryFlags, IdentityMappable, PAGE_SIZE,
 };
 
-use super::{
-    paging::{table::RecurseLevel4, ActivePageTable},
-    WithTable,
-};
+use super::WithTable;
 
 pub struct StackAllocator {
     range: PageIter,
@@ -15,13 +14,7 @@ pub struct StackAllocator {
 
 impl StackAllocator {
     /// Create a new stack allocator
-    ///
-    /// # Safety
-    ///
-    /// the caller must ensure that the provided page ranges is valid
-    ///
-    /// The caller must ensure that the provided page was mapped by [`crate::memory::paging::Mapper<T>::map_to`] or [`crate::memory::paging::ActivePageTable<T>::identity_map`]
-    pub unsafe fn new(page_range: PageIter) -> StackAllocator {
+    pub fn new(page_range: PageIter) -> StackAllocator {
         StackAllocator {
             range: page_range.clone(),
             original_range: page_range,
@@ -32,9 +25,10 @@ impl StackAllocator {
         self.original_range.clone()
     }
 
-    pub fn alloc_stack(
+    pub fn alloc_stack<A: FrameAllocator>(
         &mut self,
         active_table: &mut ActivePageTable<RecurseLevel4>,
+        frame_allocator: &mut A,
         size_in_pages: usize,
     ) -> Option<Stack> {
         if size_in_pages == 0 {
@@ -55,8 +49,9 @@ impl StackAllocator {
             (Some(guard), Some(start), Some(end)) => {
                 self.range = range;
 
-                // SAFETY: We're gurentee
-                unsafe { active_table.unmap_addr(guard) };
+                for page in Page::range_inclusive(start, end) {
+                    active_table.map(page, EntryFlags::WRITABLE, frame_allocator);
+                }
 
                 let top_of_stack = end.start_address().as_u64() + PAGE_SIZE;
                 Some(Stack::new(
@@ -68,20 +63,23 @@ impl StackAllocator {
         }
     }
 
-    pub fn with_table<'a>(
+    pub fn with_table<'a, A: FrameAllocator>(
         &'a mut self,
         active_table: &'a mut ActivePageTable<RecurseLevel4>,
-    ) -> WithTable<'a, Self> {
+        allocator: &'a mut A,
+    ) -> WithTable<'a, Self, A> {
         WithTable {
             table: active_table,
             with_table: self,
+            allocator,
         }
     }
 }
 
-impl WithTable<'_, StackAllocator> {
+impl<A: FrameAllocator> WithTable<'_, StackAllocator, A> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.with_table.alloc_stack(self.table, size_in_pages)
+        self.with_table
+            .alloc_stack(self.table, self.allocator, size_in_pages)
     }
 }
 

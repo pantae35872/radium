@@ -3,7 +3,8 @@ kernel_file = "kernel.bin"
 font_file = "kernel-font.ttf"
 dwarf_file = "dwarf.baker"
 screen_resolution = { width = 1920, height = 1080 }
-any_key_boot = false
+any_key_boot = true 
+early_boot_kernel_page_table_page_count = 64 # 64 Pages for kernel elf 
 
 [kernel_config]
 font_size = 10 

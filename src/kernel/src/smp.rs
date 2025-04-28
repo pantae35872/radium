@@ -5,29 +5,29 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
-use pager::registers::{Cr3, GsBase, KernelGsBase};
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
-    EntryFlags, Mapper,
+    allocator::FrameAllocator,
+    gdt::Gdt,
+    paging::{
+        table::{DirectLevel4, Table},
+        ActivePageTable,
+    },
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+};
+use pager::{
+    allocator::linear_allocator::LinearAllocator,
+    registers::{Cr3, GsBase, KernelGsBase},
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
 
 use crate::{
-    gdt::Gdt,
     hlt_loop,
     initialization_context::{InitializationContext, Phase2, Phase3},
     interrupt::{apic::LocalApic, idt::Idt, TIMER_COUNT},
     log,
-    memory::{
-        self,
-        allocator::linear_allocator::LinearAllocator,
-        paging::{
-            table::{DirectLevel4, Table},
-            ActivePageTable,
-        },
-        FrameAllocator,
-    },
+    memory::{self},
 };
 
 pub const MAX_CPU: usize = 64;
@@ -41,7 +41,6 @@ pub const TRAMPOLINE_END: PhysAddr = PhysAddr::new(0x9000);
 unsafe extern "C" {
     static __trampoline_start: u8;
     static __trampoline_end: u8;
-    static early_alloc: u8;
 }
 
 #[repr(C)]
@@ -64,16 +63,20 @@ impl ApInitializer {
             &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
         };
 
-        unsafe {
-            core::ptr::write_bytes(&early_alloc as *const u8 as *mut u8, 0, 4096 * 64);
-        }
+        // Safety we already allocted this at the bootloader
+        let mut boot_alloc =
+            unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
+        // SAFETY: We know that the bootloader is not used anymore
+        unsafe { boot_alloc.reset() };
 
-        // We reuse the early boot memory we used to bootstrap this core
-        // We know it's below 4GB range because our kernel is at 1M
-        // so it's fits in 32-bit register
-        let mut boot_alloc = unsafe {
-            LinearAllocator::new(PhysAddr::new(&early_alloc as *const u8 as u64), 4096 * 64)
-        };
+        unsafe { ctx.mapper().identity_map_object(&boot_alloc.mappings()) };
+        unsafe {
+            core::ptr::write_bytes(
+                boot_alloc.original_start().as_u64() as *mut u8,
+                0,
+                boot_alloc.size(),
+            );
+        }
 
         let p4_table = boot_alloc
             .allocate_frame()
@@ -84,27 +87,26 @@ impl ApInitializer {
             )
         };
 
-        bootstrap_table.identity_map_object(ctx.context().boot_bridge(), &mut boot_alloc);
+        bootstrap_table.virtually_map_object(
+            ctx.context().boot_bridge().kernel_elf(),
+            ctx.context().boot_bridge().kernel_base(),
+            &mut boot_alloc,
+        );
 
         unsafe {
-            bootstrap_table.identity_map_range(
-                Frame::containing_address(PhysAddr::new(0x7000)),
-                Frame::containing_address(PhysAddr::new(0x8000)),
-                EntryFlags::WRITABLE | EntryFlags::PRESENT,
-                &mut boot_alloc,
-            );
-
-            ctx.mapper().identity_map_range(
-                Frame::containing_address(PhysAddr::new(0x7000)),
-                Frame::containing_address(PhysAddr::new(0x8000)),
-                EntryFlags::WRITABLE,
-            );
+            bootstrap_table
+                .mapper_with_allocator(&mut boot_alloc)
+                .identity_map_by_size(
+                    PhysAddr::new(0x7000).into(),
+                    (PAGE_SIZE * 4) as usize,
+                    EntryFlags::WRITABLE,
+                )
         };
 
         unsafe {
             core::ptr::copy(
                 &__trampoline_start as *const u8,
-                0x8000 as *mut u8,
+                (KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + 0x8000) as *mut u8,
                 trampoline_size,
             )
         };
@@ -142,7 +144,7 @@ impl ApInitializer {
         unsafe {
             core::ptr::copy(
                 &data as *const SmpInitializationData,
-                0x7000 as *mut SmpInitializationData,
+                (KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + 0x7000) as *mut SmpInitializationData,
                 1,
             );
         }

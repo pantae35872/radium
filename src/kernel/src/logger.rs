@@ -7,7 +7,10 @@ use bootbridge::BootBridge;
 use c_enum::c_enum;
 use static_log::StaticLog;
 
-use crate::{initialize_guard, print, serial_print};
+use crate::{
+    initialization_context::{InitializationContext, Phase0},
+    initialize_guard, print, serial_print,
+};
 
 mod static_log;
 
@@ -132,11 +135,11 @@ impl MainLogger {
     }
 }
 
-pub fn init(boot_bridge: &BootBridge) {
+pub fn init(ctx: &InitializationContext<Phase0>) {
     initialize_guard!();
     // SAFETY: This is safe because the above interrupt guard
     unsafe {
-        LOGGER.set_level(boot_bridge.log_level());
+        LOGGER.set_level(ctx.context().boot_bridge().log_level());
     };
     log!(Trace, "Logging start");
 }
