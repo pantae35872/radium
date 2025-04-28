@@ -17,7 +17,7 @@ use uefi::{
     proto::loaded_image::LoadedImage,
     table::boot::{AllocateType, MemoryType},
 };
-use uefi_services::{println, system_table};
+use uefi_services::system_table;
 
 use crate::config::BootConfig;
 
@@ -48,7 +48,6 @@ pub fn prepare_kernel_page(
     let mem_map_size = page_table_size(mem_map_size, PageLevel::Page4K)
         + config.early_boot_kernel_page_table_byte_count();
     let mem_map_pages = (mem_map_size / PAGE_SIZE as usize) + 1;
-    println!("{mem_map_size:#x} {mem_map_pages:#x}");
 
     let kernel_pages_table = system_table
         .boot_services()
@@ -58,12 +57,6 @@ pub fn prepare_kernel_page(
             mem_map_pages,
         )
         .expect("Failed to allocate pages for kernel early page tables");
-
-    println!(
-        "KERNEL PAGE TABLE PHYSADDR: [{:#x}-{:#x}]",
-        kernel_pages_table as u64,
-        kernel_pages_table as usize + mem_map_size - 1
-    );
 
     unsafe {
         write_bytes(kernel_pages_table as *mut u8, 0, mem_map_size);
@@ -93,11 +86,6 @@ pub fn prepare_kernel_page(
     let loaded_image_protocol = protocol.get().expect("Failed to get loaded image protocol");
 
     let (start, size) = loaded_image_protocol.info();
-    println!(
-        "BOOTLOADER RANGE: [{:#x}-{:#x}]",
-        start as u64,
-        start as u64 + size
-    );
     unsafe {
         kernel_table
             .mapper_with_allocator(&mut kernel_page_allocator)

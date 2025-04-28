@@ -14,7 +14,6 @@ from_long:
   mov rdi, qword [0x7020]
 
   mov rax, qword [0x7008]
-  or rax, 0x8
   mov cr3, rax
   
   ; clear segment register

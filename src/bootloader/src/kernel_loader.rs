@@ -44,7 +44,6 @@ pub fn load_kernel(
         .rsdp(find_rsdp(system_table.config_table()).expect("Failed to find RSDP"));
 
     let (entrypoint, table, allocator) = load_elf(boot_bridge, config, kernel_file);
-    println!("DwarfData: {}", DataBuffer::new(dwarf_file));
 
     (entrypoint, table, allocator)
 }

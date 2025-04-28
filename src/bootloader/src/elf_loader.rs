@@ -50,7 +50,7 @@ pub fn load_elf(
 
     let program_ptr = match system_table().boot_services().allocate_pages(
         AllocateType::AnyPages,
-        MemoryType::RUNTIME_SERVICES_CODE,
+        MemoryType::LOADER_CODE,
         page_count,
     ) {
         Ok(ptr) => ptr as *mut u8,
@@ -58,12 +58,6 @@ pub fn load_elf(
             panic!("Failed to allocate memory for the kernel {:?}", err);
         }
     };
-
-    println!(
-        "KERNEL ELF PHYSADDR: [{:#x}-{:#x}]",
-        program_ptr as u64,
-        program_ptr as u64 + max_memory_needed - 1
-    );
 
     unsafe {
         write_bytes(program_ptr, 0, max_memory_needed as usize);

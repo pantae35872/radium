@@ -6,7 +6,7 @@
 use core::{fmt::Display, ops::Deref};
 
 use address::{Frame, Page, PhysAddr, VirtAddr};
-use allocator::{virt_allocator::VirtualAllocator, FrameAllocator};
+use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
 
 pub mod address;
@@ -230,13 +230,8 @@ impl IdentityMappable for DataBuffer<'_> {
 impl VirtuallyReplaceable for DataBuffer<'_> {
     fn replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>) {
         let len = self.buffer().len();
-        let new_addr = unsafe {
-            mapper.map(
-                PhysAddr::new(self.buffer().as_ptr() as u64),
-                len,
-                EntryFlags::NO_EXECUTE,
-            )
-        };
+        let old_phys = PhysAddr::new(self.buffer().as_ptr() as u64);
+        let new_addr = unsafe { mapper.map(old_phys, len, EntryFlags::NO_EXECUTE) };
         *self = Self::new(unsafe { core::slice::from_raw_parts(new_addr.as_ptr(), len) })
     }
 }

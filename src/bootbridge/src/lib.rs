@@ -220,13 +220,11 @@ impl VirtuallyReplaceable for BootBridge {
 impl IdentityMappable for BootBridge {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         unsafe {
-            mapper.identity_map_range(
-                Frame::containing_address(PhysAddr::new(self.0 as u64)),
-                Frame::containing_address(PhysAddr::new(
-                    self.0 as u64 + size_of::<RawBootBridge>() as u64,
-                )),
+            mapper.identity_map_by_size(
+                PhysAddr::new(self.0 as u64).into(),
+                size_of::<RawBootBridge>(),
                 EntryFlags::WRITABLE,
-            )
+            );
         };
         self.deref().memory_map.map(mapper);
         self.deref().kernel_elf.map(mapper);

@@ -7,7 +7,7 @@ use core::arch::asm;
 
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
-use bootbridge::BootBridgeBuilder;
+use bootbridge::{BootBridge, BootBridgeBuilder};
 use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
@@ -17,7 +17,7 @@ use pager::{
         table::{DirectLevel4, RecurseLevel4, Table},
         ActivePageTable,
     },
-    registers::{Cr3Flags, CS},
+    registers::{Cr0, Cr0Flags, Cr3Flags, Efer, EferFlags, CS},
     EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 use uefi::{
@@ -73,10 +73,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let (entrypoint, table, mut allocator) = load_kernel(&mut boot_bridge, &config);
 
-    println!("Kernel P4 Table at: {table:#x}");
-
-    println!("{:?}", boot_bridge);
-
     if config.any_key_boot() {
         any_key_boot(&mut system_table);
     }
@@ -125,17 +121,17 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     boot_bridge.memory_map(memory_map_bytes, entry_size);
 
-    boot_bridge.early_alloc(allocator);
-
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 
     unsafe {
+        Efer::write_or(EferFlags::NoExecuteEnable);
+        Cr0::write_or(Cr0Flags::WriteProtect);
         asm!(
         r#"
             mov cr3, {}
             jmp {}
         "#,
-        in(reg) table | Cr3Flags::PAGE_LEVEL_WRITETHROUGH.bits(),
+        in(reg) table,
         in(reg) entrypoint,
         in("rdi") boot_bridge
         );

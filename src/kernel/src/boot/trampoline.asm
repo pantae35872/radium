@@ -56,7 +56,6 @@ protected_mode:
 	mov ss, ax
 
   mov eax, dword [0x7000]
-  or eax, 0x8
   mov cr3, eax
 
   mov     eax, cr4

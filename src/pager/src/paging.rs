@@ -7,6 +7,7 @@ pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::Table;
 use self::temporary_page::TemporaryPage;
+use bitflags::Flags;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use table::{
@@ -141,7 +142,7 @@ where
         };
         // SAFETY: The inactive page table should be valid if created correctly
         unsafe {
-            Cr3::write(new_table.p4_frame, Cr3Flags::PAGE_LEVEL_WRITETHROUGH);
+            Cr3::write(new_table.p4_frame, Cr3Flags::empty());
         }
         old_table
     }
