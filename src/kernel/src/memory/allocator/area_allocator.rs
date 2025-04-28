@@ -41,9 +41,13 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
             None => return,
         }
         .clone();
+        // Reserved the first entry if null
         if area.phys_start.is_null() {
-            area.phys_start += PAGE_SIZE;
-            area.page_count -= 1;
+            area = match self.areas.next() {
+                Some(area) => area,
+                None => return,
+            }
+            .clone();
         }
         // SAFETY: This is safe because the memory map is valid, and is gurenntee by uefi and the bootloader
         self.current_area = Some(unsafe {

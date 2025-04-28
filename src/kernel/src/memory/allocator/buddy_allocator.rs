@@ -1,34 +1,21 @@
 use core::{marker::PhantomData, ptr};
 
 use bootbridge::MemoryDescriptor;
-use pager::address::{Page, PhysAddr, VirtAddr};
-use pager::allocator::linear_allocator::LinearAllocator;
+use pager::address::PhysAddr;
 use pager::allocator::FrameAllocator;
-use pager::paging::table::RecurseLevel4;
-use pager::paging::{create_mappings, ActivePageTable, InactivePageTable};
-use pager::EntryFlags;
+use pager::KERNEL_DIRECT_PHYSICAL_MAP;
 
-use crate::initialization_context::{InitializationContext, Phase0};
-use crate::interrupt;
-use crate::memory::stack_allocator::StackAllocator;
 use crate::{
-    dwarf_data,
     memory::{Frame, MAX_ALIGN, PAGE_SIZE},
     utils::NumberUtils,
 };
 
 use super::area_allocator::AreaAllocator;
 
-struct AllocationContext {
-    linear_allocator: LinearAllocator,
-    access_map: Option<InactivePageTable>,
-}
-
 pub struct BuddyAllocator<const ORDER: usize> {
     free_lists: [FreeList; ORDER],
     max_mem: usize,
     allocated: usize,
-    allocation_context: AllocationContext,
 }
 
 impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
@@ -47,29 +34,12 @@ impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
 
 impl<const ORDER: usize> BuddyAllocator<ORDER> {
     pub unsafe fn new<'a>(
-        mut allocator: LinearAllocator,
         area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
-        stack_allocator: &StackAllocator,
-        ctx: &InitializationContext<Phase0>,
     ) -> Self {
-        let map_access = Some(create_mappings(
-            |mapper, allocator| {
-                mapper.identity_map_object(ctx.context().boot_bridge(), allocator);
-                mapper.identity_map_object(stack_allocator, allocator);
-                mapper.identity_map_object(dwarf_data(), allocator);
-                mapper.identity_map_object(&allocator.mappings(), allocator);
-                //mapper.identity_map_object(allocator, allocator);
-            },
-            &mut allocator,
-        ));
         let mut init = Self {
             free_lists: [const { unsafe { FreeList::new() } }; ORDER],
             max_mem: 0,
             allocated: 0,
-            allocation_context: AllocationContext {
-                linear_allocator: allocator,
-                access_map: map_access,
-            },
         };
 
         unsafe { init.add_entire_memory_to_area(area_allocator) };
@@ -91,7 +61,8 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
     }
 
     unsafe fn add_area(&mut self, start_addr: PhysAddr, mut size: usize) {
-        let mut start_addr = start_addr.as_u64() as usize;
+        let mut start_addr =
+            KERNEL_DIRECT_PHYSICAL_MAP.as_u64() as usize + start_addr.as_u64() as usize;
         let unaligned_addr = start_addr;
         if !(start_addr as *const u8).is_aligned_to(MAX_ALIGN) {
             start_addr += (start_addr as *const u8).align_offset(MAX_ALIGN);
@@ -106,19 +77,13 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 break;
             }
 
-            direct_access(
-                start_addr as u64 + offset as u64,
-                &mut self.allocation_context,
-                || unsafe {
-                    *((start_addr + offset) as *mut usize) = 0;
-                },
-            );
+            unsafe {
+                *((start_addr + offset) as *mut usize) = 0;
+            };
 
             unsafe {
-                self.free_lists[order.trailing_zeros() as usize - 1].push(
-                    (start_addr + offset) as *mut usize,
-                    &mut self.allocation_context,
-                )
+                self.free_lists[order.trailing_zeros() as usize - 1]
+                    .push((start_addr + offset) as *mut usize)
             };
 
             offset += order;
@@ -143,8 +108,11 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 false => {
                     if current_order == order {
                         self.allocated += size;
-                        let addr =
-                            unsafe { node.pop(&mut self.allocation_context).map(|e| e as *mut u8) };
+                        let addr = unsafe {
+                            node.pop().map(|e| {
+                                (e as u64 - KERNEL_DIRECT_PHYSICAL_MAP.as_u64()) as *mut u8
+                            })
+                        };
                         return addr;
                     } else {
                         some_mem = true;
@@ -164,13 +132,10 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 let (left, right) = self.free_lists.split_at_mut(i);
                 (&mut left[i - 1], &mut right[0])
             };
-            match unsafe { current_node.pop(&mut self.allocation_context) } {
+            match unsafe { current_node.pop() } {
                 Some(o_node) => unsafe {
-                    next_node.push(o_node, &mut self.allocation_context);
-                    next_node.push(
-                        (o_node as usize + (1 << i)) as *mut usize,
-                        &mut self.allocation_context,
-                    );
+                    next_node.push(o_node);
+                    next_node.push((o_node as usize + (1 << i)) as *mut usize);
                 },
                 None => continue,
             }
@@ -184,19 +149,19 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
 
     pub fn dealloc(&mut self, ptr: *mut u8, size: usize) {
         let mut order = size.trailing_zeros() as usize;
-        let mut ptr = ptr as usize;
+        let mut ptr = KERNEL_DIRECT_PHYSICAL_MAP.as_u64() as usize + ptr as usize;
 
         unsafe {
-            self.free_lists[order - 1].push(ptr as *mut usize, &mut self.allocation_context);
+            self.free_lists[order - 1].push(ptr as *mut usize);
         }
 
         while order <= ORDER {
             let buddy = ptr ^ (1 << order);
             let mut found_buddy = false;
 
-            for block in self.free_lists[order - 1].iter_mut(&mut self.allocation_context) {
+            for block in self.free_lists[order - 1].iter_mut() {
                 if block.value() as usize == buddy {
-                    block.pop(&mut self.allocation_context);
+                    block.pop();
                     found_buddy = true;
                     break;
                 }
@@ -204,13 +169,12 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
 
             if found_buddy {
                 unsafe {
-                    self.free_lists[order - 1].pop(&mut self.allocation_context);
+                    self.free_lists[order - 1].pop();
                 }
                 ptr = ptr.min(buddy);
                 order += 1;
                 unsafe {
-                    self.free_lists[order - 1]
-                        .push(ptr as *mut usize, &mut self.allocation_context);
+                    self.free_lists[order - 1].push(ptr as *mut usize);
                 }
             } else {
                 break;
@@ -233,40 +197,15 @@ struct FreeList {
 }
 
 impl FreeNode {
-    fn pop(self, ctx: &mut AllocationContext) -> *mut usize {
-        let addr = direct_access(self.curr as u64, ctx, || unsafe { *(self.curr) });
-        direct_access(self.prev as u64, ctx, || unsafe { *(self.prev) = addr });
+    fn pop(self) -> *mut usize {
+        let addr = unsafe { *(self.curr) };
+        unsafe { *(self.prev) = addr };
         self.curr
     }
 
     fn value(&self) -> *mut usize {
         self.curr
     }
-}
-
-fn direct_access<T>(address: u64, ctx: &mut AllocationContext, f: impl FnOnce() -> T) -> T {
-    // Without interrupts because we didn't have the mappings for the device and apic
-    interrupt::without_interrupts(|| {
-        let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
-        // SAFETY: This should be safe if the allocator table is correctly mapped
-        let current_table = unsafe {
-            let current_table = active_table.switch(ctx.access_map.take().unwrap());
-            active_table.identity_map(
-                Frame::containing_address(PhysAddr::new(address)),
-                EntryFlags::WRITABLE,
-                &mut ctx.linear_allocator,
-            );
-            current_table
-        };
-        let result = f();
-        // SAFETY: We know that we called identity map above
-        unsafe { active_table.unmap_addr(Page::containing_address(VirtAddr::new(address))) };
-        // Switch back
-        // SAFETY: We know that the table is valid beca
-        let inactive_page_table = unsafe { active_table.switch(current_table) };
-        ctx.access_map = Some(inactive_page_table);
-        result
-    })
 }
 
 impl FreeList {
@@ -276,21 +215,17 @@ impl FreeList {
         }
     }
 
-    unsafe fn push(&mut self, item: *mut usize, ctx: &mut AllocationContext) {
-        direct_access(item as u64, ctx, || {
-            unsafe { *item = self.head as usize };
-        });
+    unsafe fn push(&mut self, item: *mut usize) {
+        unsafe { *item = self.head as usize };
         self.head = item;
     }
 
-    unsafe fn pop(&mut self, ctx: &mut AllocationContext) -> Option<*mut usize> {
+    unsafe fn pop(&mut self) -> Option<*mut usize> {
         match self.is_empty() {
             true => None,
             false => {
                 let item = self.head;
-                direct_access(item as u64, ctx, || {
-                    self.head = unsafe { *item as *mut usize };
-                });
+                self.head = unsafe { *item as *mut usize };
                 Some(item)
             }
         }
@@ -300,23 +235,21 @@ impl FreeList {
         self.head.is_null()
     }
 
-    fn iter_mut<'a, 'c>(&'a mut self, ctx: &'c mut AllocationContext) -> FreeListIterMut<'a, 'c> {
+    fn iter_mut<'a>(&'a mut self) -> FreeListIterMut<'a> {
         FreeListIterMut {
             list: PhantomData,
             previous: &mut self.head as *mut *mut usize as *mut usize,
             current: self.head,
-            ctx,
         }
     }
 }
 
-struct FreeListIterMut<'a, 'c> {
+struct FreeListIterMut<'a> {
     list: PhantomData<&'a mut FreeList>,
     previous: *mut usize,
     current: *mut usize,
-    ctx: &'c mut AllocationContext,
 }
-impl<'a, 'c> Iterator for FreeListIterMut<'a, 'c> {
+impl<'a> Iterator for FreeListIterMut<'a> {
     type Item = FreeNode;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -328,9 +261,7 @@ impl<'a, 'c> Iterator for FreeListIterMut<'a, 'c> {
                 curr: self.current,
             };
             self.previous = self.current;
-            direct_access(self.current as u64, self.ctx, || {
-                self.current = unsafe { *self.current as *mut usize };
-            });
+            self.current = unsafe { *self.current as *mut usize };
             Some(res)
         }
     }

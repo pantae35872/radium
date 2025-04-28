@@ -75,4 +75,9 @@ protected_mode:
 
   lgdt [gdt64.pointer]
 
-  jmp gdt64.code:0x100000
+  jmp gdt64.code:trampoline_64
+
+use64
+trampoline_64:
+  mov rax, 0xffff800000000000
+  jmp rax

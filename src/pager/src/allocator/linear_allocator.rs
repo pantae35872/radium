@@ -5,7 +5,7 @@ use crate::{
 
 use super::FrameAllocator;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LinearAllocator {
     orginal_start: PhysAddr,
     current: PhysAddr,

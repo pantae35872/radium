@@ -7,16 +7,18 @@ use core::arch::asm;
 
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
-use bootbridge::{BootBridge, BootBridgeBuilder};
+use bootbridge::BootBridgeBuilder;
 use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use pager::{
+    address::{PhysAddr, VirtAddr},
     paging::{
         table::{DirectLevel4, RecurseLevel4, Table},
         ActivePageTable,
     },
     registers::{Cr3Flags, CS},
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 use uefi::{
     entry,
@@ -90,11 +92,40 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
     let len = entries.len() * entry_size;
     let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
-    boot_bridge.memory_map(memory_map_bytes, entry_size);
 
     let mut kernel_table =
         unsafe { ActivePageTable::new_custom(table as *mut Table<DirectLevel4>) };
     kernel_table.identity_map_object(&boot_bridge, &mut allocator);
+    kernel_table.identity_map_object(
+        &bootbridge::MemoryMap::new(memory_map_bytes, entry_size),
+        &mut allocator,
+    );
+
+    assert!(memory_map
+        .entries()
+        .next()
+        .is_some_and(|e| e.phys_start == 0));
+
+    for usable in memory_map
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+    {
+        let size = (usable.page_count * PAGE_SIZE) as usize;
+        unsafe {
+            kernel_table
+                .mapper_with_allocator(&mut allocator)
+                .map_to_range_by_size(
+                    VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start).into(),
+                    PhysAddr::new(usable.phys_start).into(),
+                    size,
+                    EntryFlags::WRITABLE,
+                )
+        };
+    }
+
+    boot_bridge.memory_map(memory_map_bytes, entry_size);
+
+    boot_bridge.early_alloc(allocator);
 
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 

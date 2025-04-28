@@ -12,7 +12,7 @@ pub use std::{string::String, vec::Vec};
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::{DataBuffer, IdentityMappable};
+use pager::{DataBuffer, IdentityMappable, VirtuallyReplaceable};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"BAKE");
 
@@ -172,5 +172,11 @@ impl<'a> DwarfBaker<'a> {
 impl IdentityMappable for DwarfBaker<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         self.data.map(mapper);
+    }
+}
+
+impl VirtuallyReplaceable for DwarfBaker<'_> {
+    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+        self.data.replace(mapper);
     }
 }

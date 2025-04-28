@@ -3,6 +3,7 @@ use linear_allocator::LinearAllocator;
 use crate::{address::Frame, PAGE_SIZE};
 
 pub mod linear_allocator;
+pub mod virt_allocator;
 
 pub trait FrameAllocator {
     fn linear_allocator(&mut self, size_in_frames: u64) -> Option<LinearAllocator> {

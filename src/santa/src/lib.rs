@@ -12,7 +12,7 @@ use core::iter::Iterator;
 use core::option::Option;
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
-    DataBuffer, EntryFlags, IdentityMappable, VirtuallyMappable, PAGE_SIZE,
+    DataBuffer, EntryFlags, IdentityMappable, VirtuallyMappable, VirtuallyReplaceable, PAGE_SIZE,
 };
 
 // TODO: Add testing
@@ -364,6 +364,12 @@ impl<'a> Elf<'a> {
 
     pub fn entry_point(&self) -> u64 {
         self.header().program_entry_offset
+    }
+}
+
+impl VirtuallyReplaceable for Elf<'_> {
+    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+        self.buffer.replace(mapper);
     }
 }
 

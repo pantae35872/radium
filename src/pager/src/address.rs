@@ -303,6 +303,11 @@ impl VirtAddr {
         unsafe { Self::new_unchecked(0) }
     }
 
+    #[inline(always)]
+    pub const fn max() -> Self {
+        unsafe { Self::new_unchecked(0xffff_ffff_ffff_ffff) }
+    }
+
     pub fn align_to(&self, phys: PhysAddr) -> Self {
         let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
         // add it on to the virtual base

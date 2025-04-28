@@ -3,13 +3,15 @@
 use core::{
     cell::OnceCell,
     fmt::{Debug, Display},
+    ops::Deref,
 };
 
 use bakery::DwarfBaker;
 use c_enum::c_enum;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
-    DataBuffer, EntryFlags, IdentityMappable,
+    allocator::linear_allocator::LinearAllocator,
+    DataBuffer, EntryFlags, IdentityMappable, VirtuallyReplaceable,
 };
 use santa::Elf;
 
@@ -101,6 +103,8 @@ pub struct RawBootBridge {
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
     rsdp: PhysAddr,
+    kernel_base: PhysAddr,
+    early_alloc: LinearAllocator,
 }
 
 pub struct BootBridgeBuilder<A>
@@ -151,8 +155,16 @@ impl BootBridge {
         self.deref().kernel_config.font_pixel_size
     }
 
+    pub fn kernel_base(&self) -> PhysAddr {
+        self.deref().kernel_base
+    }
+
     pub fn log_level(&self) -> u64 {
         self.deref().kernel_config.log_level
+    }
+
+    pub fn early_alloc(&self) -> &LinearAllocator {
+        &self.deref().early_alloc
     }
 
     pub fn kernel_elf(&self) -> &Elf<'static> {
@@ -161,6 +173,10 @@ impl BootBridge {
 
     pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
         self.deref_mut().dwarf_data.take().unwrap()
+    }
+
+    pub fn ptr(&self) -> usize {
+        self.0 as usize
     }
 }
 
@@ -177,7 +193,27 @@ where
                 EntryFlags::WRITABLE,
             );
             (*boot_bridge).dwarf_data.as_ref().unwrap().map(mapper);
+            (*boot_bridge).kernel_elf.map(mapper);
         };
+    }
+}
+
+impl VirtuallyReplaceable for BootBridge {
+    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+        let current = self.0;
+        let new = unsafe {
+            mapper.map(
+                PhysAddr::new(current as u64),
+                size_of::<RawBootBridge>(),
+                EntryFlags::WRITABLE,
+            )
+        };
+        self.deref_mut().memory_map.memory_map.replace(mapper);
+        self.deref_mut().kernel_elf.replace(mapper);
+        if let Some(dwarf) = self.deref_mut().dwarf_data.as_mut() {
+            dwarf.replace(mapper);
+        }
+        *self = Self::new(new.as_mut_ptr())
     }
 }
 
@@ -192,8 +228,22 @@ impl IdentityMappable for BootBridge {
                 EntryFlags::WRITABLE,
             )
         };
-        self.deref().memory_map.memory_map.map(mapper);
+        self.deref().memory_map.map(mapper);
         self.deref().kernel_elf.map(mapper);
+    }
+}
+
+impl IdentityMappable for MemoryMap<'_> {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        self.memory_map.map(mapper);
+    }
+}
+
+impl IdentityMappable for RawData {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        unsafe {
+            mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE)
+        };
     }
 }
 
@@ -244,6 +294,12 @@ where
         self
     }
 
+    pub fn early_alloc(&mut self, early_alloc: LinearAllocator) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.early_alloc = early_alloc;
+        self
+    }
+
     pub fn font_data(&mut self, start: u64, size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.font_data = RawData {
@@ -273,6 +329,12 @@ where
     pub fn memory_map(&mut self, memory_map: &'static [u8], entry_size: usize) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.memory_map = MemoryMap::new(memory_map, entry_size);
+        self
+    }
+
+    pub fn kernel_base(&mut self, base: PhysAddr) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.kernel_base = base;
         self
     }
 

@@ -6,6 +6,7 @@
 use core::{fmt::Display, ops::Deref};
 
 use address::{Frame, Page, PhysAddr, VirtAddr};
+use allocator::{virt_allocator::VirtualAllocator, FrameAllocator};
 use bitflags::bitflags;
 
 pub mod address;
@@ -33,10 +34,37 @@ pub const PAGE_SIZE: u64 = 4096;
 /// | General Kernel Use         |
 /// | (dynamic memory, stack,    |
 /// |  kernel heap, etc)         |
+/// +----------------------------+ 0xFFFF_F000_0000_0000
+///
+/// +----------------------------+ 0xFFFF_FE00_0000_0000
+/// | Recursive Mapping          |
 /// +----------------------------+ 0xFFFF_FFFF_FFFF_FFFF
 pub const KERNEL_START: VirtAddr = VirtAddr::canonical_higher_half();
 pub const KERNEL_DIRECT_PHYSICAL_MAP: VirtAddr = VirtAddr::new(0xFFFF_9000_0000_0000);
 pub const KERNEL_GENERAL_USE: VirtAddr = VirtAddr::new(0xFFFF_B000_0000_0000);
+
+pub struct MapperWithVirtualAllocator<'a, M: Mapper> {
+    mapper: &'a mut M,
+    allocator: &'a VirtualAllocator,
+}
+
+impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
+    pub fn new(mapper: &'a mut M, allocator: &'a VirtualAllocator) -> Self {
+        Self { mapper, allocator }
+    }
+
+    pub unsafe fn map(&mut self, phys_addr: PhysAddr, size: usize, flags: EntryFlags) -> VirtAddr {
+        let page = self
+            .allocator
+            .allocate(size / PAGE_SIZE as usize + 1)
+            .expect("IMPOSSIBLE OUT OF VIRTUAL MEMORY");
+        unsafe {
+            self.mapper
+                .map_to_range_by_size(page, phys_addr.into(), size, flags)
+        };
+        page.start_address().align_to(phys_addr)
+    }
+}
 
 pub trait Mapper {
     unsafe fn identity_map_range(
@@ -88,6 +116,13 @@ pub trait Mapper {
     );
 
     unsafe fn unmap_addr(&mut self, page: Page) -> Frame;
+
+    unsafe fn identity_map_object<O: IdentityMappable>(&mut self, obj: &O)
+    where
+        Self: Sized,
+    {
+        obj.map(self);
+    }
 }
 
 bitflags! {
@@ -110,6 +145,10 @@ bitflags! {
 
 pub trait IdentityMappable {
     fn map(&self, mapper: &mut impl Mapper);
+}
+
+pub trait VirtuallyReplaceable {
+    fn replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>);
 }
 
 pub trait VirtuallyMappable {
@@ -188,6 +227,20 @@ impl IdentityMappable for DataBuffer<'_> {
     }
 }
 
+impl VirtuallyReplaceable for DataBuffer<'_> {
+    fn replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>) {
+        let len = self.buffer().len();
+        let new_addr = unsafe {
+            mapper.map(
+                PhysAddr::new(self.buffer().as_ptr() as u64),
+                len,
+                EntryFlags::NO_EXECUTE,
+            )
+        };
+        *self = Self::new(unsafe { core::slice::from_raw_parts(new_addr.as_ptr(), len) })
+    }
+}
+
 impl Display for DataBuffer<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let buf_start = PhysAddr::new(self.buffer as *const [u8] as *const u8 as u64);
@@ -195,4 +248,24 @@ impl Display for DataBuffer<'_> {
 
         write!(f, "[{:#x}-{:#x}]", buf_start, buf_end)
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PageLevel {
+    Page4K, // 4 KiB pages
+    Page2M, // 2 MiB pages (huge)
+    Page1G, // 1 GiB pages (huge)
+}
+
+pub fn page_table_size(memory_bytes: usize, plevel: PageLevel) -> usize {
+    const PTE_SIZE: usize = 8;
+
+    let page_size = match plevel {
+        PageLevel::Page4K => 4 * 1024,               // 4 KiB
+        PageLevel::Page2M => 2 * 1024 * 1024,        // 2 MiB
+        PageLevel::Page1G => 1 * 1024 * 1024 * 1024, // 1 GiB
+    };
+
+    let num_pages = (memory_bytes + page_size - 1) / page_size;
+    num_pages * PTE_SIZE
 }
