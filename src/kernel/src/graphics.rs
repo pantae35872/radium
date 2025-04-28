@@ -10,9 +10,9 @@ use spin::mutex::Mutex;
 
 use crate::{
     initialization_context::{InitializationContext, Phase2},
-    log,
     memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
+use sentinel::log;
 
 pub mod color;
 mod frame_tracker;

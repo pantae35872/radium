@@ -1,3 +1,5 @@
+use sentinel::log;
+
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::virt_allocator::VirtualAllocator;
 use crate::allocator::FrameAllocator;
@@ -159,17 +161,16 @@ where
         if !(p1[page.p1_index() as usize].is_unused()
             || p1[page.p1_index() as usize].overwriteable())
         {
-            // FIXME: NEW LOGGING INFRASTRUCTURE
-            //log!(
-            //    Error,
-            //    "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
-            //    page.start_address(),
-            //    p1[page.p1_index() as usize]
-            //        .pointed_frame()
-            //        .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
-            //        .start_address()
-            //);
-            //log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
+            log!(
+                Error,
+                "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
+                page.start_address(),
+                p1[page.p1_index() as usize]
+                    .pointed_frame()
+                    .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
+                    .start_address()
+            );
+            log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
         }
         assert!(
             p1[page.p1_index() as usize].is_unused()

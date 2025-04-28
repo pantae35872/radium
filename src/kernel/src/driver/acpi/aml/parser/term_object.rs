@@ -1,11 +1,9 @@
 use core::{iter, ops::ControlFlow};
 use named_obj::named_obj;
 use namespace_modifier::namespace_modifier;
+use sentinel::log;
 
-use crate::{
-    driver::acpi::aml::{parser::choose, AmlContext, AmlError, AmlValue},
-    log,
-};
+use crate::driver::acpi::aml::{parser::choose, AmlContext, AmlError, AmlValue};
 
 use super::{Parser, Propagate};
 

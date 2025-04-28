@@ -18,10 +18,10 @@ use spin::mutex::Mutex;
 use spin::Once;
 
 use crate::driver::pci::{self, register_driver, Bar, DeviceType, PciDeviceHandle, Vendor};
-use crate::log;
 use crate::memory::paging::EntryFlags;
 use crate::memory::{memory_controller, virt_addr_alloc};
 use crate::utils::VolatileCell;
+use sentinel::log;
 
 use super::{DmaBuffer, DmaRequest, Drive, DriveCommand};
 

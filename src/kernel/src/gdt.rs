@@ -1,12 +1,10 @@
 use alloc::boxed::Box;
-use pager::address::VirtAddr;
 use pager::gdt::{Descriptor, Gdt, TaskStateSegment, DOUBLE_FAULT_IST_INDEX};
 use pager::registers::{lgdt, load_tss, DescriptorTablePointer, SegmentSelector, CS};
-use pager::PrivilegeLevel;
 
 use crate::initialization_context::{InitializationContext, Phase3};
-use crate::log;
 use crate::smp::CpuLocalBuilder;
+use sentinel::log;
 
 pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
     let gdt_initializer =

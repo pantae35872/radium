@@ -9,8 +9,8 @@ use uguid::Guid;
 use uuid::Uuid;
 
 use crate::driver::storage::{Drive, CHS};
-use crate::log;
 use crate::utils::floorf64;
+use sentinel::log;
 
 use super::msdos_partition::{MSDosPartition, MSDosPartitionError};
 

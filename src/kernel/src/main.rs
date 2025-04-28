@@ -12,7 +12,7 @@ extern crate spin;
 
 use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
-use radium::{hlt_loop, print, println, serial_print};
+use radium::{hlt_loop, println, serial_print};
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -24,7 +24,7 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     println!("Hello, world!!!");
     //#[cfg(not(feature = "testing"))]
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    LOGGER.flush_all(&[|s| serial_print!("{s}")]);
     //println!("Time Test: {:?}", uefi_runtime().get_time());
     #[cfg(test)]
     test_main();

@@ -10,7 +10,7 @@ use pager::{
     registers::{lidt, Cr2, DescriptorTablePointer, SegmentSelector, CS},
 };
 
-use crate::log;
+use sentinel::log;
 
 #[derive(Clone, Copy)]
 pub struct GateInterrupt;

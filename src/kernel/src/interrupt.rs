@@ -2,10 +2,8 @@ use core::arch::asm;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-use crate::gdt;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
-use crate::log;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
@@ -26,6 +24,7 @@ use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
 use pager::registers::RFlagsFlags;
+use sentinel::log;
 
 pub mod apic;
 pub mod idt;
@@ -180,8 +179,8 @@ where
 extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
-            serial_println!("APIC timer on cpu: {}", cpu_local().cpu_id());
-            serial_println!("Flags: {:?}", stack_frame.cpu_flags);
+            //serial_println!("APIC timer on cpu: {}", cpu_local().cpu_id());
+            //serial_println!("Flags: {:?}", stack_frame.cpu_flags);
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {
             TIMER_COUNT.fetch_add(1, Ordering::Relaxed);

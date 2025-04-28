@@ -50,6 +50,7 @@ use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
+use sentinel::log;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 use utils::port::Port32Bit;
 

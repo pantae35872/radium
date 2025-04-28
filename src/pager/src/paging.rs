@@ -7,9 +7,11 @@ pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::Table;
 use self::temporary_page::TemporaryPage;
+use bit_field::BitField;
 use bitflags::Flags;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
+use sentinel::log;
 use table::{
     AnyLevel, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseLevel4, RecurseP4Create,
     TableLevel, TableLevel4,
@@ -151,71 +153,76 @@ where
         unsafe { self.p4.as_ref() }
     }
 
-    // FIXME: MAKE THIS WORK
-    //pub fn log_all(&self)
-    //where
-    //    Table<P4>: AnyLevel,
-    //{
-    //    log!(Debug, "Current mappings: ");
-    //    log_dyn_recursive(self.p4(), 4, 0);
+    pub fn log_all(&self)
+    where
+        Table<P4>: AnyLevel,
+    {
+        log!(Debug, "Current mappings: ");
+        log_dyn_recursive(self.p4(), 4, 0);
 
-    //    fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
-    //        if level == 1 {
-    //            let (mut last_phys, mut last_virt, mut last_flags) =
-    //                (0u64, 0u64, EntryFlags::empty());
-    //            let mut is_first = true;
-    //            for (index, entry) in table
-    //                .entries()
-    //                .iter()
-    //                .enumerate()
-    //                .filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
-    //            {
-    //                let virt = base_addr as usize | (index << 12);
-    //                if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
-    //                    == (entry.mask_flags(), virt as u64, entry.flags())
-    //                {
-    //                    if is_first
-    //                        && (last_phys, last_virt, last_flags)
-    //                            != (0u64, 0u64, EntryFlags::empty())
-    //                    {
-    //                        log!(Debug, "-----------------------------------------");
-    //                        log!(
-    //                            Debug,
-    //                            "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
-    //                        );
-    //                        log!(Debug, "..........................................");
-    //                        is_first = false;
-    //                    }
+        fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
+            if level == 1 {
+                let (mut last_phys, mut last_virt, mut last_flags) =
+                    (0u64, 0u64, EntryFlags::empty());
+                let mut is_first = true;
+                for (index, entry) in table
+                    .entries()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
+                {
+                    let virt = base_addr as usize | (index << 12);
+                    if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
+                        == (entry.mask_flags(), virt as u64, entry.flags())
+                    {
+                        if is_first
+                            && (last_phys, last_virt, last_flags)
+                                != (0u64, 0u64, EntryFlags::empty())
+                        {
+                            if last_virt.get_bit(47) {
+                                last_virt |= 0xffff << 48;
+                            }
+                            log!(Debug, "-----------------------------------------");
+                            log!(
+                                Debug,
+                                "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
+                            );
+                            log!(Debug, "..........................................");
+                            is_first = false;
+                        }
 
-    //                    (last_phys, last_virt, last_flags) =
-    //                        (entry.mask_flags(), virt as u64, entry.flags());
-    //                    continue;
-    //                } else if (last_phys, last_virt, last_flags)
-    //                    != (0u64, 0u64, EntryFlags::empty())
-    //                {
-    //                    log!(
-    //                        Debug,
-    //                        "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
-    //                    );
-    //                    log!(Debug, "-----------------------------------------");
-    //                    is_first = true;
-    //                }
-    //                (last_phys, last_virt, last_flags) =
-    //                    (entry.mask_flags(), virt as u64, entry.flags());
-    //            }
-    //        }
+                        (last_phys, last_virt, last_flags) =
+                            (entry.mask_flags(), virt as u64, entry.flags());
+                        continue;
+                    } else if (last_phys, last_virt, last_flags)
+                        != (0u64, 0u64, EntryFlags::empty())
+                    {
+                        if last_virt.get_bit(47) {
+                            last_virt |= 0xffff << 48;
+                        }
+                        log!(
+                            Debug,
+                            "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
+                        );
+                        log!(Debug, "-----------------------------------------");
+                        is_first = true;
+                    }
+                    (last_phys, last_virt, last_flags) =
+                        (entry.mask_flags(), virt as u64, entry.flags());
+                }
+            }
 
-    //        for (index, table) in
-    //            (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table)))
-    //        {
-    //            log_dyn_recursive(
-    //                table,
-    //                level - 1,
-    //                base_addr | (index << ((level - 1) * 9 + 12)),
-    //            );
-    //        }
-    //    }
-    //}
+            for (index, table) in
+                (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table)))
+            {
+                log_dyn_recursive(
+                    table,
+                    level - 1,
+                    base_addr | (index << ((level - 1) * 9 + 12)),
+                );
+            }
+        }
+    }
 }
 
 /// InactivePageTable are the table that can be swapped to be an active page table using

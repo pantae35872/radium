@@ -8,9 +8,10 @@ use pager::{
 use raw_cpuid::CpuId;
 
 use crate::{
-    inline_if, log,
+    inline_if,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
+use sentinel::log;
 
 use super::InterruptIndex;
 
