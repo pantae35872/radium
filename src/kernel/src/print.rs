@@ -3,8 +3,9 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Phase2};
-use crate::{interrupt, log};
+use crate::interrupt;
 use conquer_once::spin::OnceCell;
+use sentinel::log;
 use spin::Mutex;
 
 use self::ttf_renderer::TtfRenderer;

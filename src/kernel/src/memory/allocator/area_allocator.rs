@@ -7,7 +7,7 @@ use pager::{
     PAGE_SIZE,
 };
 
-use crate::log;
+use sentinel::log;
 
 pub struct AreaAllocator<'a, I> {
     areas: I,

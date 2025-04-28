@@ -1,10 +1,9 @@
 use core::{
     cell::SyncUnsafeCell,
-    fmt::{Arguments, Display, Formatter, Result, Write},
+    fmt::{Arguments, Write},
 };
 
-use bootbridge::BootBridge;
-use c_enum::c_enum;
+use sentinel::{log, set_logger, LogLevel, LoggerBackend};
 use static_log::StaticLog;
 
 use crate::{
@@ -15,46 +14,7 @@ use crate::{
 mod static_log;
 
 pub static LOGGER: MainLogger = MainLogger::new();
-const BUFFER_SIZE: usize = 0x2000;
-
-#[macro_export]
-macro_rules! log {
-    ($level:ident, $($arg:tt)*) => {{
-        $crate::logger::LOGGER.write($crate::logger::LogLevel::$level, format_args!("{}\n", format_args!($($arg)*)));
-    }};
-}
-
-c_enum! {
-    #[derive(Debug)]
-    pub enum LogLevel: u64 {
-        Trace       = 1
-        Debug       = 2
-        Info        = 3
-        Warning     = 4
-        Error       = 5
-        Critical    = 6
-    }
-}
-
-impl Default for LogLevel {
-    fn default() -> Self {
-        Self::Debug
-    }
-}
-
-impl Display for LogLevel {
-    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
-        match *self {
-            Self::Debug => write!(f, "\x1b[92mDEBUG\x1b[0m"),
-            Self::Info => write!(f, "\x1b[92mINFO\x1b[0m"),
-            Self::Trace => write!(f, "\x1b[94mTRACE\x1b[0m"),
-            Self::Error => write!(f, "\x1b[91mERROR\x1b[0m"),
-            Self::Warning => write!(f, "\x1b[93mWARNING\x1b[0m"),
-            Self::Critical => write!(f, "\x1b[31mCRITICAL\x1b[0m"),
-            _ => unreachable!(),
-        }
-    }
-}
+const BUFFER_SIZE: usize = 0x4000;
 
 struct CallbackFormatter<C: FnMut(&str)> {
     callback: C,
@@ -91,7 +51,7 @@ impl MainLogger {
     /// SAFETY: the caller must ensure that this is only being called on kernel initialization
     pub unsafe fn set_level(&self, level: u64) {
         unsafe {
-            *self.level.get() = LogLevel(level);
+            *self.level.get() = LogLevel::from(level);
         }
     }
 
@@ -135,11 +95,18 @@ impl MainLogger {
     }
 }
 
+impl LoggerBackend for MainLogger {
+    fn log(&self, _module_path: &'static str, level: LogLevel, formatter: Arguments) {
+        self.write(level, formatter);
+    }
+}
+
 pub fn init(ctx: &InitializationContext<Phase0>) {
     initialize_guard!();
     // SAFETY: This is safe because the above interrupt guard
     unsafe {
         LOGGER.set_level(ctx.context().boot_bridge().log_level());
     };
+    set_logger(&LOGGER);
     log!(Trace, "Logging start");
 }

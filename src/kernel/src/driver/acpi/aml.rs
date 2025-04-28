@@ -1,8 +1,7 @@
 use alloc::boxed::Box;
 use namespace::{AmlName, Namespace};
 use parser::{term_object::term_list, Parser, Propagate};
-
-use crate::log;
+use sentinel::log;
 
 pub mod namespace;
 mod parser;

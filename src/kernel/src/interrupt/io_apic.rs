@@ -10,10 +10,10 @@ use crate::{
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
     initialization_context::{InitializationContext, Phase3},
-    log,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
+use sentinel::log;
 
 use super::InterruptIndex;
 

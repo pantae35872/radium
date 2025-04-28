@@ -1,0 +1,12 @@
+[package]
+name = "sentinel"
+version = "0.1.0"
+edition = "2024"
+description = "Contains a logging interface"
+
+[dependencies]
+c_enum = { path = "../c_enum" }
+
+[dependencies.conquer-once]
+version = "0.4.0"
+default-features = false

@@ -406,6 +406,7 @@ version = "0.1.0"
 dependencies = [
  "bit_field",
  "bitflags 2.9.0",
+ "sentinel",
 ]
 
 [[package]]
@@ -481,6 +482,7 @@ dependencies = [
  "paste",
  "raw-cpuid",
  "santa",
+ "sentinel",
  "spin",
  "uart_16550",
  "uguid",
@@ -549,6 +551,14 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "sentinel"
+version = "0.1.0"
+dependencies = [
+ "c_enum",
+ "conquer-once",
+]
 
 [[package]]
 name = "shlex"

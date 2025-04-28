@@ -1,8 +1,9 @@
 use bit_field::BitField;
 use conquer_once::spin::OnceCell;
+use sentinel::log;
 use spin::Mutex;
 
-use crate::{log, utils::port::Port8Bit};
+use crate::utils::port::Port8Bit;
 
 static PIT: OnceCell<Mutex<ProgrammableIntervalTimer>> = OnceCell::uninit();
 

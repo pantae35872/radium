@@ -9,10 +9,10 @@ use pager::{
 };
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
+use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Phase1, Phase2},
-    log,
     memory::{virt_addr_alloc, MMIOBufferInfo},
 };
 

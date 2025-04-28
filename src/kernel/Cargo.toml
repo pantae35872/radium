@@ -19,13 +19,14 @@ uguid = "2.2.0"
 bit_field = "0.10.2"
 hashbrown = "0.14.5"
 getrandom = "0.3.1"
+raw-cpuid = "11.5.0"
+paste = "1.0.15"
 bootbridge = { path = "../bootbridge"}
 santa = { path = "../santa"}
 c_enum = { path = "../c_enum"}
 kernel_proc = { path = "../kernel_proc" }
 pager = { path = "../pager" }
-raw-cpuid = "11.5.0"
-paste = "1.0.15"
+sentinel = { path = "../sentinel" }
 
 [dependencies.bakery]
 path = "../bakery"

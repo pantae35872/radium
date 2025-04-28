@@ -3,10 +3,10 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     EntryFlags, Mapper,
 };
+use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Phase1},
-    log,
     memory::virt_addr_alloc,
 };
 

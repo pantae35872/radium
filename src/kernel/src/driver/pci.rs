@@ -1,8 +1,9 @@
 use alloc::{sync::Arc, vec::Vec};
 use bit_field::BitField;
+use sentinel::log;
 use spin::Mutex;
 
-use crate::{inline_if, log, utils::port::Port32Bit};
+use crate::{inline_if, utils::port::Port32Bit};
 
 pub static DRIVER: Mutex<PCIControler> = Mutex::new(PCIControler::new());
 
@@ -356,51 +357,55 @@ impl PciHeader {
         return self.function;
     }
 
-    pub unsafe fn read<T>(&self, offset: u32) -> u32 { unsafe {
-        let bus = self.bus() as u32;
-        let device = self.device() as u32;
-        let func = self.function() as u32;
-        let address = (bus << 16) | (device << 11) | (func << 8) | (offset & 0xFC) | 0x80000000;
+    pub unsafe fn read<T>(&self, offset: u32) -> u32 {
+        unsafe {
+            let bus = self.bus() as u32;
+            let device = self.device() as u32;
+            let func = self.function() as u32;
+            let address = (bus << 16) | (device << 11) | (func << 8) | (offset & 0xFC) | 0x80000000;
 
-        self.command_port.write(address);
+            self.command_port.write(address);
 
-        let offset = (offset & 0b11) * 8;
-        let value = self.data_port.read();
+            let offset = (offset & 0b11) * 8;
+            let value = self.data_port.read();
 
-        match core::mem::size_of::<T>() {
-            1 => (value >> offset) as u8 as u32,
-            2 => (value >> offset) as u16 as u32,
-            4 => value,
-            width => unreachable!("unknown PCI read width: {}", width),
-        }
-    }}
-
-    unsafe fn write<T>(&self, offset: u32, value: u32) { unsafe {
-        let current = self.read::<u32>(offset);
-
-        let bus = self.bus() as u32;
-        let device = self.device() as u32;
-        let func = self.function() as u32;
-
-        let address = (bus << 16) | (device << 11) | (func << 8) | (offset & 0xFC) | 0x80000000;
-        let noffset = (offset & 0b11) * 8;
-
-        self.command_port.write(address);
-        match core::mem::size_of::<T>() {
-            1 => {
-                let mask = !(0xffu32 << offset);
-                let value = (current & mask) | ((value & 0xff) << offset);
-                self.data_port.write(value);
+            match core::mem::size_of::<T>() {
+                1 => (value >> offset) as u8 as u32,
+                2 => (value >> offset) as u16 as u32,
+                4 => value,
+                width => unreachable!("unknown PCI read width: {}", width),
             }
-            2 => {
-                let mask = !(0xffffu32 << noffset);
-                let value = (current & mask) | ((value & 0xffff) << noffset);
-                self.data_port.write(value);
-            }
-            4 => self.data_port.write(value), // u32
-            width => unreachable!("unknown PCI write width: {}", width),
         }
-    }}
+    }
+
+    unsafe fn write<T>(&self, offset: u32, value: u32) {
+        unsafe {
+            let current = self.read::<u32>(offset);
+
+            let bus = self.bus() as u32;
+            let device = self.device() as u32;
+            let func = self.function() as u32;
+
+            let address = (bus << 16) | (device << 11) | (func << 8) | (offset & 0xFC) | 0x80000000;
+            let noffset = (offset & 0b11) * 8;
+
+            self.command_port.write(address);
+            match core::mem::size_of::<T>() {
+                1 => {
+                    let mask = !(0xffu32 << offset);
+                    let value = (current & mask) | ((value & 0xff) << offset);
+                    self.data_port.write(value);
+                }
+                2 => {
+                    let mask = !(0xffffu32 << noffset);
+                    let value = (current & mask) | ((value & 0xffff) << noffset);
+                    self.data_port.write(value);
+                }
+                4 => self.data_port.write(value), // u32
+                width => unreachable!("unknown PCI write width: {}", width),
+            }
+        }
+    }
 
     pub fn enable_mmio(&self) {
         let command = unsafe { self.read::<u16>(0x04) };
