@@ -1,10 +1,8 @@
 use bakery::DwarfBaker;
-use bootbridge::{BootBridgeBuilder, RawData};
-use pager::{
-    allocator::linear_allocator::LinearAllocator, gdt::Gdt, registers::SegmentSelector, DataBuffer,
-};
+use bootbridge::BootBridgeBuilder;
+use pager::allocator::linear_allocator::LinearAllocator;
 use uefi::table::cfg::ConfigTableEntry;
-use uefi_services::{println, system_table};
+use uefi_services::system_table;
 
 use crate::{config::BootConfig, elf_loader::load_elf};
 

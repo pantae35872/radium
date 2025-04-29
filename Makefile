@@ -10,13 +10,16 @@ endif
 ifeq (release,$(firstword $(MAKECMDGOALS))) 
 	RELEASE := 1
   BUILD_MODE := release
+else ifeq (tftp-release,$(firstword $(MAKECMDGOALS))) 
+	RELEASE := 1
+  BUILD_MODE := release
 else 
   BUILD_MODE := debug
 endif
 
 CRATES := $(patsubst %/,%,$(wildcard src/*/))
 
-.PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg check $(CRATES)
+.PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg check tftp-debug tftp-release $(CRATES)
 .DEFAULT_GOAL := debug
 
 NAME := radium
@@ -26,6 +29,7 @@ ISO_FILE := $(BUILD_DIR)/os.iso
 FAT_IMG := $(BUILD_DIR)/fat.img
 DISK_FILE := disk.img
 DWARF_FILE := $(abspath $(BUILD_DIR)/dwarf.baker)
+TFTP_DIR := /srv/tftp
 
 # Dependency files
 KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
@@ -148,6 +152,12 @@ $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 
 release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
 debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
+tftp-debug: $(BUILD_MODE_FILE) $(FAT_IMG)
+	sudo rm -rf $(TFTP_DIR)/*
+	sudo mcopy -o -i $(FAT_IMG) -s ::* $(TFTP_DIR)
+tftp-release: $(BUILD_MODE_FILE) $(FAT_IMG)
+	sudo rm -rf $(TFTP_DIR)/*
+	sudo mcopy -o -i $(FAT_IMG) -s ::* $(TFTP_DIR)
 
 # Get called by test_run.sh
 test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 

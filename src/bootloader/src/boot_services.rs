@@ -1,3 +1,4 @@
+use alloc::ffi::CString;
 use boot_cfg_parser::toml::{parse_toml, parser::TomlValue};
 use uefi::{
     proto::{
@@ -6,13 +7,16 @@ use uefi::{
             file::{File, FileInfo, FileMode, RegularFile},
             fs::SimpleFileSystem,
         },
+        network::{pxe::BaseCode, IpAddress},
     },
     table::boot::MemoryType,
     CStr16,
 };
 
 use uefi_raw::protocol::file_system::FileAttribute;
-use uefi_services::system_table;
+use uefi_services::{println, system_table};
+
+const DEV_SERVER_IP: IpAddress = IpAddress::new_v4([192, 168, 69, 1]);
 
 /// A read only file, just an abstraction over the uefi file protocol
 pub struct LoaderFile {
@@ -34,10 +38,43 @@ impl LoaderFile {
             .device()
             .expect("Failed to get device handle");
 
-        let simple_fs_protocol = system_table
+        let simple_fs_protocol = match system_table
             .boot_services()
             .open_protocol_exclusive::<SimpleFileSystem>(device_handle)
-            .expect("Failed to open simple file system protocol");
+        {
+            Ok(simple_fs_protocol) => simple_fs_protocol,
+            Err(_) => {
+                println!("No simple file system found, assuming testing with PXE");
+                let mut base_code = system_table
+                    .boot_services()
+                    .open_protocol_exclusive::<BaseCode>(device_handle)
+                    .unwrap();
+
+                let cstring = CString::new(path).unwrap();
+                let cstr = cstring.as_c_str().try_into().unwrap();
+
+                let buffer = base_code
+                    .tftp_get_file_size(&DEV_SERVER_IP, cstr)
+                    .expect("Failed to get file size for PXE Boot");
+                let buffer: &mut [u8] = unsafe {
+                    core::slice::from_raw_parts_mut(
+                        system_table
+                            .boot_services()
+                            .allocate_pool(MemoryType::LOADER_DATA, buffer as usize)
+                            .unwrap(),
+                        buffer as usize,
+                    )
+                };
+                base_code
+                    .tftp_read_file(&DEV_SERVER_IP, cstr, Some(buffer))
+                    .expect("Directory not found");
+
+                return Self {
+                    buffer: buffer as *const [u8],
+                    mark_permanent: false,
+                };
+            }
+        };
 
         let simple_file_system = match simple_fs_protocol.get_mut() {
             Some(protocol) => protocol,
