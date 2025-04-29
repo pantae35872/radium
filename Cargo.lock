@@ -717,8 +717,9 @@ checksum = "5a5f39404a5da50712a4c1eecf25e90dd62b613502b7e925fd4e4d19b5c96512"
 
 [[package]]
 name = "unwinding"
-version = "0.2.5"
-source = "git+https://github.com/nbdd0121/unwinding?rev=8670d9b8d3971ce7eb0a27e31043463cbc014281#8670d9b8d3971ce7eb0a27e31043463cbc014281"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8393f2782b6060a807337ff353780c1ca15206f9ba2424df18cb6e733bd7b345"
 dependencies = [
  "gimli 0.31.1",
 ]
