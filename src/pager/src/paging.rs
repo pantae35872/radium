@@ -8,7 +8,6 @@ use self::mapper::Mapper;
 use self::table::Table;
 use self::temporary_page::TemporaryPage;
 use bit_field::BitField;
-use bitflags::Flags;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use sentinel::log;

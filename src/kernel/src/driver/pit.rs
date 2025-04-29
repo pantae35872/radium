@@ -3,15 +3,18 @@ use conquer_once::spin::OnceCell;
 use sentinel::log;
 use spin::Mutex;
 
-use crate::utils::port::Port8Bit;
+use crate::{
+    initialization_context::{InitializationContext, Phase3},
+    port::{Port, Port8Bit, PortReadWrite, PortWrite},
+};
 
 static PIT: OnceCell<Mutex<ProgrammableIntervalTimer>> = OnceCell::uninit();
 
 struct ProgrammableIntervalTimer {
-    channel0_data: Port8Bit,
-    channel1_data: Port8Bit,
-    channel2_data: Port8Bit,
-    command: Port8Bit,
+    channel0_data: Port<Port8Bit, PortReadWrite>,
+    channel1_data: Port<Port8Bit, PortReadWrite>,
+    channel2_data: Port<Port8Bit, PortReadWrite>,
+    command: Port<Port8Bit, PortWrite>,
 }
 
 struct CommandBuilder {
@@ -50,12 +53,12 @@ enum OperatingMode {
 }
 
 impl ProgrammableIntervalTimer {
-    fn new() -> Self {
+    fn new(ctx: &mut InitializationContext<Phase3>) -> Self {
         Self {
-            channel0_data: Port8Bit::new(0x40),
-            channel1_data: Port8Bit::new(0x41),
-            channel2_data: Port8Bit::new(0x42),
-            command: Port8Bit::new(0x43),
+            channel0_data: ctx.alloc_port(0x40).expect("PIC channel 0 port is taken"),
+            channel1_data: ctx.alloc_port(0x41).expect("PIC channel 1 port is taken"),
+            channel2_data: ctx.alloc_port(0x42).expect("PIC channel 2 port is taken"),
+            command: ctx.alloc_port(0x43).expect("PIC command port is taken"),
         }
     }
 
@@ -143,9 +146,9 @@ impl Default for OperatingMode {
     }
 }
 
-pub fn init() {
+pub fn init(ctx: &mut InitializationContext<Phase3>) {
     PIT.init_once(|| {
-        let mut pit = ProgrammableIntervalTimer::new();
+        let mut pit = ProgrammableIntervalTimer::new(ctx);
         pit.init();
         pit.into()
     });

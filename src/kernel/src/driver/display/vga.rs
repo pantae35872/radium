@@ -8,39 +8,40 @@ use conquer_once::spin::OnceCell;
 use pager::address::VirtAddr;
 use spin::Mutex;
 
-use crate::utils::port::Port8Bit;
+use crate::initialization_context::{InitializationContext, Phase1};
+use crate::port::{Port, Port8Bit, PortReadWrite};
 
 // WARNING: This module is no longer used, and update.
 
 pub struct Vga {
-    misc_port: Port8Bit,
-    crtc_index_port: Port8Bit,
-    crtc_data_port: Port8Bit,
-    sequencer_index_port: Port8Bit,
-    sequencer_data_port: Port8Bit,
-    graphic_controller_index_port: Port8Bit,
-    graphic_controller_data_port: Port8Bit,
-    attribute_controller_index_port: Port8Bit,
-    attribute_controller_write_port: Port8Bit,
-    attribute_controller_reset_port: Port8Bit,
+    misc_port: Port<Port8Bit, PortReadWrite>,
+    crtc_index_port: Port<Port8Bit, PortReadWrite>,
+    crtc_data_port: Port<Port8Bit, PortReadWrite>,
+    sequencer_index_port: Port<Port8Bit, PortReadWrite>,
+    sequencer_data_port: Port<Port8Bit, PortReadWrite>,
+    graphic_controller_index_port: Port<Port8Bit, PortReadWrite>,
+    graphic_controller_data_port: Port<Port8Bit, PortReadWrite>,
+    attribute_controller_index_port: Port<Port8Bit, PortReadWrite>,
+    attribute_controller_write_port: Port<Port8Bit, PortReadWrite>,
+    attribute_controller_reset_port: Port<Port8Bit, PortReadWrite>,
     backbuffer_address: VirtAddr,
 }
 
 pub static DRIVER: OnceCell<Mutex<Vga>> = OnceCell::uninit();
 
 impl Vga {
-    pub fn new() -> Self {
+    pub fn new(ctx: &mut InitializationContext<Phase1>) -> Self {
         Self {
-            misc_port: Port8Bit::new(0x3c2),
-            crtc_index_port: Port8Bit::new(0x3d4),
-            crtc_data_port: Port8Bit::new(0x3d5),
-            sequencer_index_port: Port8Bit::new(0x3c4),
-            sequencer_data_port: Port8Bit::new(0x3c5),
-            graphic_controller_index_port: Port8Bit::new(0x3ce),
-            graphic_controller_data_port: Port8Bit::new(0x3cf),
-            attribute_controller_index_port: Port8Bit::new(0x3c0),
-            attribute_controller_write_port: Port8Bit::new(0x3c0),
-            attribute_controller_reset_port: Port8Bit::new(0x3da),
+            misc_port: ctx.alloc_port(0x3c2).expect("VGA Port was taken"),
+            crtc_index_port: ctx.alloc_port(0x3d4).expect("VGA Port was taken"),
+            crtc_data_port: ctx.alloc_port(0x3d5).expect("VGA Port was taken"),
+            sequencer_index_port: ctx.alloc_port(0x3c4).expect("VGA Port was taken"),
+            sequencer_data_port: ctx.alloc_port(0x3c5).expect("VGA Port was taken"),
+            graphic_controller_index_port: ctx.alloc_port(0x3ce).expect("VGA Port was taken"),
+            graphic_controller_data_port: ctx.alloc_port(0x3cf).expect("VGA Port was taken"),
+            attribute_controller_index_port: ctx.alloc_port(0x3c0).expect("VGA Port was taken"),
+            attribute_controller_write_port: ctx.alloc_port(0x3c0).expect("VGA Port was taken"),
+            attribute_controller_reset_port: ctx.alloc_port(0x3da).expect("VGA Port was taken"),
             backbuffer_address: unsafe {
                 VirtAddr::new(alloc(
                     Layout::from_size_align(0xFA00, align_of::<u8>()).expect("Layout not valid"),
@@ -49,7 +50,7 @@ impl Vga {
         }
     }
 
-    unsafe fn write_registers(&self, registers_slice: &mut [u8]) {
+    unsafe fn write_registers(&mut self, registers_slice: &mut [u8]) {
         unsafe {
             let mut registers = registers_slice.iter();
             self.misc_port.write(*registers.next().unwrap_or(&0));
@@ -96,7 +97,7 @@ impl Vga {
         width == 320 && height == 200 && colordepth == 8
     }
 
-    pub fn set_mode(&self, width: u32, height: u32, colordepth: u32) -> bool {
+    pub fn set_mode(&mut self, width: u32, height: u32, colordepth: u32) -> bool {
         if !Vga::support_mode(width, height, colordepth) {
             return false;
         }
@@ -118,7 +119,7 @@ impl Vga {
         return true;
     }
 
-    fn get_frame_buffer_segment(&self) -> usize {
+    fn get_frame_buffer_segment(&mut self) -> usize {
         unsafe {
             self.graphic_controller_index_port.write(0x06);
             let segment_number = self.graphic_controller_data_port.read() & (3 << 2);
@@ -132,7 +133,7 @@ impl Vga {
         }
     }
 
-    pub fn put_pixel(&self, x: usize, y: usize, color_index: u8) {
+    pub fn put_pixel(&mut self, x: usize, y: usize, color_index: u8) {
         if 320 <= x || 200 <= y {
             return;
         }
@@ -161,6 +162,6 @@ impl Vga {
     }
 }
 
-pub fn init() {
-    DRIVER.init_once(|| Mutex::from(Vga::new()));
+pub fn init(ctx: &mut InitializationContext<Phase1>) {
+    DRIVER.init_once(|| Mutex::from(Vga::new(ctx)));
 }

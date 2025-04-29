@@ -2,7 +2,6 @@ use core::{cell::SyncUnsafeCell, fmt::Debug};
 
 pub mod buffer_reader;
 pub mod circular_ring_buffer;
-pub mod port;
 
 #[macro_export]
 macro_rules! inline_if {

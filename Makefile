@@ -41,6 +41,7 @@ BAKER_BIN := $(abspath $(BUILD_DIR)/release/baker)
 KERNEL_BUILD_BIN := $(abspath $(BUILD_DIR)/kernel.bin)
 BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
 BOOT_INFO := bootinfo.toml
+TEST_BOOT_INFO := test_bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
 
 OVMF := OVMF.fd
@@ -131,7 +132,13 @@ $(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(BOOTLOADER_
 	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=64 status=none
 	mkfs.vfat -F32 $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
-	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
+ifneq ($(STILL_TESTING),1)
+	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) ::/boot
+else
+	mcopy -D o -i $(FAT_IMG) $(TEST_BOOT_INFO) ::/boot
+	mmove -D o -i $(FAT_IMG) boot/$(TEST_BOOT_INFO) boot/$(BOOT_INFO) 
+endif
+	mcopy -D o -i $(FAT_IMG) $(KERNEL_FONT) $(DWARF_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
 
@@ -145,7 +152,7 @@ debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
 # Get called by test_run.sh
 test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
 	@echo test > $(BUILD_MODE_FILE)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none -serial stdio ; \
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none ; \
 		status=$$?; \
 		if [ $$status -ne 33 ]; then exit $$status; else exit 0; fi
 

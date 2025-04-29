@@ -3,11 +3,15 @@ use bit_field::BitField;
 use sentinel::log;
 use spin::Mutex;
 
-use crate::{inline_if, utils::port::Port32Bit};
+use crate::{
+    initialization_context::{InitializationContext, Phase3},
+    inline_if,
+    port::{Port, Port32Bit, PortRead, PortReadWrite, PortWrite},
+};
 
 pub static DRIVER: Mutex<PCIControler> = Mutex::new(PCIControler::new());
 
-const PCI_CONFIG_ADDRESS_PORT: u16 = 0xCF8;
+const PCI_CONFIG_COMMAND_PORT: u16 = 0xCF8;
 const PCI_CONFIG_DATA_PORT: u16 = 0xCFC;
 
 #[derive(Debug, PartialEq)]
@@ -326,22 +330,28 @@ impl DeviceType {
     }
 }
 
-pub struct PciHeader {
+pub struct PciHeader<'a> {
     bus: u8,
     device: u8,
     function: u8,
-    command_port: Port32Bit,
-    data_port: Port32Bit,
+    command_port: &'a mut Port<Port32Bit, PortWrite>,
+    data_port: &'a mut Port<Port32Bit, PortReadWrite>,
 }
 
-impl PciHeader {
-    pub fn new(bus: u8, device: u8, function: u8) -> Self {
+impl<'a> PciHeader<'a> {
+    pub fn new(
+        command_port: &'a mut Port<Port32Bit, PortWrite>,
+        data_port: &'a mut Port<Port32Bit, PortReadWrite>,
+        bus: u8,
+        device: u8,
+        function: u8,
+    ) -> Self {
         Self {
             bus,
             device,
             function,
-            command_port: Port32Bit::new(PCI_CONFIG_ADDRESS_PORT),
-            data_port: Port32Bit::new(PCI_CONFIG_DATA_PORT),
+            command_port,
+            data_port,
         }
     }
 
@@ -357,7 +367,7 @@ impl PciHeader {
         return self.function;
     }
 
-    pub unsafe fn read<T>(&self, offset: u32) -> u32 {
+    pub unsafe fn read<T>(&mut self, offset: u32) -> u32 {
         unsafe {
             let bus = self.bus() as u32;
             let device = self.device() as u32;
@@ -378,7 +388,7 @@ impl PciHeader {
         }
     }
 
-    unsafe fn write<T>(&self, offset: u32, value: u32) {
+    unsafe fn write<T>(&mut self, offset: u32, value: u32) {
         unsafe {
             let current = self.read::<u32>(offset);
 
@@ -407,37 +417,37 @@ impl PciHeader {
         }
     }
 
-    pub fn enable_mmio(&self) {
+    pub fn enable_mmio(&mut self) {
         let command = unsafe { self.read::<u16>(0x04) };
 
         unsafe { self.write::<u16>(0x04, command | (1 << 1)) };
     }
 
-    pub fn enable_bus_mastering(&self) {
+    pub fn enable_bus_mastering(&mut self) {
         let command = unsafe { self.read::<u16>(0x04) };
         unsafe { self.write::<u16>(0x04, command | (1 << 2)) };
     }
 
-    pub fn disable_legacy_irq(&self) {
+    pub fn disable_legacy_irq(&mut self) {
         let command = unsafe { self.read::<u16>(0x04) };
         unsafe { self.write::<u16>(0x04, command | (1 << 10)) };
     }
 
-    pub fn get_device(&self) -> DeviceType {
+    pub fn get_device(&mut self) -> DeviceType {
         let id = unsafe { self.read::<u32>(0x08) };
 
         return DeviceType::new(id.get_bits(24..32), id.get_bits(16..24));
     }
 
-    pub fn get_vendor(&self) -> Vendor {
+    pub fn get_vendor(&mut self) -> Vendor {
         return unsafe { Vendor::new(self.read::<u16>(0x00)) };
     }
 
-    pub fn has_multiple_functions(&self) -> bool {
+    pub fn has_multiple_functions(&mut self) -> bool {
         unsafe { self.read::<u32>(0x0c) }.get_bit(23)
     }
 
-    pub fn get_bar(&self, bar: u8) -> Option<Bar> {
+    pub fn get_bar(&mut self, bar: u8) -> Option<Bar> {
         if bar > 5 {
             return None;
         }
@@ -522,16 +532,35 @@ pub fn register_driver(handle: Arc<dyn PciDeviceHandle>) {
     DRIVER.lock().drivers.push(PciDevice { handle });
 }
 
-pub fn init() {
+pub fn init(ctx: &mut InitializationContext<Phase3>) {
+    let mut pci_config_data_port = ctx
+        .alloc_port(PCI_CONFIG_DATA_PORT)
+        .expect("PCI Data port was taken");
+    let mut pci_config_command_port = ctx
+        .alloc_port(PCI_CONFIG_COMMAND_PORT)
+        .expect("PCI Command port was taken");
     for bus in 0..255 {
         for device in 0..32 {
             let function_count = inline_if!(
-                PciHeader::new(bus, device, 0).has_multiple_functions(),
+                PciHeader::new(
+                    &mut pci_config_command_port,
+                    &mut pci_config_data_port,
+                    bus,
+                    device,
+                    0
+                )
+                .has_multiple_functions(),
                 8,
                 1
             );
             for function in 0..function_count {
-                let device = PciHeader::new(bus, device, function);
+                let mut device = PciHeader::new(
+                    &mut pci_config_command_port,
+                    &mut pci_config_data_port,
+                    bus,
+                    device,
+                    function,
+                );
 
                 if !device.get_vendor().is_valid() {
                     continue;

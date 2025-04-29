@@ -7,6 +7,7 @@ use crate::{
     memory::{
         allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator, MMIOBufferInfo,
     },
+    port::PortAllocator,
     smp::LocalInitializer,
 };
 
@@ -124,7 +125,7 @@ macro_rules! select_context {
         ($($phase:ty),*) => $body:tt
     )*) => {$(
         $(
-            impl InitializationContext<$phase> $body
+            impl $crate::initialization_context::InitializationContext<$phase> $body
         )*
     )*};
 }
@@ -135,6 +136,7 @@ pub(crate) use select_context;
 create_initialization_chain! {
     Phase0 {
         boot_bridge: BootBridge,
+        port_allocator: PortAllocator,
     } => Phase1 {
         active_table: ActivePageTable<RecurseLevel4>,
         buddy_allocator: BuddyAllocator<64>,
@@ -210,7 +212,10 @@ pub struct InitializationContext<T: AnyInitializationPhase> {
 impl<T: AnyInitializationPhase> InitializationContext<T> {
     pub fn start(boot_bridge: BootBridge) -> InitializationContext<Phase0> {
         InitializationContext {
-            context: Phase0 { boot_bridge },
+            context: Phase0 {
+                boot_bridge,
+                port_allocator: PortAllocator::new(),
+            },
         }
     }
 

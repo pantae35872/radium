@@ -1,10 +1,6 @@
 #![no_std]
 
-use core::{
-    cell::OnceCell,
-    fmt::{Debug, Display},
-    ops::Deref,
-};
+use core::{cell::OnceCell, fmt::Debug};
 
 use bakery::DwarfBaker;
 use c_enum::c_enum;

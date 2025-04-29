@@ -28,6 +28,7 @@ pub mod initialization_context;
 pub mod interrupt;
 pub mod logger;
 pub mod memory;
+pub mod port;
 pub mod print;
 pub mod scheduler;
 pub mod serial;
@@ -38,7 +39,6 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
 
-use alloc::boxed::Box;
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
@@ -50,17 +50,19 @@ use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
+use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
+use spin::Mutex;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
-use utils::port::Port32Bit;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
 pub fn init(boot_bridge: *mut RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
-    let phase0 = InitializationContext::<Phase0>::start(boot_bridge);
+    let mut phase0 = InitializationContext::<Phase0>::start(boot_bridge);
     logger::init(&phase0);
+    qemu_init(&mut phase0);
     let phase1 = memory::init(phase0);
     let mut phase2 = acpi::init(phase1);
     graphics::init(&mut phase2);
@@ -68,7 +70,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     let mut phase3 = smp::init(phase2);
     gdt::init_gdt(&mut phase3);
     interrupt::init(&mut phase3);
-    pit::init();
+    pit::init(&mut phase3);
     smp::init_aps(phase3);
     //driver::init(&boot_bridge);
 }
@@ -142,7 +144,7 @@ fn panic(info: &PanicInfo) -> ! {
                 .unwrap_or((0, "unknown", "unknown"));
             log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
             log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
-            if name == "start" {
+            if name == "start" || name == "ap_startup" {
                 UnwindReasonCode::END_OF_STACK
             } else {
                 UnwindReasonCode::NO_REASON
@@ -198,10 +200,21 @@ pub enum QemuExitCode {
     Failed = 0x11,
 }
 
+static QEMU_EXIT_PORT: OnceCell<Mutex<Port<Port32Bit, PortWrite>>> = OnceCell::uninit();
+
+fn qemu_init(ctx: &mut InitializationContext<Phase0>) {
+    QEMU_EXIT_PORT.init_once(|| {
+        ctx.context_mut()
+            .port_allocator
+            .allocate(0xf4)
+            .expect("FAILED TO ALLOCATE QEMU EXIT PORT")
+            .into()
+    });
+}
+
 pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     unsafe {
-        let port = Port32Bit::new(0xf4);
-        port.write(exit_code as u32);
+        QEMU_EXIT_PORT.get().unwrap().lock().write(exit_code as u32);
     }
 
     // Wait for qemu to exit

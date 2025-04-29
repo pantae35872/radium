@@ -4,10 +4,11 @@ use core::sync::atomic::Ordering;
 
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
-use crate::serial_println;
+use crate::port::Port;
+use crate::port::Port8Bit;
+use crate::port::PortReadWrite;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
-use crate::utils::port::Port8Bit;
 use alloc::boxed::Box;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -54,10 +55,14 @@ impl InterruptIndex {
     }
 }
 
-fn disable_pic() {
+fn disable_pic(ctx: &mut InitializationContext<Phase3>) {
+    let mut pic_1_data: Port<Port8Bit, PortReadWrite> =
+        ctx.alloc_port(0x21).expect("PIC Port is already taken");
+    let mut pic_2_data: Port<Port8Bit, PortReadWrite> =
+        ctx.alloc_port(0xA1).expect("PIC Port is already taken");
     unsafe {
-        Port8Bit::new(0x21).write(0xff);
-        Port8Bit::new(0xA1).write(0xff);
+        pic_1_data.write(0xff);
+        pic_2_data.write(0xff);
     }
 }
 
@@ -86,10 +91,11 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
             None,
         )
         .unwrap();
+    disable_pic(ctx);
+
     let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Phase3>, id| {
         let mut lapic = lapic.clone();
         log!(Info, "Initializing interrupts for CPU: {id}");
-        disable_pic();
         let idt = create_idt();
         idt.load();
         cpu.idt(idt);
