@@ -2,14 +2,14 @@ use core::arch::asm;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
+use crate::defer;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
-use crate::scheduler::Thread;
-use crate::scheduler::SPAWN_DRIVCALL;
+use crate::scheduler::DRIVCALL_SLEEP;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
@@ -106,7 +106,7 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
         cpu.idt(idt);
 
         lapic.enable();
-        lapic.start_timer(100_000, TimerDivide::Div16, TimerMode::Periodic);
+        lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
         lapic.enable_timer();
         cpu.lapic(lapic);
     };
@@ -187,10 +187,23 @@ where
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
+    if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
+        eoi(idx);
+        return;
+    }
+
+    let current_thread = Dispatcher::save(stack_frame);
     let mut should_schedule = false;
+
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
-            should_schedule = true;
+            let is_start = current_thread.is_start();
+            if !current_thread.is_bsp_thread() {
+                cpu_local()
+                    .local_scheduler()
+                    .push_thread(current_thread, is_start);
+                should_schedule = true;
+            }
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {
             TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -202,26 +215,23 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             log!(Warning, "Spurious Interrupt Detected");
         }
         idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
+            DRIVCALL_SLEEP => {
+                cpu_local()
+                    .local_scheduler()
+                    .sleep_thread(Dispatcher::save(stack_frame), stack_frame.rax as usize);
+                should_schedule = true;
+            }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
         idx => {
             log!(Error, "Unhandled external interrupts {}", idx);
+            return;
         }
-    }
-
-    if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
-        should_schedule = false;
     }
 
     if should_schedule {
-        let current_thread = Dispatcher::save(stack_frame);
-        if !current_thread.is_bsp_thread() {
-            let is_start = current_thread.is_start();
-            let sched_thread = cpu_local()
-                .local_scheduler()
-                .schedule(current_thread, is_start);
-            Dispatcher::dispatch(stack_frame, sched_thread);
-        }
+        let sched_thread = cpu_local().local_scheduler().schedule();
+        Dispatcher::dispatch(stack_frame, sched_thread);
     }
 
     eoi(idx);

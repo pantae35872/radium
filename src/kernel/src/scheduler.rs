@@ -1,35 +1,44 @@
 use core::{
+    arch::asm,
+    cmp::Reverse,
     error::Error,
     fmt::Display,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use alloc::{boxed::Box, collections::vec_deque::VecDeque, vec::Vec};
+use alloc::{
+    boxed::Box,
+    collections::{binary_heap::BinaryHeap, vec_deque::VecDeque},
+};
+use derivative::Derivative;
 use pager::{address::VirtAddr, registers::RFlagsFlags};
-use sentinel::log;
-use spin::Mutex;
 
 use crate::{
     hlt_loop,
     initialization_context::{InitializationContext, Phase3},
-    interrupt::FullInterruptStackFrame,
+    interrupt::{FullInterruptStackFrame, TIMER_COUNT},
     memory::stack_allocator::Stack,
     serial_println,
     smp::cpu_local,
+    PANIC_COUNT,
 };
 
-static GLOBAL_SCHEDULER: Mutex<GlobalScheduler> = Mutex::new(GlobalScheduler::new());
+pub const DRIVCALL_SPAWN: u64 = 1;
+pub const DRIVCALL_SLEEP: u64 = 2;
 
-pub const SPAWN_DRIVCALL: u64 = 1;
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SleepEntry {
+    wakeup_time: usize,
+    #[derivative(PartialEq = "ignore", PartialOrd = "ignore", Ord = "ignore")]
+    thread: Thread,
+}
 
 /// A scheduler that is specific to a cpu
 pub struct LocalScheduler {
     hlt_thread: Option<Thread>,
     rr_queue: VecDeque<Thread>,
-}
-
-struct GlobalScheduler {
-    io_queues: Vec<Thread>,
+    sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
 }
 
 #[derive(Debug)]
@@ -57,15 +66,8 @@ pub struct Thread {
     stack_segment: u64,
 }
 
-impl GlobalScheduler {
-    const fn new() -> Self {
-        Self {
-            io_queues: Vec::new(),
-        }
-    }
-}
-
 pub static THREAD_ID_COUNT: AtomicUsize = AtomicUsize::new(2);
+
 pub struct Dispatcher;
 
 extern "C" fn thread_trampoline<F>(f_ptr: *mut F)
@@ -86,15 +88,37 @@ impl LocalScheduler {
                     .alloc_stack(2)
                     .expect("Failed to allocate stack for hlt thread"),
             )),
+            sleep_queue: BinaryHeap::new(),
         }
     }
 
-    pub fn schedule(&mut self, thread: Thread, just_start: bool) -> Thread {
+    pub fn sleep_thread(&mut self, thread: Thread, amount_millis: usize) {
+        let sleep_entry = SleepEntry {
+            wakeup_time: TIMER_COUNT.load(Ordering::Relaxed) + amount_millis,
+            thread,
+        };
+
+        self.sleep_queue.push(Reverse(sleep_entry));
+    }
+
+    pub fn push_thread(&mut self, thread: Thread, just_start: bool) {
         if thread.is_halt_thread() {
             self.hlt_thread = Some(thread);
         } else if !just_start {
             self.rr_queue.push_back(thread);
         }
+    }
+
+    pub fn schedule(&mut self) -> Thread {
+        while let Some(sleep_thread) = self.sleep_queue.peek() {
+            if TIMER_COUNT.load(Ordering::Relaxed) >= sleep_thread.0.wakeup_time as usize {
+                self.rr_queue
+                    .push_back(self.sleep_queue.pop().unwrap().0.thread);
+            } else {
+                break;
+            }
+        }
+
         self.rr_queue
             .pop_front()
             .unwrap_or_else(|| self.hlt_thread.take().unwrap())
@@ -114,6 +138,16 @@ impl LocalScheduler {
 #[non_exhaustive]
 pub enum DispatcherError {
     FailedToAllocateStack { size: usize },
+}
+
+pub fn sleep(in_millis: usize) {
+    if cpu_local().current_thread_id() == 0 {
+        panic!("Trying to use smart sleep, while in bsp thread");
+    }
+
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_SLEEP, in("rax") in_millis); // Do a driv call
+    }
 }
 
 impl Display for DispatcherError {
@@ -209,7 +243,8 @@ impl Dispatcher {
     }
 
     pub fn dispatch(interrupt_stack_frame: &mut FullInterruptStackFrame, thread: Thread) {
-        cpu_local().set_tid(thread.id);
+        // SAFETY: This is safe because thread can only be created in this module
+        unsafe { cpu_local().set_tid(thread.id) };
         interrupt_stack_frame.r15 = thread.r15;
         interrupt_stack_frame.r14 = thread.r14;
         interrupt_stack_frame.r13 = thread.r13;

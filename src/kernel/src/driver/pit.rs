@@ -65,12 +65,6 @@ impl ProgrammableIntervalTimer {
     /// Default to rate generator
     fn init(&mut self) {
         self.set_freq(1000);
-        //let cmd = CommandBuilder::new()
-        //    .operating_mode(OperatingMode::RateGenerator)
-        //    .access_mode(AccessMode::LowHiByte)
-        //    .channel(Channel::Channel0)
-        //    .build();
-        //unsafe { self.command.write(cmd) };
     }
 
     /// Use rate generator to generate the specify frequency

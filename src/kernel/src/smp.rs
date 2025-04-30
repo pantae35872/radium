@@ -341,7 +341,8 @@ impl CpuLocal {
         self.code_seg
     }
 
-    pub fn set_tid(&mut self, id: usize) {
+    /// Setting the tid is unsafe, and can cause undefined behaviour
+    pub unsafe fn set_tid(&mut self, id: usize) {
         self.thread_id = id;
     }
 

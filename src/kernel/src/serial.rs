@@ -19,7 +19,9 @@ pub fn _print(args: ::core::fmt::Arguments) {
         SERIAL1
             .lock()
             .write_fmt(args)
-            .expect("Printing to serial failed");
+            .expect("Printing to serial failed"); // FIXME: This could be a problem, if the other
+                                                  // threads are on the same core this will
+                                                  // deadlock
     });
 }
 

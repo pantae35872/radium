@@ -28,6 +28,11 @@ kernel_proc = { path = "../kernel_proc" }
 pager = { path = "../pager" }
 sentinel = { path = "../sentinel" }
 
+[dependencies.derivative]
+version = "2.2.0"
+default-features = false
+features = ["use_core"]
+
 [dependencies.bakery]
 path = "../bakery"
 default-features = false

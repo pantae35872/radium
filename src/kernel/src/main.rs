@@ -12,6 +12,7 @@ extern crate spin;
 
 use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
+use radium::scheduler::sleep;
 use radium::smp::cpu_local;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
 
@@ -24,7 +25,7 @@ use radium::{hlt_loop, print, println, serial_print, serial_println};
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     cpu_local().local_scheduler().spawn(|| kmain_thread());
-    cpu_local().set_tid(usize::MAX); // Set tid to usize::MAX to start scheduling
+    unsafe { cpu_local().set_tid(usize::MAX) }; // Set tid to usize::MAX to start scheduling
 
     hlt_loop();
 }
@@ -32,19 +33,21 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 fn kmain_thread() {
     println!("Hello, world!!!, from kmain thread");
     cpu_local().local_scheduler().spawn(|| {
-        for i in 0..128 {
+        for i in 0..64 {
             println!(
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
+            sleep(100);
         }
     });
     cpu_local().local_scheduler().spawn(|| {
-        for i in 0..128 {
+        for i in 0..64 {
             println!(
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
+            sleep(200);
         }
     });
 
