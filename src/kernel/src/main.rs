@@ -38,7 +38,7 @@ fn kmain_thread() {
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
-            sleep(100);
+            sleep(1000);
         }
     });
     cpu_local().local_scheduler().spawn(|| {
@@ -47,7 +47,7 @@ fn kmain_thread() {
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
-            sleep(200);
+            sleep(2000);
         }
     });
 

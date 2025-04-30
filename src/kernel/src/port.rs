@@ -1,6 +1,11 @@
-use core::{fmt::Debug, marker::PhantomData, ops::BitOr};
+use core::{
+    fmt::{Debug, LowerHex},
+    marker::PhantomData,
+    ops::BitOr,
+};
 
 use bit_field::BitField;
+use sentinel::log;
 
 use crate::initialization_context::{select_context, Phase0, Phase1, Phase2, Phase3};
 
@@ -39,7 +44,7 @@ macro_rules! port_size_impl {
                 let result: $type;
                 unsafe {
                     core::arch::asm!(
-                        concat!("out dx, ", $reg),
+                        concat!("in ", $reg, ", dx"),
                         in("dx") address,
                         out($reg) result,
                     )
@@ -49,7 +54,7 @@ macro_rules! port_size_impl {
 
             unsafe fn write(address: u16, value: Self::Type) { unsafe {
                  core::arch::asm!(
-                     concat!("in ", $reg, ", dx"),
+                     concat!("out ", "dx, ", $reg),
                      in("dx") address,
                      in($reg) value,
                  )
@@ -123,7 +128,10 @@ impl<S: PortSize, P: PortPermission> Port<S, P> {
 }
 
 impl<S: PortSize> Port<S, PortWrite> {
-    pub unsafe fn write(&mut self, value: S::Type) {
+    pub unsafe fn write(&mut self, value: S::Type)
+    where
+        S::Type: LowerHex,
+    {
         unsafe { S::write(self.port_address, value) }
     }
 }
@@ -139,7 +147,10 @@ impl<S: PortSize> Port<S, PortReadWrite> {
         unsafe { S::read(self.port_address) }
     }
 
-    pub unsafe fn write(&mut self, value: S::Type) {
+    pub unsafe fn write(&mut self, value: S::Type)
+    where
+        S::Type: LowerHex,
+    {
         unsafe { S::write(self.port_address, value) }
     }
 }

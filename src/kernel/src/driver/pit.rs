@@ -70,7 +70,7 @@ impl ProgrammableIntervalTimer {
     /// Use rate generator to generate the specify frequency
     fn set_freq(&mut self, freq: usize) {
         let cmd = CommandBuilder::new()
-            .operating_mode(OperatingMode::RateGenerator)
+            .operating_mode(OperatingMode::SquareWaveGenerator)
             .access_mode(AccessMode::LowHiByte)
             .channel(Channel::Channel0)
             .build();
@@ -85,7 +85,9 @@ impl ProgrammableIntervalTimer {
 
 // This magical formula is taken from https://www.reddit.com/r/osdev/comments/7gorff/pit_and_frequency/?show=original
 fn calculate_pit_divsor(freq: usize) -> usize {
-    (7159090 + 6 / 2) / (6 * freq)
+    const PIT_BASE_FREQUENCY: usize = 1_193_182;
+    let divisor = PIT_BASE_FREQUENCY / freq;
+    divisor.clamp(1, 0xFFFF)
 }
 
 impl CommandBuilder {
