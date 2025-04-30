@@ -13,6 +13,7 @@ use pager::{
         table::{DirectLevel4, Table},
         ActivePageTable,
     },
+    registers::SegmentSelector,
     EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 use pager::{
@@ -25,9 +26,10 @@ use spin::Mutex;
 use crate::{
     hlt_loop,
     initialization_context::{InitializationContext, Phase2, Phase3},
-    interrupt::{apic::LocalApic, idt::Idt, TIMER_COUNT},
+    interrupt::{self, apic::LocalApic, idt::Idt, TIMER_COUNT},
     log,
     memory::{self},
+    scheduler::LocalScheduler,
 };
 
 pub const MAX_CPU: usize = 64;
@@ -121,7 +123,7 @@ impl ApInitializer {
         let mut ctx = ctx.lock();
         let stack = ctx
             .stack_allocator()
-            .alloc_stack(8)
+            .alloc_stack(256)
             .expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
@@ -195,6 +197,10 @@ pub struct CpuLocal {
     cpu_id: usize,
     apic_id: usize,
     lapic: LocalApic,
+    code_seg: SegmentSelector,
+    thread_id: usize,
+    local_scheduler: LocalScheduler,
+    ctx: Arc<Mutex<InitializationContext<Phase3>>>,
     idt: &'static Idt,
     gdt: &'static Gdt,
 }
@@ -203,6 +209,9 @@ pub struct CpuLocalBuilder {
     lapic: Option<LocalApic>,
     gdt: Option<&'static Gdt>,
     idt: Option<&'static Idt>,
+    code_seg: Option<SegmentSelector>,
+    initialization_contex: Option<Arc<Mutex<InitializationContext<Phase3>>>>,
+    local_scheduler: Option<LocalScheduler>,
 }
 
 impl CpuLocalBuilder {
@@ -211,7 +220,25 @@ impl CpuLocalBuilder {
             lapic: None,
             idt: None,
             gdt: None,
+            code_seg: None,
+            initialization_contex: None,
+            local_scheduler: None,
         }
+    }
+
+    pub fn ctx(&mut self, ctx: Arc<Mutex<InitializationContext<Phase3>>>) -> &mut Self {
+        self.initialization_contex = Some(ctx);
+        self
+    }
+
+    pub fn scheduler(&mut self, scheduler: LocalScheduler) -> &mut Self {
+        self.local_scheduler = Some(scheduler);
+        self
+    }
+
+    pub fn code_seg(&mut self, code_seg: SegmentSelector) -> &mut Self {
+        self.code_seg = Some(code_seg);
+        self
     }
 
     pub fn lapic(&mut self, apic: LocalApic) -> &mut Self {
@@ -236,6 +263,10 @@ impl CpuLocalBuilder {
                 cpu_id: apic_id_to_cpu_id(lapic.id()),
                 idt: self.idt?,
                 apic_id: lapic.id(),
+                code_seg: self.code_seg?,
+                ctx: self.initialization_contex?,
+                local_scheduler: self.local_scheduler?,
+                thread_id: 0,
                 lapic,
                 gdt: self.gdt?,
             }
@@ -277,6 +308,9 @@ impl LocalInitializer {
 
         init_local(cpu_local_builder, id);
 
+        // We enable the interrupts after we're sure that the local has been initialized
+        interrupt::enable();
+
         if BSP_CPU_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
             log!(Debug, "initialization bsp, bsp processor id: {id}");
             while let Some(f) = self.after_bsps.pop() {
@@ -291,8 +325,28 @@ impl CpuLocal {
         self.apic_id
     }
 
+    pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
+        &mut self.local_scheduler
+    }
+
+    pub fn ctx(&mut self) -> &Mutex<InitializationContext<Phase3>> {
+        &self.ctx
+    }
+
     pub fn cpu_id(&self) -> usize {
         self.cpu_id
+    }
+
+    pub fn code_seg(&self) -> SegmentSelector {
+        self.code_seg
+    }
+
+    pub fn set_tid(&mut self, id: usize) {
+        self.thread_id = id;
+    }
+
+    pub fn current_thread_id(&self) -> usize {
+        self.thread_id
     }
 
     pub fn lapic(&mut self) -> &mut LocalApic {
@@ -391,10 +445,15 @@ pub fn init(ctx: InitializationContext<Phase2>) -> InitializationContext<Phase3>
 }
 
 pub fn init_aps(mut ctx: InitializationContext<Phase3>) {
-    ctx.initialize_current();
-
     let ap_initializer = ApInitializer::new(&mut ctx);
     let ctx = Arc::new(Mutex::new(ctx));
+    let ctx_cloned = Arc::clone(&ctx);
+    ctx.lock().local_initializer(|i| {
+        i.register(move |builder, _ctx, _id| {
+            builder.ctx(ctx_cloned.clone());
+        })
+    });
+    ctx.lock().initialize_current();
     let processors = ctx.lock().context().processors().clone();
     processors.iter().copied().for_each(|apic_id| {
         if apic_id == cpu_local().apic_id() {

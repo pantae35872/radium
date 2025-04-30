@@ -1,5 +1,5 @@
 use core::{
-    fmt,
+    fmt::{self, LowerHex},
     marker::PhantomData,
     ops::{Index, IndexMut},
 };
@@ -193,18 +193,18 @@ pub struct Idt {
 
 impl fmt::Debug for InterruptStackFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        struct Hex(u64);
-        impl fmt::Debug for Hex {
+        struct Hex<T: LowerHex>(T);
+        impl<T: LowerHex> fmt::Debug for Hex<T> {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "{:#x}", self.0)
             }
         }
 
         let mut s = f.debug_struct("InterruptStackFrame");
-        s.field("instruction_pointer", &self.instruction_pointer);
+        s.field("instruction_pointer", &Hex(self.instruction_pointer));
         s.field("code_segment", &self.code_segment);
         s.field("cpu_flags", &Hex(self.cpu_flags));
-        s.field("stack_pointer", &self.stack_pointer);
+        s.field("stack_pointer", &Hex(self.stack_pointer));
         s.field("stack_segment", &self.stack_segment);
         s.finish()
     }

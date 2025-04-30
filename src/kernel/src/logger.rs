@@ -96,8 +96,8 @@ impl MainLogger {
 }
 
 impl LoggerBackend for MainLogger {
-    fn log(&self, _module_path: &'static str, level: LogLevel, formatter: Arguments) {
-        self.write(level, formatter);
+    fn log(&self, module_path: &'static str, level: LogLevel, formatter: Arguments) {
+        self.write(level, format_args!("{module_path}: {}", formatter));
     }
 }
 

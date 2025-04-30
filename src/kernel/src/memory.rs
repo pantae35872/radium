@@ -24,7 +24,7 @@ pub mod paging;
 pub mod stack_allocator;
 
 pub const MAX_ALIGN: usize = 8192;
-pub const STACK_ALLOC_SIZE: u64 = 4096;
+pub const STACK_ALLOC_SIZE: u64 = 16384;
 
 /// Initialize the memory
 ///

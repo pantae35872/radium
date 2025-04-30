@@ -11,7 +11,7 @@ pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
         |cpu: &mut CpuLocalBuilder, ctx: &mut InitializationContext<Phase3>, id| {
             let double_fault = ctx
                 .stack_allocator()
-                .alloc_stack(1)
+                .alloc_stack(256)
                 .expect("Failed to allocator stack for double fault handler");
             log!(Trace, "Initializing gdt for core: {id}");
             log!(
@@ -30,7 +30,7 @@ pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
                 CS::set(code_selector);
                 load_tss(tss_selector);
             }
-            cpu.gdt(gdt);
+            cpu.gdt(gdt).code_seg(code_selector);
         };
     ctx.local_initializer(|initializer| initializer.register(gdt_initializer));
 }

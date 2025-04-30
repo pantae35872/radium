@@ -10,6 +10,7 @@ use spin::mutex::Mutex;
 
 use crate::{
     initialization_context::{InitializationContext, Phase2},
+    interrupt,
     memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
 use sentinel::log;
@@ -145,43 +146,44 @@ impl Graphic {
 
     /// This function is only intended to be used by this module
     unsafe fn memmove_sse(mut dest: *mut u8, mut src: *const u8, count: usize) {
-        let mut i = 0;
-
-        while count - i >= 128 {
-            unsafe {
-                asm!(
-                    "movdqu xmm0, [{src}]",
-                    "movdqu xmm1, [{src} + 16]",
-                    "movdqu xmm2, [{src} + 32]",
-                    "movdqu xmm3, [{src} + 48]",
-                    "movdqu xmm4, [{src} + 64]",
-                    "movdqu xmm5, [{src} + 80]",
-                    "movdqu xmm6, [{src} + 96]",
-                    "movdqu xmm7, [{src} + 112]",
-                    "movdqu [{dst}], xmm0",
-                    "movdqu [{dst} + 16], xmm1",
-                    "movdqu [{dst} + 32], xmm2",
-                    "movdqu [{dst} + 48], xmm3",
-                    "movdqu [{dst} + 64], xmm4",
-                    "movdqu [{dst} + 80], xmm5",
-                    "movdqu [{dst} + 96], xmm6",
-                    "movdqu [{dst} + 112], xmm7",
-                    src = in(reg) src,
-                    dst = in(reg) dest,
-                    options(nostack, preserves_flags),
-                );
-                src = src.add(128);
-                dest = dest.add(128);
+        interrupt::without_interrupts(|| {
+            let mut i = 0;
+            while count - i >= 128 {
+                unsafe {
+                    asm!(
+                        "movdqu xmm0, [{src}]",
+                        "movdqu xmm1, [{src} + 16]",
+                        "movdqu xmm2, [{src} + 32]",
+                        "movdqu xmm3, [{src} + 48]",
+                        "movdqu xmm4, [{src} + 64]",
+                        "movdqu xmm5, [{src} + 80]",
+                        "movdqu xmm6, [{src} + 96]",
+                        "movdqu xmm7, [{src} + 112]",
+                        "movdqu [{dst}], xmm0",
+                        "movdqu [{dst} + 16], xmm1",
+                        "movdqu [{dst} + 32], xmm2",
+                        "movdqu [{dst} + 48], xmm3",
+                        "movdqu [{dst} + 64], xmm4",
+                        "movdqu [{dst} + 80], xmm5",
+                        "movdqu [{dst} + 96], xmm6",
+                        "movdqu [{dst} + 112], xmm7",
+                        src = in(reg) src,
+                        dst = in(reg) dest,
+                        options(nostack, preserves_flags),
+                    );
+                    src = src.add(128);
+                    dest = dest.add(128);
+                }
+                i += 128;
             }
-            i += 128;
-        }
 
-        let remaining = count - i;
-        if remaining > 0 {
-            unsafe {
-                core::ptr::copy(src.add(i), dest.add(i), remaining);
+            let remaining = count - i;
+            if remaining > 0 {
+                unsafe {
+                    core::ptr::copy(src.add(i), dest.add(i), remaining);
+                }
             }
-        }
+        })
     }
 
     pub fn scroll_up(&mut self, scroll_amount: usize) {

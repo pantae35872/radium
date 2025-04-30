@@ -1,6 +1,10 @@
 #![no_std]
 
-use core::{cell::OnceCell, fmt::Debug};
+use core::{
+    cell::OnceCell,
+    fmt::Debug,
+    sync::atomic::{AtomicPtr, Ordering},
+};
 
 use bakery::DwarfBaker;
 use c_enum::c_enum;
@@ -112,19 +116,19 @@ where
     boot_bridge: OnceCell<*mut RawBootBridge>,
 }
 
-pub struct BootBridge(*mut RawBootBridge);
+pub struct BootBridge(AtomicPtr<RawBootBridge>);
 
 impl BootBridge {
     pub fn new(ptr: *mut RawBootBridge) -> Self {
-        BootBridge(ptr)
+        BootBridge(ptr.into())
     }
 
     pub(crate) fn deref(&self) -> &'static RawBootBridge {
-        unsafe { &*self.0 }
+        unsafe { &*self.0.load(Ordering::SeqCst) }
     }
 
     pub(crate) fn deref_mut(&mut self) -> &'static mut RawBootBridge {
-        unsafe { &mut *self.0 }
+        unsafe { &mut *self.0.load(Ordering::SeqCst) }
     }
 
     pub fn rsdp(&self) -> PhysAddr {
@@ -172,7 +176,7 @@ impl BootBridge {
     }
 
     pub fn ptr(&self) -> usize {
-        self.0 as usize
+        self.0.load(Ordering::SeqCst) as usize
     }
 }
 
@@ -196,7 +200,7 @@ where
 
 impl VirtuallyReplaceable for BootBridge {
     fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        let current = self.0;
+        let current = self.0.load(Ordering::SeqCst);
         let new = unsafe {
             mapper.map(
                 PhysAddr::new(current as u64),
@@ -217,7 +221,7 @@ impl IdentityMappable for BootBridge {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         unsafe {
             mapper.identity_map_by_size(
-                PhysAddr::new(self.0 as u64).into(),
+                PhysAddr::new(self.0.load(Ordering::SeqCst) as u64).into(),
                 size_of::<RawBootBridge>(),
                 EntryFlags::WRITABLE,
             );
@@ -426,7 +430,7 @@ impl Debug for BootBridge {
         write!(
             f,
             "BootBridge {{ ptr: {:#x}, framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {} }}",
-            self.0 as u64,
+            self.0.load(Ordering::Relaxed) as u64,
             boot_bridge.framebuffer_data,
             boot_bridge.font_data,
             boot_bridge.kernel_elf,

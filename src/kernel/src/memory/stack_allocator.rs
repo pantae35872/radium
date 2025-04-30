@@ -5,6 +5,8 @@ use pager::{
     EntryFlags, IdentityMappable, PAGE_SIZE,
 };
 
+use crate::serial_println;
+
 use super::WithTable;
 
 pub struct StackAllocator {
@@ -80,17 +82,6 @@ impl<A: FrameAllocator> WithTable<'_, StackAllocator, A> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
         self.with_table
             .alloc_stack(self.table, self.allocator, size_in_pages)
-    }
-}
-
-impl IdentityMappable for StackAllocator {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.original_range().for_each(|e| unsafe {
-            mapper.identity_map(
-                Frame::containing_address(PhysAddr::new(e.start_address().as_u64())),
-                EntryFlags::WRITABLE,
-            );
-        });
     }
 }
 

@@ -7,8 +7,13 @@ use crate::initialization_context::Phase3;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
+use crate::scheduler::Dispatcher;
+use crate::scheduler::Thread;
+use crate::scheduler::SPAWN_DRIVCALL;
+use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
+use crate::PANIC_COUNT;
 use alloc::boxed::Box;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -99,10 +104,9 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
         let idt = create_idt();
         idt.load();
         cpu.idt(idt);
-        enable();
 
         lapic.enable();
-        lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
+        lapic.start_timer(100_000, TimerDivide::Div16, TimerMode::Periodic);
         lapic.enable_timer();
         cpu.lapic(lapic);
     };
@@ -128,7 +132,7 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
 
 #[derive(Debug)]
 #[repr(C)]
-struct FullInterruptStackFrame {
+pub struct FullInterruptStackFrame {
     pub r15: u64,
     pub r14: u64,
     pub r13: u64,
@@ -183,10 +187,10 @@ where
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
+    let mut should_schedule = false;
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
-            //serial_println!("APIC timer on cpu: {}", cpu_local().cpu_id());
-            //serial_println!("Flags: {:?}", stack_frame.cpu_flags);
+            should_schedule = true;
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {
             TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
@@ -197,21 +201,38 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
         idx if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() => {
             log!(Warning, "Spurious Interrupt Detected");
         }
-        idx if idx == InterruptIndex::DriverCall.as_u8() => todo!(),
+        idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
+            number => log!(Error, "Unknown Driver call called, {number}"),
+        },
         idx => {
             log!(Error, "Unhandled external interrupts {}", idx);
         }
     }
 
-    if idx != InterruptIndex::DriverCall.as_u8() {
-        eoi();
+    if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
+        should_schedule = false;
     }
+
+    if should_schedule {
+        let current_thread = Dispatcher::save(stack_frame);
+        if !current_thread.is_bsp_thread() {
+            let is_start = current_thread.is_start();
+            let sched_thread = cpu_local()
+                .local_scheduler()
+                .schedule(current_thread, is_start);
+            Dispatcher::dispatch(stack_frame, sched_thread);
+        }
+    }
+
+    eoi(idx);
 }
 
 generate_interrupt_handlers!();
 
-fn eoi() {
-    cpu_local().lapic().eoi();
+fn eoi(idx: u8) {
+    if idx != InterruptIndex::DriverCall.as_u8() {
+        cpu_local().lapic().eoi();
+    }
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(

@@ -30,8 +30,9 @@ from_long:
 section .text
 bits 64
 boot_start:
+  ; disable interrupts just in case the uefi didn't disable it
+  cli
   ; setup the stack
-
   mov rsp, stack_top
   mov rbp, stack_bottom
 

@@ -52,6 +52,7 @@ use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
+use smp::cpu_local;
 use spin::Mutex;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
@@ -70,9 +71,9 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     let mut phase3 = smp::init(phase2);
     gdt::init_gdt(&mut phase3);
     interrupt::init(&mut phase3);
+    scheduler::init(&mut phase3);
     pit::init(&mut phase3);
     smp::init_aps(phase3);
-    //driver::init(&boot_bridge);
 }
 
 #[macro_export]
@@ -128,6 +129,7 @@ fn panic(info: &PanicInfo) -> ! {
         }
         _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
     };
+    log!(Critical, "PANIC on cpu: {}", cpu_local().cpu_id());
     log!(Critical, "{}", info);
 
     log!(Info, "Backtrace:");
