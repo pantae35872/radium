@@ -329,7 +329,7 @@ impl CpuLocal {
         &mut self.local_scheduler
     }
 
-    pub fn ctx(&mut self) -> &Mutex<InitializationContext<Phase3>> {
+    pub fn ctx(&self) -> &Mutex<InitializationContext<Phase3>> {
         &self.ctx
     }
 

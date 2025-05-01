@@ -2,11 +2,13 @@
 
 use core::{
     cell::OnceCell,
+    ffi::c_void,
     fmt::Debug,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
 use bakery::DwarfBaker;
+use bitflags::bitflags;
 use c_enum::c_enum;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
@@ -34,7 +36,57 @@ pub struct MemoryDescriptor {
     pub phys_start: PhysAddr,
     pub virt_start: VirtAddr,
     pub page_count: u64,
-    pub att: u64,
+    pub att: EfiMemoryAttribute,
+}
+
+impl From<EfiMemoryAttribute> for EntryFlags {
+    fn from(attr: EfiMemoryAttribute) -> Self {
+        let mut flags = EntryFlags::PRESENT;
+
+        // Executable vs non-executable
+        if attr.contains(EfiMemoryAttribute::XP) {
+            flags |= EntryFlags::NO_EXECUTE;
+        }
+
+        // Writable: only if not marked write-protected
+        if !attr.contains(EfiMemoryAttribute::WP) {
+            flags |= EntryFlags::WRITABLE;
+        }
+
+        // Caching behavior
+        if attr.contains(EfiMemoryAttribute::UC) || attr.contains(EfiMemoryAttribute::UCE) {
+            flags |= EntryFlags::NO_CACHE;
+        } else if attr.contains(EfiMemoryAttribute::WT) {
+            flags |= EntryFlags::WRITE_THROUGH;
+        }
+
+        flags
+    }
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[repr(transparent)]
+    pub struct EfiMemoryAttribute: u64 {
+        // Cacheability attributes
+        const UC        = 0x0000000000000001; // Uncacheable
+        const WC        = 0x0000000000000002; // Write Combining
+        const WT        = 0x0000000000000004; // Write Through
+        const WB        = 0x0000000000000008; // Write Back
+        const UCE       = 0x0000000000000010; // Uncacheable, exported (e.g., MMIO)
+
+        // Memory protection
+        const WP        = 0x0000000000001000; // Write-protect
+        const RP        = 0x0000000000002000; // Read-protect
+        const XP        = 0x0000000000004000; // Execute-protect
+
+        // Runtime services flag
+        const RUNTIME   = 0x8000000000000000; // Must be mapped after ExitBootServices
+
+        // Others (used in some firmwares)
+        const MORE_RELIABLE = 0x0000000000010000; // Higher reliability memory (ECC)
+        const RO            = 0x1000000000000000; // Read-only memory (UEFI 2.10+)
+    }
 }
 
 c_enum! {
@@ -57,6 +109,12 @@ pub enum MemoryType: u32 {
 }
 }
 
+#[derive(Debug)]
+pub struct MemoryMapIterMut<'map, 'buf> {
+    memory_map: &'map mut MemoryMap<'buf>,
+    index: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct MemoryMapIter<'buf> {
     memory_map: &'buf MemoryMap<'buf>,
@@ -64,10 +122,11 @@ pub struct MemoryMapIter<'buf> {
 }
 
 /// A reimplementation of the uefi memory map
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MemoryMap<'a> {
     memory_map: DataBuffer<'a>,
     entry_size: usize,
+    entry_version: usize,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -105,6 +164,7 @@ pub struct RawBootBridge {
     rsdp: PhysAddr,
     kernel_base: PhysAddr,
     early_alloc: LinearAllocator,
+    runtime_service_ptr: PhysAddr,
 }
 
 pub struct BootBridgeBuilder<A>
@@ -173,6 +233,10 @@ impl BootBridge {
 
     pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
         self.deref_mut().dwarf_data.take().unwrap()
+    }
+
+    pub fn uefi_runtime_ptr(&self) -> PhysAddr {
+        self.deref().runtime_service_ptr
     }
 
     pub fn ptr(&self) -> usize {
@@ -324,9 +388,14 @@ where
         self
     }
 
-    pub fn memory_map(&mut self, memory_map: &'static [u8], entry_size: usize) -> &mut Self {
+    pub fn memory_map(
+        &mut self,
+        memory_map: &'static [u8],
+        entry_size: usize,
+        entry_version: usize,
+    ) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.memory_map = MemoryMap::new(memory_map, entry_size);
+        boot_bridge.memory_map = MemoryMap::new(memory_map, entry_size, entry_version);
         self
     }
 
@@ -339,6 +408,12 @@ where
     pub fn rsdp(&mut self, rsdp: u64) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.rsdp = PhysAddr::new(rsdp);
+        self
+    }
+
+    pub fn runtime_service(&mut self, runtime_service_ptr: u64) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.runtime_service_ptr = PhysAddr::new(runtime_service_ptr);
         self
     }
 
@@ -365,11 +440,22 @@ impl RawData {
 }
 
 impl<'a> MemoryMap<'a> {
-    pub fn new(memory_map: &'static [u8], entry_size: usize) -> Self {
+    pub fn new(memory_map: &'static [u8], entry_size: usize, entry_version: usize) -> Self {
         MemoryMap {
             memory_map: DataBuffer::new(memory_map),
             entry_size,
+            entry_version,
         }
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&'a mut MemoryDescriptor> {
+        if index >= self.memory_map.len() / self.entry_size {
+            return None;
+        }
+        let desc = unsafe {
+            &mut *(self.memory_map.as_ptr().add(index * self.entry_size) as *mut MemoryDescriptor)
+        };
+        Some(desc)
     }
 
     pub fn get(&self, index: usize) -> Option<&'a MemoryDescriptor> {
@@ -382,8 +468,31 @@ impl<'a> MemoryMap<'a> {
         Some(desc)
     }
 
+    pub fn entry_version(&self) -> usize {
+        self.entry_version
+    }
+
+    pub fn entry_size(&self) -> usize {
+        self.entry_size
+    }
+
+    pub fn as_ptr(&self) -> *const MemoryMap<'a> {
+        self.memory_map.as_ptr().cast()
+    }
+
+    pub fn size(&self) -> usize {
+        self.memory_map.len()
+    }
+
     pub fn entries(&'a self) -> MemoryMapIter<'a> {
         MemoryMapIter {
+            memory_map: self,
+            index: 0,
+        }
+    }
+
+    pub fn entries_mut<'b>(&'b mut self) -> MemoryMapIterMut<'b, 'a> {
+        MemoryMapIterMut {
             memory_map: self,
             index: 0,
         }
@@ -420,6 +529,17 @@ impl<'a> Iterator for MemoryMapIter<'a> {
 
         self.index += 1;
 
+        Some(desc)
+    }
+}
+
+impl<'b> Iterator for MemoryMapIterMut<'_, 'b> {
+    type Item = &'b mut MemoryDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let desc = self.memory_map.get_mut(self.index)?;
+
+        self.index += 1;
         Some(desc)
     }
 }

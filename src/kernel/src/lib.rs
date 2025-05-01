@@ -42,6 +42,7 @@ use core::{ffi::c_void, sync::atomic::AtomicBool};
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
+use driver::uefi_runtime::{self, uefi_runtime};
 use driver::{
     acpi::{self},
     pit,
@@ -74,6 +75,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     scheduler::init(&mut phase3);
     pit::init(&mut phase3);
     smp::init_aps(phase3);
+    uefi_runtime::init(&mut cpu_local().ctx().lock());
 }
 
 #[macro_export]

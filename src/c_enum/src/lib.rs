@@ -35,7 +35,7 @@ macro_rules! c_enum {
                 fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                     let value = match self {
                         $(
-                            $name($expr) => stringify!($element_name),
+                            $name(a) if *a == $expr => stringify!($element_name),
                         )*
                         _ => unreachable!()
                     };

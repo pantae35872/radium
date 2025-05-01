@@ -106,7 +106,7 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
         cpu.idt(idt);
 
         lapic.enable();
-        lapic.start_timer(1_000_000, TimerDivide::Div128, TimerMode::Periodic);
+        lapic.start_timer(1_000_000, TimerDivide::Div16, TimerMode::Periodic);
         lapic.enable_timer();
         cpu.lapic(lapic);
     };

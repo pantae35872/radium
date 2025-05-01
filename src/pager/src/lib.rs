@@ -6,8 +6,11 @@
 use core::{fmt::Display, ops::Deref};
 
 use address::{Frame, Page, PhysAddr, VirtAddr};
+use alloc::vec::Vec;
 use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
+
+extern crate alloc;
 
 pub mod address;
 pub mod allocator;
@@ -116,6 +119,8 @@ pub trait Mapper {
     );
 
     unsafe fn unmap_addr(&mut self, page: Page) -> Frame;
+
+    unsafe fn unmap_addr_by_size(&mut self, page: Page, size: usize);
 
     unsafe fn identity_map_object<O: IdentityMappable>(&mut self, obj: &O)
     where
@@ -242,6 +247,14 @@ impl Display for DataBuffer<'_> {
         let buf_end = PhysAddr::new(buf_start.as_u64() + self.buffer.len() as u64 - 1);
 
         write!(f, "[{:#x}-{:#x}]", buf_start, buf_end)
+    }
+}
+
+impl Clone for DataBuffer<'_> {
+    fn clone(&self) -> Self {
+        Self {
+            buffer: Vec::leak(self.buffer.to_vec()),
+        }
     }
 }
 

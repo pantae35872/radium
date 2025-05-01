@@ -80,9 +80,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
 
-    let (_system_table, mut memory_map) =
+    let (system_table, mut memory_map) =
         system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
+
     memory_map.sort();
+    boot_bridge.runtime_service(system_table.as_ptr() as u64);
 
     let entries = memory_map.entries();
     let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
@@ -93,7 +95,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         unsafe { ActivePageTable::new_custom(table as *mut Table<DirectLevel4>) };
     kernel_table.identity_map_object(&boot_bridge, &mut allocator);
     kernel_table.identity_map_object(
-        &bootbridge::MemoryMap::new(memory_map_bytes, entry_size),
+        &bootbridge::MemoryMap::new(
+            memory_map_bytes,
+            entry_size,
+            MemoryDescriptor::VERSION as usize,
+        ),
         &mut allocator,
     );
 
@@ -119,7 +125,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
         };
     }
 
-    boot_bridge.memory_map(memory_map_bytes, entry_size);
+    boot_bridge.memory_map(
+        memory_map_bytes,
+        entry_size,
+        MemoryDescriptor::VERSION as usize,
+    );
 
     let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
 

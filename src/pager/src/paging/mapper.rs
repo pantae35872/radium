@@ -334,17 +334,17 @@ where
     /// Unmap the ranges from the page table
     ///
     /// The start_page -> end_page (inclusive) must be contigous
-    /// start_page != end_page
-    /// end_page > start_page
+    /// end_page >= start_page
     ///
     /// # Safety
     ///
     /// The caller must ensure that the provided page was mapped by [`Self::map_to_range`] or [`Self::identity_map_range`]
     pub unsafe fn unmap_addr_ranges(&mut self, start_page: Page, end_page: Page) -> FrameIter {
-        assert!(start_page < end_page);
+        assert!(start_page <= end_page);
         let mut iter = Page::range_inclusive(start_page, end_page)
             .map(|page| unsafe { self.unmap_addr(page) });
-        Frame::range_inclusive(iter.next().expect(""), iter.last().expect(""))
+        let start = iter.next().expect("");
+        Frame::range_inclusive(start, iter.last().unwrap_or(start))
     }
 
     /// Unmap the ranges from the page table
@@ -435,6 +435,13 @@ where
 
     unsafe fn unmap_addr(&mut self, page: Page) -> Frame {
         unsafe { self.mapper.unmap_addr(page) }
+    }
+
+    unsafe fn unmap_addr_by_size(&mut self, page: Page, size: usize) {
+        unsafe {
+            self.mapper
+                .unmap_addr_ranges(page, (page.start_address() + size - 1).into())
+        };
     }
 
     unsafe fn map_to_range(

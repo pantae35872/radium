@@ -11,10 +11,12 @@ extern crate radium;
 extern crate spin;
 
 use bootbridge::RawBootBridge;
+use radium::driver::uefi_runtime::{uefi_runtime, EfiStatus, ResetType};
 use radium::logger::LOGGER;
 use radium::scheduler::sleep;
 use radium::smp::cpu_local;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
+use sentinel::log;
 
 // TODO: Implements acpi to get io apic
 // TODO: Use ahci interrupt (needs io apic) with waker
@@ -32,26 +34,32 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 
 fn kmain_thread() {
     println!("Hello, world!!!, from kmain thread");
+    log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
     cpu_local().local_scheduler().spawn(|| {
         for i in 0..64 {
             println!(
+                "hello from thread: {}, {i}",
+                cpu_local().current_thread_id()
+            );
+            println!("{:?}", uefi_runtime().lock().get_time());
+            sleep(1000);
+        }
+    });
+    cpu_local().local_scheduler().spawn(|| {
+        for i in 0..64 {
+            serial_println!(
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
             sleep(1000);
         }
     });
-    cpu_local().local_scheduler().spawn(|| {
-        for i in 0..64 {
-            println!(
-                "hello from thread: {}, {i}",
-                cpu_local().current_thread_id()
-            );
-            sleep(2000);
-        }
-    });
 
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    sleep(10000);
+    uefi_runtime()
+        .lock()
+        .reset(ResetType::SHUTDOWN, EfiStatus::SUCCESS);
 
     #[cfg(test)]
     test_main();

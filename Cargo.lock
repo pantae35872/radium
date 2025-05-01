@@ -95,6 +95,7 @@ name = "bootbridge"
 version = "0.1.0"
 dependencies = [
  "bakery",
+ "bitflags 2.9.0",
  "c_enum",
  "pager",
  "santa",
