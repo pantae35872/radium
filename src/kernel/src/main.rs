@@ -56,10 +56,6 @@ fn kmain_thread() {
     });
 
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
-    sleep(10000);
-    uefi_runtime()
-        .lock()
-        .reset(ResetType::SHUTDOWN, EfiStatus::SUCCESS);
 
     #[cfg(test)]
     test_main();

@@ -42,7 +42,7 @@ use core::{ffi::c_void, sync::atomic::AtomicBool};
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
-use driver::uefi_runtime::{self, uefi_runtime};
+use driver::uefi_runtime::{self};
 use driver::{
     acpi::{self},
     pit,
