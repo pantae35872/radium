@@ -16,11 +16,9 @@ use pager::{address::VirtAddr, registers::RFlagsFlags};
 use crate::{
     hlt_loop,
     initialization_context::{InitializationContext, Phase3},
-    interrupt::{FullInterruptStackFrame, TIMER_COUNT},
+    interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
-    serial_println,
     smp::cpu_local,
-    PANIC_COUNT,
 };
 
 pub const DRIVCALL_SPAWN: u64 = 1;
@@ -39,6 +37,8 @@ pub struct LocalScheduler {
     hlt_thread: Option<Thread>,
     rr_queue: VecDeque<Thread>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
+    timer_count: usize,
+    scheduled_ms: usize,
 }
 
 #[derive(Debug)]
@@ -89,12 +89,14 @@ impl LocalScheduler {
                     .expect("Failed to allocate stack for hlt thread"),
             )),
             sleep_queue: BinaryHeap::new(),
+            timer_count: 0,
+            scheduled_ms: 0,
         }
     }
 
     pub fn sleep_thread(&mut self, thread: Thread, amount_millis: usize) {
         let sleep_entry = SleepEntry {
-            wakeup_time: TIMER_COUNT.load(Ordering::Relaxed) + amount_millis,
+            wakeup_time: self.timer_count + amount_millis,
             thread,
         };
 
@@ -109,9 +111,16 @@ impl LocalScheduler {
         }
     }
 
+    pub fn prepare_timer(&mut self) {
+        self.timer_count += self.scheduled_ms;
+        let tpms = cpu_local().ticks_per_ms();
+        cpu_local().lapic().reset_timer(tpms * 10);
+        self.scheduled_ms = 10;
+    }
+
     pub fn schedule(&mut self) -> Thread {
         while let Some(sleep_thread) = self.sleep_queue.peek() {
-            if TIMER_COUNT.load(Ordering::Relaxed) >= sleep_thread.0.wakeup_time as usize {
+            if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue
                     .push_back(self.sleep_queue.pop().unwrap().0.thread);
             } else {

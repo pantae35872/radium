@@ -4,13 +4,17 @@ use sentinel::log;
 use spin::Mutex;
 
 use crate::{
+    hlt,
     initialization_context::{InitializationContext, Phase3},
+    interrupt::InterruptIndex,
     port::{Port, Port8Bit, PortReadWrite, PortWrite},
+    serial_println,
+    smp::cpu_local,
 };
 
-static PIT: OnceCell<Mutex<ProgrammableIntervalTimer>> = OnceCell::uninit();
+pub static PIT: OnceCell<Mutex<ProgrammableIntervalTimer>> = OnceCell::uninit();
 
-struct ProgrammableIntervalTimer {
+pub struct ProgrammableIntervalTimer {
     channel0_data: Port<Port8Bit, PortReadWrite>,
     channel1_data: Port<Port8Bit, PortReadWrite>,
     channel2_data: Port<Port8Bit, PortReadWrite>,
@@ -62,9 +66,24 @@ impl ProgrammableIntervalTimer {
         }
     }
 
-    /// Default to rate generator
-    fn init(&mut self) {
-        self.set_freq(1000);
+    /// This function is only used for APIC calibration, henice the name
+    pub fn dumb_wait_10ms(&mut self) {
+        let cmd = CommandBuilder::new()
+            .operating_mode(OperatingMode::InterruptOnTerminal)
+            .access_mode(AccessMode::LowHiByte)
+            .channel(Channel::Channel0)
+            .build();
+
+        unsafe { self.command.write(cmd) };
+
+        let pit = calculate_pit_divsor(100); // 100hz (10ms)
+        unsafe { self.channel0_data.write((pit & 0xFF) as u8) };
+        unsafe { self.channel0_data.write(((pit >> 8) & 0xFF) as u8) };
+
+        cpu_local().last_interrupt_no = 0;
+        while cpu_local().last_interrupt_no != InterruptIndex::PITVector as u8 {
+            hlt();
+        }
     }
 
     /// Use rate generator to generate the specify frequency
@@ -141,9 +160,5 @@ impl Default for OperatingMode {
 }
 
 pub fn init(ctx: &mut InitializationContext<Phase3>) {
-    PIT.init_once(|| {
-        let mut pit = ProgrammableIntervalTimer::new(ctx);
-        pit.init();
-        pit.into()
-    });
+    PIT.init_once(|| ProgrammableIntervalTimer::new(ctx).into());
 }

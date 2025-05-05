@@ -1,4 +1,4 @@
-use core::{marker::PhantomData, ops::RangeBounds, usize};
+use core::{marker::PhantomData, num::NonZeroUsize, ops::RangeBounds, usize};
 
 use bit_field::BitField;
 use pager::{
@@ -8,8 +8,10 @@ use pager::{
 use raw_cpuid::CpuId;
 
 use crate::{
+    driver::pit::PIT,
     inline_if,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
+    smp::{cpu_local, CpuLocalBuilder},
 };
 use sentinel::log;
 
@@ -261,11 +263,39 @@ impl LocalApic {
         )
     }
 
+    pub fn current_count(&mut self) -> usize {
+        self.registers.current_count.read()
+    }
+
+    pub fn calibrate(&mut self) {
+        let initial_count = u32::MAX as usize;
+        self.start_timer(initial_count, TimerDivide::Div16, TimerMode::OneShot);
+        self.enable_timer();
+
+        log!(
+            Debug,
+            "APIC Timer Count Before PIT 10 ms: {}",
+            self.current_count()
+        );
+
+        PIT.get().unwrap().lock().dumb_wait_10ms();
+
+        log!(
+            Debug,
+            "APIC Timer Count After PIT 10 ms: {}",
+            self.current_count()
+        );
+        let ticks_per_ms = (initial_count - self.current_count()) / 10;
+        cpu_local().set_tpms(NonZeroUsize::new(ticks_per_ms).unwrap());
+        log!(Debug, "Calibrated APIC Timer, TPMS: {ticks_per_ms}");
+        self.start_timer(ticks_per_ms, TimerDivide::Div16, TimerMode::OneShot);
+    }
+
     pub fn enable(&mut self) {
         // FIXME: APIC timer interrupts now working on legacy apic mode
         // EDIT:
         // Umm idk if this is fixed or not it's suddenly just started working in apic mode
-        // I tried git diff and i really didn't change anything it think it's the problem with
+        // I tried git diff and i really didn't change anything, i think it's the problem with
         // qemu, i can't reproduce it now
         if self.x2apic {
             self.registers.base.write_bit(10, true);
@@ -291,6 +321,10 @@ impl LocalApic {
         self.disable_local_interrupt_pins();
 
         self.software_enable();
+    }
+
+    pub fn reset_timer(&mut self, count: usize) {
+        self.registers.initial_count.write(count);
     }
 
     pub fn start_timer(&mut self, initial_count: usize, divide: TimerDivide, mode: TimerMode) {

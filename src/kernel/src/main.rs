@@ -27,6 +27,9 @@ use sentinel::log;
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     cpu_local().local_scheduler().spawn(|| kmain_thread());
+
+    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+
     unsafe { cpu_local().set_tid(usize::MAX) }; // Set tid to usize::MAX to start scheduling
 
     hlt_loop();
@@ -54,8 +57,6 @@ fn kmain_thread() {
             sleep(1000);
         }
     });
-
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     #[cfg(test)]
     test_main();

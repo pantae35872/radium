@@ -1,4 +1,5 @@
 use core::{
+    num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
     u64,
 };
@@ -26,10 +27,10 @@ use spin::Mutex;
 use crate::{
     hlt_loop,
     initialization_context::{InitializationContext, Phase2, Phase3},
-    interrupt::{self, apic::LocalApic, idt::Idt, TIMER_COUNT},
+    interrupt::{self, apic::LocalApic, idt::Idt},
     log,
     memory::{self},
-    scheduler::LocalScheduler,
+    scheduler::{sleep, LocalScheduler},
 };
 
 pub const MAX_CPU: usize = 64;
@@ -158,14 +159,14 @@ impl ApInitializer {
 
         cpu_local().lapic().send_init_ipi(apic_id);
 
-        clunky_wait(10);
+        sleep(10);
         for _ in 0..2 {
             cpu_local().lapic().send_startup_ipi(apic_id);
-            clunky_wait(1);
+            sleep(1);
         }
 
         while !AP_INITIALIZED.load(Ordering::SeqCst) {
-            clunky_wait(1);
+            sleep(1);
         }
         AP_INITIALIZED.store(false, Ordering::SeqCst);
     }
@@ -190,6 +191,7 @@ pub struct LocalInitializer {
     local_initializers: Vec<
         Box<dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<Phase3>, usize) + Send + Sync>,
     >,
+    after_initializers: Vec<Box<dyn Fn(&mut InitializationContext<Phase3>, usize) + Send + Sync>>,
     after_bsps: Vec<Box<dyn FnOnce(&CpuLocal) + Send + Sync>>,
 }
 
@@ -199,8 +201,10 @@ pub struct CpuLocal {
     lapic: LocalApic,
     code_seg: SegmentSelector,
     thread_id: usize,
+    ticks_per_ms: Option<usize>,
     local_scheduler: LocalScheduler,
     ctx: Arc<Mutex<InitializationContext<Phase3>>>,
+    pub last_interrupt_no: u8,
     idt: &'static Idt,
     gdt: &'static Gdt,
 }
@@ -266,6 +270,8 @@ impl CpuLocalBuilder {
                 code_seg: self.code_seg?,
                 ctx: self.initialization_contex?,
                 local_scheduler: self.local_scheduler?,
+                last_interrupt_no: 0,
+                ticks_per_ms: None,
                 thread_id: 0,
                 lapic,
                 gdt: self.gdt?,
@@ -279,12 +285,20 @@ impl LocalInitializer {
     pub const fn new() -> Self {
         Self {
             local_initializers: Vec::new(),
+            after_initializers: Vec::new(),
             after_bsps: Vec::new(),
         }
     }
 
     pub fn after_bsp(&mut self, initializer: impl FnOnce(&CpuLocal) + Send + Sync + 'static) {
         self.after_bsps.push(Box::new(initializer));
+    }
+
+    pub fn register_after(
+        &mut self,
+        initializer: impl Fn(&mut InitializationContext<Phase3>, usize) + Send + Sync + 'static,
+    ) {
+        self.after_initializers.push(Box::new(initializer));
     }
 
     pub fn register(
@@ -317,12 +331,22 @@ impl LocalInitializer {
                 f(&cpu_local());
             }
         }
+
+        self.after_initializers.iter().for_each(|e| e(ctx, id));
     }
 }
 
 impl CpuLocal {
     pub fn apic_id(&self) -> usize {
         self.apic_id
+    }
+
+    pub fn set_tpms(&mut self, tpms: NonZeroUsize) {
+        self.ticks_per_ms = Some(tpms.get());
+    }
+
+    pub fn ticks_per_ms(&self) -> usize {
+        self.ticks_per_ms.expect("TPMS is not calibrated")
     }
 
     pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
@@ -367,7 +391,8 @@ fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
         Some(e) => e,
         None => {
             log!(Error, "Failed to initialize CPU: {cpu_id}");
-            return;
+            interrupt::disable();
+            hlt_loop();
         }
     };
     log!(
@@ -393,20 +418,24 @@ fn apic_id_to_cpu_id(apic_id: usize) -> usize {
         .expect("apic id is not mapped in the mapping") as usize
 }
 
+/// Check if the cpu local is initialized or not
+pub fn cpu_local_avaiable() -> bool {
+    !(KernelGsBase::read().is_null() || GsBase::read().is_null())
+}
+
+/// Get the cpu local
+///
+/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
 #[inline(always)]
 pub fn cpu_local() -> &'static mut CpuLocal {
     let ptr: *mut CpuLocal;
+    if KernelGsBase::read().is_null() || GsBase::read().is_null() {
+        panic!("Trying to access cpu local while, it's has not been initialized");
+    }
     unsafe {
         core::arch::asm!("mov {}, gs:0", out(reg) ptr);
     }
     unsafe { &mut *ptr }
-}
-
-fn clunky_wait(ms: usize) {
-    let end_time = TIMER_COUNT.load(Ordering::Relaxed) + ms;
-    while TIMER_COUNT.load(Ordering::Relaxed) < end_time {
-        crate::hlt();
-    }
 }
 
 impl InitializationContext<Phase3> {
@@ -455,11 +484,14 @@ pub fn init_aps(mut ctx: InitializationContext<Phase3>) {
         })
     });
     ctx.lock().initialize_current();
-    let processors = ctx.lock().context().processors().clone();
-    processors.iter().copied().for_each(|apic_id| {
-        if apic_id == cpu_local().apic_id() {
-            return;
-        }
-        ap_initializer.boot_ap(apic_id, ctx.clone());
+
+    cpu_local().local_scheduler().spawn(move || {
+        //let processors = ctx.lock().context().processors().clone();
+        //processors.iter().copied().for_each(|apic_id| {
+        //    if apic_id == cpu_local().apic_id() {
+        //        return;
+        //    }
+        //    ap_initializer.boot_ap(apic_id, ctx.clone());
+        //});
     });
 }

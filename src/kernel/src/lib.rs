@@ -53,7 +53,7 @@ use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
-use smp::cpu_local;
+use smp::{cpu_local, cpu_local_avaiable};
 use spin::Mutex;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
@@ -118,6 +118,7 @@ static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    serial_print!("{info}");
     match PANIC_COUNT.fetch_add(1, Ordering::SeqCst) {
         0 => {}
         1 => {
@@ -131,7 +132,9 @@ fn panic(info: &PanicInfo) -> ! {
         }
         _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
     };
-    log!(Critical, "PANIC on cpu: {}", cpu_local().cpu_id());
+    if cpu_local_avaiable() {
+        log!(Critical, "PANIC on cpu: {}", cpu_local().cpu_id());
+    }
     log!(Critical, "{}", info);
 
     log!(Info, "Backtrace:");

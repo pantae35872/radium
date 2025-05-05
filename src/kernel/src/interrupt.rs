@@ -1,15 +1,22 @@
 use core::arch::asm;
+use core::num::NonZeroUsize;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicU8;
 use core::sync::atomic::AtomicUsize;
 use core::sync::atomic::Ordering;
 
-use crate::defer;
+use crate::driver::pit;
+use crate::driver::pit::PIT;
+use crate::initialization_context;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
+use crate::logger::LOGGER;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::DRIVCALL_SLEEP;
+use crate::serial_print;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
@@ -37,8 +44,6 @@ pub mod idt;
 pub mod io_apic;
 
 pub const LOCAL_APIC_OFFSET: u8 = 32;
-
-pub static TIMER_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -99,18 +104,17 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
     disable_pic(ctx);
 
     let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Phase3>, id| {
-        let mut lapic = lapic.clone();
         log!(Info, "Initializing interrupts for CPU: {id}");
         let idt = create_idt();
         idt.load();
         cpu.idt(idt);
-
+        let mut lapic = lapic.clone();
         lapic.enable();
-        lapic.start_timer(1_000_000, TimerDivide::Div16, TimerMode::Periodic);
-        lapic.enable_timer();
+        lapic.disable_timer();
+
         cpu.lapic(lapic);
     };
-    ctx.local_initializer(|e| e.register(lapic));
+
     let mut io_apic_manager = IoApicManager::new();
     let io_apics = ctx.context().io_apics().clone();
     io_apics
@@ -120,13 +124,23 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
         .interrupt_source_overrides()
         .iter()
         .for_each(|source_override| io_apic_manager.add_source_override(source_override));
+
+    let lapic_calibration = |_ctx: &mut InitializationContext<Phase3>, id| {
+        log!(Trace, "Calibrating APIC for cpu: {id}");
+        cpu_local().lapic().calibrate();
+    };
+
     ctx.local_initializer(|initializer| {
+        initializer.register(lapic);
+
         initializer.after_bsp(move |bsp| {
             io_apic_manager.redirect_legacy_irqs(
                 0,
                 RedirectionTableEntry::new(InterruptIndex::PITVector, bsp.apic_id()),
             );
         });
+
+        initializer.register_after(lapic_calibration);
     });
 }
 
@@ -192,11 +206,14 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
         return;
     }
 
+    cpu_local().last_interrupt_no = idx;
+
     let current_thread = Dispatcher::save(stack_frame);
     let mut should_schedule = false;
 
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
+            cpu_local().local_scheduler().prepare_timer();
             let is_start = current_thread.is_start();
             if !current_thread.is_bsp_thread() {
                 cpu_local()
@@ -205,9 +222,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
                 should_schedule = true;
             }
         }
-        idx if idx == InterruptIndex::PITVector.as_u8() => {
-            TIMER_COUNT.fetch_add(1, Ordering::Relaxed);
-        }
+        idx if idx == InterruptIndex::PITVector.as_u8() => {}
         idx if idx == InterruptIndex::ErrorVector.as_u8() => {
             log!(Error, "Apic configuration error");
         }
