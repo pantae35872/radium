@@ -100,10 +100,10 @@ run: $(DISK_FILE) $(OVMF)
 
 dbg-run: $(DISK_FILE) $(OVMF)
 	@echo $$$$ > /tmp/dbg_make_pid.txt; \
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s
+	qemu-system-x86_64 $(QEMU_FLAGS) -cpu Skylake-Client -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s
 
 dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -d int
+	qemu-system-x86_64 $(QEMU_FLAGS) -cpu Skylake-Client -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -d int
 
 $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
 	@echo $(BUILD_MODE) > $(BUILD_MODE_FILE)
