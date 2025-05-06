@@ -5,7 +5,11 @@ use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
-use pager::{address::Page, EntryFlags, Mapper, PAGE_SIZE};
+use pager::{
+    address::Page,
+    registers::{Xcr0, Xcr0Flags},
+    EntryFlags, Mapper, PAGE_SIZE,
+};
 use spin::mutex::Mutex;
 
 use crate::{
@@ -28,11 +32,19 @@ struct GlyphData {
     height: usize,
 }
 
+#[derive(Clone, Copy)]
+enum MemMoveSelected {
+    MMX,
+    AVX256,
+    AVX512,
+}
+
 pub struct Graphic {
     mode: GraphicsInfo,
     plot_fn: for<'a> unsafe fn(&'a mut Self, color: Color, y: usize, x: usize),
     #[allow(unused)]
     get_pixel_fn: for<'a> fn(&'a Self, x: usize, y: usize) -> Color,
+    memmove_selected: MemMoveSelected,
     frame_buffer: &'static mut [u32],
     real_buffer: &'static mut [u32],
     backbuffer_tracker: FrameTracker,
@@ -57,7 +69,7 @@ impl Graphic {
             let dst_ptr = &mut dst[0] as *mut u32 as *mut u8;
             let src_ptr = &src[0] as *const u32 as *const u8;
             let src_len = src.len() * 4;
-            Self::memmove_sse(dst_ptr, src_ptr, src_len);
+            Self::memmove_selected(self.memmove_selected, dst_ptr, src_ptr, src_len);
         }
         self.backbuffer_tracker.reset();
     }
@@ -122,7 +134,12 @@ impl Graphic {
             unsafe {
                 let dest = self.frame_buffer.as_mut_ptr().add(fb_offset);
                 let src = glyph.as_ptr().add(glyph_offset);
-                Self::memmove_sse(dest as *mut u8, src as *const u8, glyph_data.width * 4);
+                Self::memmove_selected(
+                    self.memmove_selected,
+                    dest as *mut u8,
+                    src as *const u8,
+                    glyph_data.width * 4,
+                );
             }
         }
         self.backbuffer_tracker.track(x, y);
@@ -141,6 +158,14 @@ impl Graphic {
 
         unsafe {
             (self.plot_fn)(self, color, y, x);
+        }
+    }
+
+    unsafe fn memmove_selected(mode: MemMoveSelected, dest: *mut u8, src: *const u8, count: usize) {
+        match mode {
+            MemMoveSelected::MMX => unsafe { Self::memmove_sse(dest, src, count) },
+            MemMoveSelected::AVX256 => unsafe { Self::memmove_avx256(dest, src, count) },
+            MemMoveSelected::AVX512 => unsafe { Self::memmove_avx512(dest, src, count) },
         }
     }
 
@@ -186,6 +211,84 @@ impl Graphic {
         })
     }
 
+    unsafe fn memmove_avx256(mut dest: *mut u8, mut src: *const u8, count: usize) {
+        interrupt::without_interrupts(|| {
+            let mut i = 0;
+            while count - i >= 256 {
+                unsafe {
+                    asm!(
+                        "vmovdqu ymm0, [{src}]",
+                        "vmovdqu ymm1, [{src} + 32]",
+                        "vmovdqu ymm2, [{src} + 64]",
+                        "vmovdqu ymm3, [{src} + 96]",
+                        "vmovdqu ymm4, [{src} + 128]",
+                        "vmovdqu ymm5, [{src} + 160]",
+                        "vmovdqu ymm6, [{src} + 192]",
+                        "vmovdqu ymm7, [{src} + 224]",
+                        "vmovdqu [{dst}], ymm0",
+                        "vmovdqu [{dst} + 32], ymm1",
+                        "vmovdqu [{dst} + 64], ymm2",
+                        "vmovdqu [{dst} + 96], ymm3",
+                        "vmovdqu [{dst} + 128], ymm4",
+                        "vmovdqu [{dst} + 160], ymm5",
+                        "vmovdqu [{dst} + 192], ymm6",
+                        "vmovdqu [{dst} + 224], ymm7",
+                        src = in(reg) src,
+                        dst = in(reg) dest,
+                        options(nostack, preserves_flags),
+                    );
+                    src = src.add(256);
+                    dest = dest.add(256);
+                }
+                i += 256;
+            }
+
+            let remaining = count - i;
+            if remaining > 0 {
+                unsafe { Self::memmove_sse(dest, src, remaining) };
+            }
+        })
+    }
+
+    unsafe fn memmove_avx512(mut dest: *mut u8, mut src: *const u8, count: usize) {
+        interrupt::without_interrupts(|| {
+            let mut i = 0;
+            while count - i >= 512 {
+                unsafe {
+                    asm!(
+                        "vmovdqu32 zmm0, [{src}]",
+                        "vmovdqu32 zmm1, [{src} + 64]",
+                        "vmovdqu32 zmm2, [{src} + 128]",
+                        "vmovdqu32 zmm3, [{src} + 192]",
+                        "vmovdqu32 zmm4, [{src} + 256]",
+                        "vmovdqu32 zmm5, [{src} + 320]",
+                        "vmovdqu32 zmm6, [{src} + 384]",
+                        "vmovdqu32 zmm7, [{src} + 448]",
+                        "vmovdqu32 [{dst}], zmm0",
+                        "vmovdqu32 [{dst} + 64], zmm1",
+                        "vmovdqu32 [{dst} + 128], zmm2",
+                        "vmovdqu32 [{dst} + 192], zmm3",
+                        "vmovdqu32 [{dst} + 256], zmm4",
+                        "vmovdqu32 [{dst} + 320], zmm5",
+                        "vmovdqu32 [{dst} + 384], zmm6",
+                        "vmovdqu32 [{dst} + 448], zmm7",
+                        src = in(reg) src,
+                        dst = in(reg) dest,
+                        options(nostack, preserves_flags),
+                    );
+                    src = src.add(512);
+                    dest = dest.add(512);
+                }
+                i += 512;
+            }
+
+            let remaining = count - i;
+            if remaining > 0 {
+                unsafe { Self::memmove_avx256(dest, src, remaining) };
+            }
+        })
+    }
+
     pub fn scroll_up(&mut self, scroll_amount: usize) {
         let (_width, height) = self.mode.resolution();
         self.backbuffer_tracker.track_all();
@@ -196,7 +299,8 @@ impl Graphic {
             let src = &self.frame_buffer[stride * scroll_amount..stride * height];
             let src_ptr = &src[0] as *const u32 as *const u8;
             let src_len = src.len() * 4;
-            Self::memmove_sse(
+            Self::memmove_selected(
+                self.memmove_selected,
                 &mut self.frame_buffer[0] as *mut u32 as *mut u8,
                 src_ptr,
                 src_len,
@@ -311,6 +415,14 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
             PixelFormat::Bitmask(_) => Self::get_pixel_bitmask,
             PixelFormat::BltOnly => unimplemented!("Not support"),
         };
+        let memmove = match Xcr0::read() {
+            flags if flags.contains(Xcr0Flags::ZMM_HIGH256) => MemMoveSelected::AVX512,
+            flags if flags.contains(Xcr0Flags::AVX) => MemMoveSelected::AVX256,
+            flags if flags.contains(Xcr0Flags::SEE) => MemMoveSelected::MMX,
+            _ => panic!(
+                "CPU With no vector instruction is not supported, Need any of MMX, AVX256, AVX512"
+            ),
+        };
         let mut va = Self {
             mode,
             plot_fn,
@@ -319,6 +431,7 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
             frame_buffer: back_buffer,
             backbuffer_tracker: FrameTracker::new(width, height, mode.stride()),
             glyph_tracker: FrameTracker::new(width, height, mode.stride()),
+            memmove_selected: memmove,
             glyphs: Vec::new(),
             glyph_ids: Vec::new(),
         };

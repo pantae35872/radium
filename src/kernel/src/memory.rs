@@ -4,14 +4,15 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{virt_allocator::VirtualAllocator, FrameAllocator},
     paging::{mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable},
-    registers::{Cr0, Cr0Flags, Efer, EferFlags},
+    registers::{Cr0, Cr0Flags, Cr4, Cr4Flags, Efer, EferFlags, Xcr0, Xcr0Flags},
     EntryFlags, KERNEL_GENERAL_USE, PAGE_SIZE,
 };
+use raw_cpuid::CpuId;
 use stack_allocator::StackAllocator;
 
 use crate::{
     driver::acpi::Acpi,
-    initialization_context::{select_context, InitializationContext, Phase0, Phase1},
+    initialization_context::{select_context, InitializationContext, Phase0, Phase1, Phase2},
     initialize_guard, log, DWARF_DATA,
 };
 
@@ -69,9 +70,37 @@ pub fn init(mut ctx: InitializationContext<Phase0>) -> InitializationContext<Pha
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 pub unsafe fn prepare_flags() {
+    let esi = CpuId::new().get_extended_state_info().unwrap();
+    log!(Info, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
+    log!(
+        Info,
+        "Support AVX512 High?: {}",
+        esi.xcr0_supports_avx512_zmm_hi256()
+    );
+    log!(
+        Info,
+        "Support AVX512 High Regs?: {}",
+        esi.xcr0_supports_avx512_zmm_hi16()
+    );
     unsafe {
         enable_nxe_bit();
         enable_write_protect_bit();
+
+        Cr4::write_or(Cr4Flags::OSXSAVE);
+        let mut flags = Xcr0Flags::empty();
+        if esi.xcr0_supports_sse_128() {
+            flags |= Xcr0Flags::SEE;
+        }
+        if esi.xcr0_supports_avx_256() {
+            flags |= Xcr0Flags::AVX;
+        }
+        if esi.xcr0_supports_avx512_zmm_hi256() {
+            flags |= Xcr0Flags::ZMM_HIGH256;
+        }
+        if esi.xcr0_supports_avx512_zmm_hi16() {
+            flags |= Xcr0Flags::HI16_ZMM;
+        }
+        Xcr0::write_or(flags);
     }
 }
 

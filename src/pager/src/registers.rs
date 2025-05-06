@@ -1,6 +1,10 @@
-use core::arch::asm;
+use core::arch::{
+    asm,
+    x86_64::{_xgetbv, _xsetbv},
+};
 
 use bitflags::bitflags;
+use sentinel::log;
 
 use crate::{
     address::{Frame, PhysAddr, VirtAddr},
@@ -67,7 +71,6 @@ bitflags! {
         const AutomaticIBRSEnable = 1 << 21;
     }
 
-
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct RFlagsFlags: u64 {
         const Carry = 1 << 0;
@@ -87,17 +90,90 @@ bitflags! {
         const VirtualInterruptPending = 1 << 20;
         const ID = 1 << 21;
     }
+
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct Xcr0Flags: u64 {
+        /// x87 FPU/MMX support (must be 1)
+        const X87 = 1 << 0;
+        /// XSAVE support for MXCSR and XMM registers
+        const SEE = 1 << 1;
+        /// AVX enabled and XSAVE support for upper halves of YMM registers
+        const AVX = 1 << 2;
+        /// MPX enabled and XSAVE support for BND0-BND3 registers
+        const BNDREG = 1 << 3;
+        /// MPX enabled and XSAVE support for BNDCFGU and BNDSTATUS registers
+        const BINDCSR = 1 << 4;
+        /// AVX-512 enabled and XSAVE support for opmask registers k0-k7
+        const OPMASK = 1 << 5;
+        /// AVX-512 enabled and XSAVE support for upper halves of lower ZMM registers
+        const ZMM_HIGH256 = 1 << 6;
+        /// AVX-512 enabled and XSAVE support for upper ZMM registers
+        const HI16_ZMM = 1 << 7;
+        const PKRU = 1 << 9;
+    }
+
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct Cr4Flags: u64 {
+        /// Virtual 8086 Mode Extensions
+        const VME = 1 << 0;
+        /// Protected-mode Virtual Interrupts
+        const PVI = 1 << 1;
+        /// Time Stamp Disable
+        const TSD = 1 << 2;
+        /// Debugging Extensions
+        const DE = 1 << 3;
+        /// Page Size Extension
+        const PSE = 1 << 4;
+        /// Physical Address Extension
+        const PAE = 1 << 5;
+        /// Machine Check Exception
+        const MCE = 1 << 6;
+        /// Page Global Enabled
+        const PGE = 1 << 7;
+        /// Performance-Monitoring Counter enable
+        const PCE = 1 << 8;
+        /// Operating system support for FXSAVE and FXRSTOR instructions
+        const OSFXS = 1 << 9;
+        /// Operating System Support for Unmasked SIMD Floating-Point Exceptions
+        const OSXMMEXCPT = 1 << 10;
+        /// User-Mode Instruction Prevention (if set, #GP on SGDT, SIDT, SLDT, SMSW, and STR instructions when CPL > 0)
+        const UMIP 	= 1 << 11;
+        /// 57-bit linear addresses (if set, the processor uses 5-level paging otherwise it uses uses 4-level paging)
+        const LA57 	= 1 << 12;
+        /// Virtual Machine Extensions Enable
+        const VMXE 	= 1 << 13;
+        /// Safer Mode Extensions Enable
+        const SMXE 	= 1 << 14;
+        /// Enables the instructions RDFSBASE, RDGSBASE, WRFSBASE, and WRGSBASE
+        const FSGSBASE 	= 1 << 16;
+        /// PCID Enable
+        const PCIDE 	= 1 << 17;
+        /// XSAVE and Processor Extended States Enable
+        const OSXSAVE 	= 1 << 18;
+        /// Supervisor Mode Execution Protection Enable
+        const SMEP 	= 1 << 20;
+        /// Supervisor Mode Access Prevention Enable
+        const SMAP 	= 1 << 21;
+        /// Protection Key Enable
+        const PKE 	= 1 << 22;
+        /// Control-flow Enforcement Technology
+        const CET 	= 1 << 23;
+        /// Enable Protection Keys for Supervisor-Mode Pages
+        const PKS 	= 1 << 24;
+    }
 }
 
 #[derive(Debug)]
 pub struct Msr(u32);
 pub struct Cr0;
 pub struct Cr2;
+pub struct Cr4;
 pub struct RFlags;
 pub struct Efer;
 pub struct KernelGsBase;
 pub struct GsBase;
 pub struct CS;
+pub struct Xcr0;
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
@@ -348,6 +424,68 @@ impl Efer {
     pub unsafe fn write(flags: EferFlags) {
         let msr = Self::IA32_EFER_MSR;
         unsafe { msr.write(flags.bits()) };
+    }
+}
+
+impl Cr4 {
+    /// Read from the cr4 into flags
+    #[inline(always)]
+    pub fn read() -> Cr4Flags {
+        let result: u64;
+        // SAFETY: We reading the cr4 is safe we're not setting it
+        unsafe {
+            asm!("mov {}, cr4", out(reg) result, options(nostack, preserves_flags));
+        }
+
+        Cr4Flags::from_bits_truncate(result)
+    }
+
+    /// Read the cr4 and then perform bitwise or with the provided flags, and write that value back
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects
+    #[inline(always)]
+    pub unsafe fn write_or(flags: Cr4Flags) {
+        let flags = Self::read() | flags;
+
+        unsafe {
+            Cr4::write(flags);
+        }
+    }
+
+    /// Write the flags into the Cr4 literally
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects,
+    /// or unset the flags that keep the system running
+    #[inline(always)]
+    pub unsafe fn write(flags: Cr4Flags) {
+        unsafe {
+            asm!("mov cr4, {}", in(reg) flags.bits(), options(nostack, preserves_flags));
+        }
+    }
+}
+
+impl Xcr0 {
+    #[inline(always)]
+    pub fn read() -> Xcr0Flags {
+        Xcr0Flags::from_bits_truncate(unsafe { _xgetbv(0) })
+    }
+
+    #[inline(always)]
+    pub unsafe fn write_or(flags: Xcr0Flags) {
+        let flags = Self::read() | flags;
+
+        unsafe {
+            Self::write(flags);
+        }
+    }
+
+    #[inline(always)]
+    pub unsafe fn write(flags: Xcr0Flags) {
+        unsafe { _xsetbv(0, flags.bits()) };
     }
 }
 
