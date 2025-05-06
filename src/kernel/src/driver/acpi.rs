@@ -160,7 +160,6 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         ctx: &mut InitializationContext<Phase1>,
     ) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
-        let ctx = ctx.as_mut();
         unsafe {
             ctx.mapper().identity_map_by_size(
                 Frame::containing_address(PhysAddr::new(address)),

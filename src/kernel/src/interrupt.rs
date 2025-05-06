@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use crate::driver::pit;
 use crate::driver::pit::PIT;
 use crate::initialization_context;
+use crate::initialization_context::FinalPhase;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Phase3;
 use crate::logger::LOGGER;
@@ -90,7 +91,7 @@ fn create_idt() -> &'static Idt {
     idt
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase3>) {
+pub fn init(mut ctx: InitializationContext<Phase3>) -> InitializationContext<FinalPhase> {
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
             LocalApicArguments {
@@ -101,47 +102,53 @@ pub fn init(ctx: &mut InitializationContext<Phase3>) {
             None,
         )
         .unwrap();
-    disable_pic(ctx);
+    disable_pic(&mut ctx);
 
-    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Phase3>, id| {
-        log!(Info, "Initializing interrupts for CPU: {id}");
-        let idt = create_idt();
-        idt.load();
-        cpu.idt(idt);
-        let mut lapic = lapic.clone();
-        lapic.enable();
-        lapic.disable_timer();
+    let lapic =
+        move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<FinalPhase>, id| {
+            log!(Info, "Initializing interrupts for CPU: {id}");
+            let idt = create_idt();
+            idt.load();
+            cpu.idt(idt);
+            let mut lapic = lapic.clone();
+            lapic.enable();
+            lapic.disable_timer();
 
-        cpu.lapic(lapic);
-    };
+            cpu.lapic(lapic);
+        };
 
     let mut io_apic_manager = IoApicManager::new();
     let io_apics = ctx.context().io_apics().clone();
-    io_apics
-        .iter()
-        .for_each(|(addr, gsi_base)| io_apic_manager.add_io_apic(addr.clone(), *gsi_base, ctx));
+    io_apics.iter().for_each(|(addr, gsi_base)| {
+        io_apic_manager.add_io_apic(addr.clone(), *gsi_base, &mut ctx)
+    });
     ctx.context()
         .interrupt_source_overrides()
         .iter()
         .for_each(|source_override| io_apic_manager.add_source_override(source_override));
 
-    let lapic_calibration = |_ctx: &mut InitializationContext<Phase3>, id| {
+    let lapic_calibration = |ctx: &mut InitializationContext<FinalPhase>, id| {
         log!(Trace, "Calibrating APIC for cpu: {id}");
+        ctx.redirect_legacy_irqs(
+            0,
+            RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().apic_id()),
+        );
         cpu_local().lapic().calibrate();
     };
 
     ctx.local_initializer(|initializer| {
         initializer.register(lapic);
 
-        initializer.after_bsp(move |bsp| {
-            io_apic_manager.redirect_legacy_irqs(
+        initializer.after_bsp(|ctx| {
+            ctx.context.io_apic_manager.redirect_legacy_irqs(
                 0,
-                RedirectionTableEntry::new(InterruptIndex::PITVector, bsp.apic_id()),
+                RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().apic_id()),
             );
         });
 
         initializer.register_after(lapic_calibration);
     });
+    ctx.next(io_apic_manager)
 }
 
 #[derive(Debug)]

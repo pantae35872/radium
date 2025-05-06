@@ -11,9 +11,7 @@ use stack_allocator::StackAllocator;
 
 use crate::{
     driver::acpi::Acpi,
-    initialization_context::{
-        select_context, InitializationContext, Phase0, Phase1, Phase2, Phase3,
-    },
+    initialization_context::{select_context, InitializationContext, Phase0, Phase1},
     initialize_guard, log, DWARF_DATA,
 };
 
@@ -219,7 +217,7 @@ impl MMIOBufferInfo {
 }
 
 select_context! {
-    (Phase2, Phase3) => {
+    (Phase2, Phase3, FinalPhase) => {
         pub fn mmio_device<T: MMIODevice<A>, A>(
             &mut self,
             args: A,
@@ -249,7 +247,7 @@ select_context! {
             Some(T::new(buf, args))
         }
     }
-    (Phase1, Phase2, Phase3) => {
+    (Phase1, Phase2, FinalPhase) => {
         pub fn stack_allocator(&mut self) -> WithTable<StackAllocator, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)

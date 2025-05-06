@@ -71,10 +71,10 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     print::init(&mut phase2, Color::new(209, 213, 219), BACKGROUND_COLOR);
     let mut phase3 = smp::init(phase2);
     gdt::init_gdt(&mut phase3);
-    interrupt::init(&mut phase3);
-    scheduler::init(&mut phase3);
-    pit::init(&mut phase3);
-    smp::init_aps(phase3);
+    let mut final_phase = interrupt::init(phase3);
+    scheduler::init(&mut final_phase);
+    pit::init(&mut final_phase);
+    smp::init_aps(final_phase);
     uefi_runtime::init(&mut cpu_local().ctx().lock());
 }
 

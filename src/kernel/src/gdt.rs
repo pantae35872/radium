@@ -2,13 +2,13 @@ use alloc::boxed::Box;
 use pager::gdt::{Descriptor, Gdt, TaskStateSegment, DOUBLE_FAULT_IST_INDEX};
 use pager::registers::{lgdt, load_tss, DescriptorTablePointer, SegmentSelector, CS};
 
-use crate::initialization_context::{InitializationContext, Phase3};
+use crate::initialization_context::{FinalPhase, InitializationContext, Phase3};
 use crate::smp::CpuLocalBuilder;
 use sentinel::log;
 
 pub fn init_gdt(ctx: &mut InitializationContext<Phase3>) {
     let gdt_initializer =
-        |cpu: &mut CpuLocalBuilder, ctx: &mut InitializationContext<Phase3>, id| {
+        |cpu: &mut CpuLocalBuilder, ctx: &mut InitializationContext<FinalPhase>, id| {
             let double_fault = ctx
                 .stack_allocator()
                 .alloc_stack(256)

@@ -7,7 +7,7 @@ use core::{
 use bit_field::BitField;
 use sentinel::log;
 
-use crate::initialization_context::{select_context, Phase0, Phase1, Phase2, Phase3};
+use crate::initialization_context::{select_context, FinalPhase, Phase0, Phase1, Phase2};
 
 const X86_PORT_SIZE: usize = 0xFFFF; // X86 port size is 16 bit
 const X86_PORT_BITMAP_SIZE: usize = 2 * X86_PORT_SIZE / 8 + 1; // 2 Bits per port, R/W
@@ -156,7 +156,7 @@ impl<S: PortSize> Port<S, PortReadWrite> {
 }
 
 select_context! {
-    (Phase0, Phase1, Phase2, Phase3) => {
+    (Phase0, Phase1, Phase2, Phase3, FinalPhase) => {
         pub fn alloc_port<P: PortPermission, S: PortSize>(&mut self, address: u16) -> Option<Port<S, P>> {
             self.context_mut().port_allocator.allocate(address)
         }

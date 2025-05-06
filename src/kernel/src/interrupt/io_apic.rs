@@ -9,7 +9,7 @@ use crate::{
         self,
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
-    initialization_context::{InitializationContext, Phase3},
+    initialization_context::{select_context, FinalPhase, InitializationContext, Phase3},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
@@ -111,6 +111,14 @@ impl RedirectionTableEntry {
             destination: Destination::PhysicalDestination(apic_id),
             pin_polarity: PinPolarity::default(),
             trigger_mode: TriggerMode::default(),
+        }
+    }
+}
+
+select_context! {
+    (FinalPhase) => {
+        pub fn redirect_legacy_irqs(&mut self, legacy_irq: u8, entry: RedirectionTableEntry) {
+            self.context.io_apic_manager.redirect_legacy_irqs(legacy_irq, entry);
         }
     }
 }

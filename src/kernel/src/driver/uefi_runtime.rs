@@ -42,7 +42,7 @@ use spin::Mutex;
 use uguid::Guid;
 
 use crate::{
-    initialization_context::{InitializationContext, Phase1, Phase3},
+    initialization_context::{FinalPhase, InitializationContext, Phase1},
     memory::virt_addr_alloc,
 };
 
@@ -322,7 +322,7 @@ unsafe impl Send for UefiRuntime {}
 unsafe impl Sync for UefiRuntime {}
 
 impl UefiRuntime {
-    fn new(ctx: &mut InitializationContext<Phase3>) -> Self {
+    fn new(ctx: &mut InitializationContext<FinalPhase>) -> Self {
         let mut mem_map: MemoryMap<'static> =
             ctx.context().boot_bridge().memory_map().clone().into();
         let runtime_table_raw = ctx.context().boot_bridge().uefi_runtime_ptr();
@@ -430,6 +430,6 @@ pub fn uefi_runtime() -> &'static Mutex<UefiRuntime> {
     UEFI_RUNTIME.get().expect("UEFI Runtime not initialized")
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase3>) {
+pub fn init(ctx: &mut InitializationContext<FinalPhase>) {
     UEFI_RUNTIME.init_once(|| UefiRuntime::new(ctx).into());
 }

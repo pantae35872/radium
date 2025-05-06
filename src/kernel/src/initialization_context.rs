@@ -4,6 +4,7 @@ use pager::paging::{table::RecurseLevel4, ActivePageTable};
 
 use crate::{
     driver::acpi::{madt::IoApicInterruptSourceOverride, Acpi},
+    interrupt::io_apic::IoApicManager,
     memory::{
         allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator, MMIOBufferInfo,
     },
@@ -122,10 +123,10 @@ macro_rules! create_initialization_chain {
 
 macro_rules! select_context {
     ($(
-        ($($phase:ty),*) => $body:tt
+        ($($phase:ident),*) => $body:tt
     )*) => {$(
         $(
-            impl $crate::initialization_context::InitializationContext<$phase> $body
+            impl $crate::initialization_context::InitializationContext<$crate::initialization_context::$phase> $body
         )*
     )*};
 }
@@ -149,27 +150,8 @@ create_initialization_chain! {
         acpi: Acpi,
     } => Phase3 {
         local_initializer: Option<LocalInitializer>,
-    }
-}
-
-impl AsMut<Phase1> for Phase1 {
-    fn as_mut(&mut self) -> &mut Phase1 {
-        // SAFETY: We know this is safe from the macro
-        unsafe { core::mem::transmute(self) }
-    }
-}
-
-impl AsMut<Phase1> for Phase3 {
-    fn as_mut(&mut self) -> &mut Phase1 {
-        // SAFETY: We know this is safe from the macro
-        unsafe { core::mem::transmute(self) }
-    }
-}
-
-impl AsRef<Phase1> for Phase3 {
-    fn as_ref(&self) -> &Phase1 {
-        // SAFETY: We know this is safe from the macro
-        unsafe { core::mem::transmute(self) }
+    } => FinalPhase {
+        io_apic_manager: IoApicManager,
     }
 }
 
@@ -189,17 +171,6 @@ pub trait InitializationPhase {
         Self: Sized,
     {
         Self::Next::create(self, additional)
-    }
-}
-
-impl<B, T> AsMut<InitializationContext<B>> for InitializationContext<T>
-where
-    T: AsMut<B> + AnyInitializationPhase,
-    B: AnyInitializationPhase,
-{
-    fn as_mut(&mut self) -> &mut InitializationContext<B> {
-        // SAFETY: We know this is safe from the macro
-        unsafe { core::mem::transmute(self) }
     }
 }
 

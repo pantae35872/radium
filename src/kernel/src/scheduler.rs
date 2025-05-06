@@ -15,7 +15,7 @@ use pager::{address::VirtAddr, registers::RFlagsFlags};
 
 use crate::{
     hlt_loop,
-    initialization_context::{InitializationContext, Phase3},
+    initialization_context::{FinalPhase, InitializationContext},
     interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
     smp::cpu_local,
@@ -80,7 +80,7 @@ where
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<Phase3>) -> Self {
+    pub fn new(ctx: &mut InitializationContext<FinalPhase>) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
@@ -303,7 +303,7 @@ impl Dispatcher {
     }
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase3>) {
+pub fn init(ctx: &mut InitializationContext<FinalPhase>) {
     ctx.local_initializer(|i| {
         i.register(|builder, ctx, _id| {
             builder.scheduler(LocalScheduler::new(ctx));

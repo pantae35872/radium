@@ -5,7 +5,7 @@ use spin::Mutex;
 
 use crate::{
     hlt,
-    initialization_context::{InitializationContext, Phase3},
+    initialization_context::{FinalPhase, InitializationContext},
     interrupt::InterruptIndex,
     port::{Port, Port8Bit, PortReadWrite, PortWrite},
     serial_println,
@@ -57,7 +57,7 @@ enum OperatingMode {
 }
 
 impl ProgrammableIntervalTimer {
-    fn new(ctx: &mut InitializationContext<Phase3>) -> Self {
+    fn new(ctx: &mut InitializationContext<FinalPhase>) -> Self {
         Self {
             channel0_data: ctx.alloc_port(0x40).expect("PIC channel 0 port is taken"),
             channel1_data: ctx.alloc_port(0x41).expect("PIC channel 1 port is taken"),
@@ -159,6 +159,6 @@ impl Default for OperatingMode {
     }
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase3>) {
+pub fn init(ctx: &mut InitializationContext<FinalPhase>) {
     PIT.init_once(|| ProgrammableIntervalTimer::new(ctx).into());
 }
