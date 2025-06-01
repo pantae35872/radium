@@ -53,10 +53,22 @@ pub fn initialize_graphics_kernel(
     let mut gop = gop.unwrap();
 
     let (width, height) = config.screen_resolution();
-    if let Some(mode) = gop
-        .modes(system_table.boot_services())
-        .find(|mode| mode.info().resolution() == (width, height))
-    {
+    let mut best_mode = None;
+    let mut best_score = u64::MAX;
+
+    for mode in gop.modes(system_table.boot_services()) {
+        let res = mode.info().resolution();
+        let dx = res.0 as i64 - width as i64;
+        let dy = res.1 as i64 - height as i64;
+        let score = (dx * dx + dy * dy) as u64;
+
+        if score < best_score {
+            best_score = score;
+            best_mode = Some(mode);
+        }
+    }
+
+    if let Some(mode) = best_mode {
         gop.set_mode(&mode).expect("Could not set mode");
         let framebuffer = gop.frame_buffer().as_mut_ptr() as u64;
         let (horizontal, vertical) = mode.info().resolution();

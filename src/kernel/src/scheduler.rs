@@ -3,7 +3,7 @@ use core::{
     cmp::Reverse,
     error::Error,
     fmt::Display,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
 
 use alloc::{
@@ -23,6 +23,19 @@ use crate::{
 
 pub const DRIVCALL_SPAWN: u64 = 1;
 pub const DRIVCALL_SLEEP: u64 = 2;
+static SYSCALL_MAP: [AtomicPtr<ThreadQueueNode>; 512] =
+    [const { AtomicPtr::new(core::ptr::null_mut()) }; 512];
+
+#[derive(Debug)]
+struct ThreadQueueNode {
+    thread: Thread,
+    next: AtomicPtr<ThreadQueueNode>,
+}
+
+#[derive(Debug)]
+struct ThreadQueueReceiver {
+    head: &'static ThreadQueueNode,
+}
 
 #[derive(Derivative)]
 #[derivative(Debug, PartialEq, Eq, PartialOrd, Ord)]

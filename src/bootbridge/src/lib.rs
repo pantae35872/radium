@@ -2,7 +2,6 @@
 
 use core::{
     cell::OnceCell,
-    ffi::c_void,
     fmt::Debug,
     sync::atomic::{AtomicPtr, Ordering},
 };

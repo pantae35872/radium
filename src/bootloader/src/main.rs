@@ -7,17 +7,17 @@ use core::arch::asm;
 
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
-use bootbridge::{BootBridge, BootBridgeBuilder};
+use bootbridge::BootBridgeBuilder;
 use config::BootConfig;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::load_kernel;
 use pager::{
     address::{PhysAddr, VirtAddr},
     paging::{
-        table::{DirectLevel4, RecurseLevel4, Table},
+        table::{DirectLevel4, Table},
         ActivePageTable,
     },
-    registers::{Cr0, Cr0Flags, Cr3Flags, Efer, EferFlags, CS},
+    registers::{Cr0, Cr0Flags, Efer, EferFlags},
     EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 use uefi::{

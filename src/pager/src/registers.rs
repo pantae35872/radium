@@ -4,7 +4,6 @@ use core::arch::{
 };
 
 use bitflags::bitflags;
-use sentinel::log;
 
 use crate::{
     address::{Frame, PhysAddr, VirtAddr},

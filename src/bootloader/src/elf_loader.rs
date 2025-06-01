@@ -4,7 +4,7 @@ use bootbridge::BootBridgeBuilder;
 use pager::{address::PhysAddr, allocator::linear_allocator::LinearAllocator};
 use santa::{Elf, ProgramType};
 use uefi::table::boot::{AllocateType, MemoryType};
-use uefi_services::{println, system_table};
+use uefi_services::system_table;
 
 use crate::{config::BootConfig, kernel_mapper::prepare_kernel_page};
 
