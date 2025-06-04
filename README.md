@@ -3,6 +3,9 @@
 ![Project Status](https://img.shields.io/badge/status-not%20finished-orange)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen)
 
+> [!WARNING]
+> The build may not success on your system, because of edk2, and that's intentional because the project is not finished, you can remove the ovmf build in the Makefile and use your ovmf installation
+
 Radium OS is currently in the very early stages of development and is no where near usable.
 
 ## Build Dependices
