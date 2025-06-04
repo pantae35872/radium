@@ -1,11 +1,9 @@
 use pager::{
-    address::{Frame, Page, PageIter, PhysAddr, VirtAddr},
+    address::{Page, PageIter, VirtAddr},
     allocator::FrameAllocator,
     paging::{table::RecurseLevel4, ActivePageTable},
-    EntryFlags, IdentityMappable, PAGE_SIZE,
+    EntryFlags, PAGE_SIZE,
 };
-
-use crate::serial_println;
 
 use super::WithTable;
 
@@ -48,18 +46,20 @@ impl StackAllocator {
         };
 
         match (guard_page, stack_start, stack_end) {
-            (Some(guard), Some(start), Some(end)) => {
+            (Some(_guard), Some(start), Some(end)) => {
                 self.range = range;
 
                 for page in Page::range_inclusive(start, end) {
-                    active_table.map(page, EntryFlags::WRITABLE, frame_allocator);
+                    active_table.map(
+                        page,
+                        EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                        frame_allocator,
+                    );
                 }
 
                 let top_of_stack = end.start_address().as_u64() + PAGE_SIZE;
-                Some(Stack::new(
-                    VirtAddr::new(top_of_stack),
-                    start.start_address(),
-                ))
+                // SAFETY: We've already mapped the stack above as writeable and non executeable
+                Some(unsafe { Stack::new(VirtAddr::new(top_of_stack), start.start_address()) })
             }
             _ => None,
         }
@@ -85,6 +85,9 @@ impl<A: FrameAllocator> WithTable<'_, StackAllocator, A> {
     }
 }
 
+/// A data structure that contains the stack value such as top and bottom
+/// # Note
+/// The stack guard page is optional, but the stack must be **writeable and non executeable**
 #[derive(Debug)]
 pub struct Stack {
     top: VirtAddr,
@@ -92,15 +95,23 @@ pub struct Stack {
 }
 
 impl Stack {
-    pub fn new(top: VirtAddr, bottom: VirtAddr) -> Stack {
+    /// Create a new stack with the provided top and bottom
+    /// # Safety
+    /// The caller must ensure that the provided top and bottom is **correctly allocate**,
+    /// and marked as **writeable and non executeable**
+    pub unsafe fn new(top: VirtAddr, bottom: VirtAddr) -> Stack {
         assert!(top > bottom);
         Stack { top, bottom }
     }
 
+    /// Get the stack top
+    /// The return [`VirtAddr`] is gurrentee to be valid and **writeable and non executeable**
     pub fn top(&self) -> VirtAddr {
         self.top
     }
 
+    /// Get the stack bottom
+    /// The return [`VirtAddr`] is gurrentee to be valid and **writeable and non executeable**
     pub fn bottom(&self) -> VirtAddr {
         self.bottom
     }

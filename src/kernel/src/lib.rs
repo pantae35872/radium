@@ -51,9 +51,7 @@ use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Phase0};
 use logger::LOGGER;
-use pager::registers::{Cr4, Cr4Flags, Xcr0, Xcr0Flags};
 use port::{Port, Port32Bit, PortWrite};
-use raw_cpuid::CpuId;
 use sentinel::log;
 use smp::{cpu_local, cpu_local_avaiable};
 use spin::Mutex;
@@ -120,6 +118,7 @@ static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    interrupt::disable();
     match PANIC_COUNT.fetch_add(1, Ordering::SeqCst) {
         0 => {}
         1 => {
@@ -134,7 +133,12 @@ fn panic(info: &PanicInfo) -> ! {
         _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
     };
     if cpu_local_avaiable() {
-        log!(Critical, "PANIC on cpu: {}", cpu_local().cpu_id());
+        log!(
+            Critical,
+            "PANIC on cpu: {}, thread id: {}",
+            cpu_local().cpu_id(),
+            cpu_local().current_thread_id()
+        );
     }
     log!(Critical, "{}", info);
 

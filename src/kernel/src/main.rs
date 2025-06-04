@@ -52,11 +52,19 @@ fn kmain_thread() {
                 "hello from thread: {}, {i}",
                 cpu_local().current_thread_id()
             );
-            sleep(1000);
+            sleep(50);
         }
     });
 
     sleep(5000);
+
+    cpu_local().local_scheduler().spawn(|| {
+        log!(
+            Debug,
+            "this should be thread 2, current tid {}",
+            cpu_local().current_thread_id()
+        );
+    });
 
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 

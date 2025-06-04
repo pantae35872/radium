@@ -16,7 +16,9 @@ use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
+use crate::scheduler::DRIVCALL_EXIT;
 use crate::scheduler::DRIVCALL_SLEEP;
+use crate::scheduler::DRIVCALL_SPAWN;
 use crate::serial_print;
 use crate::serial_println;
 use crate::smp::cpu_local;
@@ -240,7 +242,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             DRIVCALL_SLEEP => {
                 cpu_local()
                     .local_scheduler()
-                    .sleep_thread(Dispatcher::save(stack_frame), stack_frame.rax as usize);
+                    .sleep_thread(current_thread, stack_frame.rax as usize);
+                should_schedule = true;
+            }
+            DRIVCALL_SPAWN => todo!("Implement Spawn drivcall"),
+            DRIVCALL_EXIT => {
+                cpu_local().local_scheduler().exit_thread(current_thread);
                 should_schedule = true;
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
