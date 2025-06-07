@@ -156,7 +156,7 @@ fn panic(info: &PanicInfo) -> ! {
                 .unwrap_or((0, "unknown", "unknown"));
             log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
             log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
-            if name == "start" || name == "ap_startup" {
+            if name == "start" || name == "ap_startup" || name.contains("thread_trampoline") {
                 UnwindReasonCode::END_OF_STACK
             } else {
                 UnwindReasonCode::NO_REASON

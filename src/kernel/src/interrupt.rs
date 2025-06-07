@@ -212,6 +212,7 @@ where
 extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
     if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
         eoi(idx);
+        disable();
         return;
     }
 
