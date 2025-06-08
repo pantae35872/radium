@@ -25,12 +25,7 @@ use sentinel::log;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
-    radium::init(boot_bridge);
-    cpu_local().local_scheduler().spawn(|| kmain_thread());
-
-    cpu_local().local_scheduler().start_scheduling();
-
-    hlt_loop();
+    radium::init(boot_bridge, kmain_thread);
 }
 
 fn kmain_thread() {

@@ -60,7 +60,10 @@ use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
-pub fn init(boot_bridge: *mut RawBootBridge) {
+pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
+where
+    F: FnOnce() + Send + 'static,
+{
     let boot_bridge = BootBridge::new(boot_bridge);
     let mut phase0 = InitializationContext::<Stage0>::start(boot_bridge);
     logger::init(&phase0);
@@ -76,6 +79,11 @@ pub fn init(boot_bridge: *mut RawBootBridge) {
     pit::init(&mut final_phase);
     smp::init_aps(final_phase);
     uefi_runtime::init(&mut cpu_local().ctx().lock());
+
+    cpu_local().local_scheduler().spawn(main_thread);
+    cpu_local().local_scheduler().start_scheduling();
+
+    hlt_loop();
 }
 
 #[macro_export]
@@ -90,9 +98,7 @@ macro_rules! initialize_guard {
 #[cfg(test)]
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
-    init(boot_info);
-    test_main();
-    hlt_loop();
+    init(boot_info, test_main);
 }
 
 pub fn hlt() {

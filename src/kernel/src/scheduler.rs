@@ -131,8 +131,7 @@ impl LocalScheduler {
 
     pub fn spawn<F>(&mut self, f: F)
     where
-        F: FnOnce(),
-        F: Send + 'static,
+        F: FnOnce() + Send + 'static,
     {
         let thread = Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
         log!(
