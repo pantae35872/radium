@@ -206,18 +206,13 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
     cpu_local().last_interrupt_no = idx;
 
     let current_thread = Dispatcher::save(stack_frame);
-    let mut should_schedule = false;
+    let mut is_scheduleable_interrupt = false;
 
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
             cpu_local().local_scheduler().prepare_timer();
-            let is_start = current_thread.is_start();
-            if !current_thread.is_bsp_thread() {
-                cpu_local()
-                    .local_scheduler()
-                    .push_thread(current_thread, is_start);
-                should_schedule = true;
-            }
+            cpu_local().local_scheduler().push_thread(current_thread);
+            is_scheduleable_interrupt = true;
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {}
         idx if idx == InterruptIndex::ErrorVector.as_u8() => {
@@ -231,12 +226,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
                 cpu_local()
                     .local_scheduler()
                     .sleep_thread(current_thread, stack_frame.rax as usize);
-                should_schedule = true;
+                is_scheduleable_interrupt = true;
             }
             DRIVCALL_SPAWN => todo!("Implement Spawn drivcall"),
             DRIVCALL_EXIT => {
                 cpu_local().local_scheduler().exit_thread(current_thread);
-                should_schedule = true;
+                is_scheduleable_interrupt = true;
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
@@ -246,9 +241,10 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
         }
     }
 
-    if should_schedule {
-        let sched_thread = cpu_local().local_scheduler().schedule();
-        Dispatcher::dispatch(stack_frame, sched_thread);
+    if is_scheduleable_interrupt {
+        if let Some(sched_thread) = cpu_local().local_scheduler().schedule() {
+            Dispatcher::dispatch(stack_frame, sched_thread);
+        }
     }
 
     eoi(idx);

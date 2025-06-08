@@ -30,7 +30,9 @@ use crate::{
     interrupt::{self, apic::LocalApic, idt::Idt},
     log,
     memory::{self},
+    println,
     scheduler::{sleep, LocalScheduler},
+    serial_println,
 };
 
 pub const MAX_CPU: usize = 64;
@@ -182,7 +184,14 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
     // register in the boot.asm
     let ctx = unsafe { Arc::from_raw(ctx) };
     ctx.lock().initialize_current();
+
     AP_INITIALIZED.store(true, Ordering::SeqCst);
+
+    cpu_local().local_scheduler().spawn(|| {
+        log!(Info, "Hello from cpu: {}", cpu_local().cpu_id());
+    });
+
+    cpu_local().local_scheduler().start_scheduling();
 
     hlt_loop();
 }

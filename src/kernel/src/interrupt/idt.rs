@@ -12,6 +12,8 @@ use pager::{
 
 use sentinel::log;
 
+use crate::const_assert;
+
 #[derive(Clone, Copy)]
 pub struct GateInterrupt;
 

@@ -28,7 +28,7 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge);
     cpu_local().local_scheduler().spawn(|| kmain_thread());
 
-    unsafe { cpu_local().set_tid(usize::MAX) }; // Set tid to usize::MAX to start scheduling
+    cpu_local().local_scheduler().start_scheduling();
 
     hlt_loop();
 }

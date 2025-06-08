@@ -14,6 +14,13 @@ macro_rules! inline_if {
     };
 }
 
+#[macro_export]
+macro_rules! const_assert {
+    ($($tt:tt)*) => {
+        const _: () = assert!($($tt)*);
+    }
+}
+
 pub trait NumberUtils<T> {
     fn prev_power_of_two(self) -> T;
 }

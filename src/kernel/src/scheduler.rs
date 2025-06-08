@@ -46,6 +46,7 @@ pub struct LocalScheduler {
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
     timer_count: usize,
     scheduled_ms: usize,
+    should_schedule: bool,
     pool: ThreadPool,
 }
 
@@ -59,19 +60,25 @@ pub fn driv_exit() -> ! {
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<End>) -> Self {
+    pub fn new(ctx: &mut InitializationContext<End>, cpu_id: usize) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
                 ctx.stack_allocator()
                     .alloc_stack(2)
                     .expect("Failed to allocate stack for hlt thread"),
+                cpu_id,
             )),
             sleep_queue: BinaryHeap::new(),
+            should_schedule: false,
             timer_count: 0,
             scheduled_ms: 0,
             pool: ThreadPool::new(),
         }
+    }
+
+    pub fn start_scheduling(&mut self) {
+        self.should_schedule = true;
     }
 
     pub fn exit_thread(&mut self, thread: Thread) {
@@ -87,10 +94,10 @@ impl LocalScheduler {
         self.sleep_queue.push(Reverse(sleep_entry));
     }
 
-    pub fn push_thread(&mut self, thread: Thread, just_start: bool) {
-        if thread.is_halt_thread() {
+    pub fn push_thread(&mut self, thread: Thread) {
+        if thread.local_id().is_halt_thread() {
             self.hlt_thread = Some(thread);
-        } else if !just_start {
+        } else if self.should_schedule {
             self.rr_queue.push_back(thread);
         }
     }
@@ -102,7 +109,10 @@ impl LocalScheduler {
         self.scheduled_ms = 10;
     }
 
-    pub fn schedule(&mut self) -> Thread {
+    pub fn schedule(&mut self) -> Option<Thread> {
+        if !self.should_schedule {
+            return None;
+        }
         while let Some(sleep_thread) = self.sleep_queue.peek() {
             if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue
@@ -112,9 +122,11 @@ impl LocalScheduler {
             }
         }
 
-        self.rr_queue
-            .pop_front()
-            .unwrap_or_else(|| self.hlt_thread.take().unwrap())
+        Some(
+            self.rr_queue
+                .pop_front()
+                .unwrap_or_else(|| self.hlt_thread.take().unwrap()),
+        )
     }
 
     pub fn spawn<F>(&mut self, f: F)
@@ -123,7 +135,11 @@ impl LocalScheduler {
         F: Send + 'static,
     {
         let thread = Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
-        log!(Trace, "Spawned new thread {}", thread.id());
+        log!(
+            Trace,
+            "Spawned new thread Global ID: {}",
+            thread.global_id()
+        );
         self.rr_queue.push_back(thread);
     }
 }
@@ -176,8 +192,8 @@ impl Dispatcher {
 
 pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
-        i.register(|builder, ctx, _id| {
-            builder.scheduler(LocalScheduler::new(ctx));
+        i.register(|builder, ctx, id| {
+            builder.scheduler(LocalScheduler::new(ctx, id));
         })
     });
 }

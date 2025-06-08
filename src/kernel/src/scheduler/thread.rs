@@ -1,11 +1,12 @@
-use core::mem::zeroed;
+use core::{fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
 use sentinel::log;
+use spin::RwLock;
 
 use crate::{
-    hlt_loop,
+    const_assert, hlt_loop,
     initialization_context::{End, InitializationContext},
     interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
@@ -14,11 +15,27 @@ use crate::{
 
 use super::{driv_exit, SchedulerError};
 
+static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
+
 #[derive(Debug)]
 pub struct ThreadPool {
     pool: Vec<ThreadContext>,
     dead_thread: Vec<usize>,
 }
+
+#[derive(Debug)]
+struct GlobalThreadIdPool {
+    pool: Vec<LocalThreadId>,
+    free_id: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LocalThreadId {
+    core: u32,
+    thread: u32,
+}
+
+const_assert!(size_of::<LocalThreadId>() == size_of::<u64>());
 
 #[derive(Debug)]
 struct ThreadContext {
@@ -28,7 +45,8 @@ struct ThreadContext {
 
 #[derive(Debug)]
 pub struct Thread {
-    id: usize,
+    global_id: usize,
+    local_id: LocalThreadId,
     r15: u64,
     r14: u64,
     r13: u64,
@@ -54,7 +72,7 @@ pub struct Thread {
 impl Thread {
     pub fn restore(self, stack_frame: &mut FullInterruptStackFrame) {
         // SAFETY: This is safe because thread can only be created in this module
-        unsafe { cpu_local().set_tid(self.id) };
+        unsafe { cpu_local().set_tid(self.global_id) };
         stack_frame.r15 = self.r15;
         stack_frame.r14 = self.r14;
         stack_frame.r13 = self.r13;
@@ -78,8 +96,10 @@ impl Thread {
     }
 
     pub fn capture(stack_frame: &FullInterruptStackFrame) -> Self {
+        let global_id = cpu_local().current_thread_id();
         Thread {
-            id: cpu_local().current_thread_id(),
+            global_id,
+            local_id: GLOBAL_THREAD_ID_MAP.read().translate(global_id),
             r15: stack_frame.r15,
             r14: stack_frame.r14,
             r13: stack_frame.r13,
@@ -104,15 +124,18 @@ impl Thread {
     }
 
     #[must_use]
-    fn new<F>(f: F, id: usize, context: &ThreadContext) -> Self
+    fn new<F>(f: F, local_id: LocalThreadId, context: &ThreadContext) -> Self
     where
         F: FnOnce() + Send + 'static,
     {
         let boxed: *mut F = Box::into_raw(f.into());
         let rdi = boxed as u64;
 
+        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
+
         Thread {
-            id,
+            global_id,
+            local_id,
             r15: 0,
             r14: 0,
             r13: 0,
@@ -136,26 +159,26 @@ impl Thread {
         }
     }
 
-    pub fn id(&self) -> usize {
-        self.id
+    #[inline]
+    pub fn local_id(&self) -> LocalThreadId {
+        self.local_id
     }
 
-    pub fn is_start(&self) -> bool {
-        self.id == usize::MAX
-    }
-
-    pub fn is_bsp_thread(&self) -> bool {
-        self.id == 0
-    }
-
-    pub fn is_halt_thread(&self) -> bool {
-        self.id == 1
+    #[inline]
+    pub fn global_id(&self) -> usize {
+        self.global_id
     }
 
     #[must_use]
-    pub fn hlt_thread(stack: Stack) -> Self {
+    pub fn hlt_thread(stack: Stack, core: usize) -> Self {
+        let local_id = LocalThreadId {
+            core: core as u32,
+            thread: 1,
+        };
+        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
         Thread {
-            id: 1,
+            global_id,
+            local_id,
             r15: 0,
             r14: 0,
             r13: 0,
@@ -177,6 +200,83 @@ impl Thread {
             stack_pointer: stack.top(),
             stack_segment: 0,
         }
+    }
+}
+
+impl LocalThreadId {
+    pub fn create_local(thread: u32) -> Self {
+        Self {
+            core: cpu_local().cpu_id() as u32,
+            thread,
+        }
+    }
+
+    pub fn is_bsp_thread(&self) -> bool {
+        self.thread == 0
+    }
+
+    pub fn is_halt_thread(&self) -> bool {
+        self.thread == 1
+    }
+}
+
+impl Display for LocalThreadId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "`Local Thread ID: {} on core: {}`",
+            self.thread, self.core
+        )
+    }
+}
+
+impl GlobalThreadIdPool {
+    pub const fn new() -> Self {
+        Self {
+            pool: Vec::new(),
+            free_id: Vec::new(),
+        }
+    }
+
+    #[inline]
+    fn translate(&self, global_id: usize) -> LocalThreadId {
+        self.pool[global_id]
+    }
+
+    fn migrate(&mut self, global_id: usize, new_local_id: LocalThreadId) {
+        self.pool[global_id] = new_local_id;
+    }
+
+    fn alloc(&mut self, local_id: LocalThreadId) -> usize {
+        if let Some(free) = self.free_id.pop() {
+            let id = &mut self.pool[free];
+            *id = local_id;
+
+            log!(
+                Trace,
+                "Thread ID Pool is giving out global thread id: `{free}` for local thread id: {local_id}"
+            );
+
+            return free;
+        }
+
+        let id = self.pool.len();
+        self.pool.push(local_id);
+        log!(
+            Trace,
+            "Thread ID Pool is giving out global thread id: `{id}` for local thread id: {local_id}"
+        );
+        id
+    }
+
+    fn free(&mut self, global_id: usize) -> LocalThreadId {
+        self.free_id.push(global_id);
+        log!(
+            Trace,
+            "Thread ID Pool is freeing global id: `{}`",
+            global_id
+        );
+        return self.pool[global_id];
     }
 }
 
@@ -216,29 +316,32 @@ impl ThreadPool {
             );
             thread_ctx.alive = true;
             // TODO: Clear previous thread data context for security
-            return Ok(Thread::new(f, dead, thread_ctx));
+            return Ok(Thread::new(
+                f,
+                LocalThreadId::create_local(dead as u32),
+                thread_ctx,
+            ));
         }
 
         let new_context = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
         let id = self.pool.len();
-        let thread = Thread::new(f, id, &new_context);
+        let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
         self.pool.push(new_context);
         Ok(thread)
     }
 
     pub fn free(&mut self, thread: Thread) {
+        if thread.local_id().core != cpu_local().cpu_id() as u32 {
+            todo!("Implement cross core thread freeing");
+        }
         assert!(
-            thread.id != 0 || thread.id != 1,
+            thread.local_id().thread != 0 || thread.local_id().thread != 1,
             "Thread ID 0 and 1 should not be freed"
         );
-        log!(
-            Trace,
-            "Freeing thread id: {}, On cpu: {}",
-            thread.id,
-            cpu_local().cpu_id()
-        );
-        self.dead_thread.push(thread.id);
-        self.pool[thread.id].alive = false;
+        log!(Trace, "Freeing thread: {}", thread.local_id());
+        self.dead_thread.push(thread.local_id().thread as usize);
+        self.pool[thread.local_id().thread as usize].alive = false;
+        GLOBAL_THREAD_ID_MAP.write().free(thread.global_id());
     }
 }
 
