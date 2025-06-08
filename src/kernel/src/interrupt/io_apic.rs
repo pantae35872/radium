@@ -9,7 +9,7 @@ use crate::{
         self,
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
-    initialization_context::{select_context, InitializationContext, Phase3},
+    initialization_context::{select_context, InitializationContext, Stage3},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
@@ -116,7 +116,7 @@ impl RedirectionTableEntry {
 }
 
 select_context! {
-    (FinalPhase) => {
+    (End) => {
         pub fn redirect_legacy_irqs(&mut self, legacy_irq: u8, entry: RedirectionTableEntry) {
             self.context.io_apic_manager.redirect_legacy_irqs(legacy_irq, entry);
         }
@@ -135,7 +135,7 @@ impl IoApicManager {
         &mut self,
         base: MMIOBufferInfo,
         gsi_base: usize,
-        ctx: &mut InitializationContext<Phase3>,
+        ctx: &mut InitializationContext<Stage3>,
     ) {
         log!(Debug, "Found IoApic at: {:#x}", base.addr());
         let io_apic = ctx

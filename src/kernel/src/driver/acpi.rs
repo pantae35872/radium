@@ -12,7 +12,7 @@ use sdp::Xrsdp;
 use sentinel::log;
 
 use crate::{
-    initialization_context::{InitializationContext, Phase1, Phase2},
+    initialization_context::{InitializationContext, Stage1, Stage2},
     memory::{virt_addr_alloc, MMIOBufferInfo},
 };
 
@@ -23,7 +23,7 @@ pub mod madt;
 mod rsdt;
 mod sdp;
 
-pub fn init(mut ctx: InitializationContext<Phase1>) -> InitializationContext<Phase2> {
+pub fn init(mut ctx: InitializationContext<Stage1>) -> InitializationContext<Stage2> {
     log!(Trace, "Initializing acpi");
     let acpi = unsafe { Acpi::new(&mut ctx) };
     let info = (
@@ -52,7 +52,7 @@ impl AmlHandle for AcpiHandle {
 }
 
 impl Acpi {
-    unsafe fn new(ctx: &mut InitializationContext<Phase1>) -> Self {
+    unsafe fn new(ctx: &mut InitializationContext<Stage1>) -> Self {
         let rsdp_addr = ctx.context().boot_bridge().rsdp();
         let xrsdp = unsafe { Xrsdp::new(rsdp_addr, ctx) };
         let xrsdt = unsafe { xrsdp.xrsdt(ctx) };
@@ -63,7 +63,7 @@ impl Acpi {
         }
     }
 
-    fn local_apic_mmio(&self, ctx: &mut InitializationContext<Phase1>) -> MMIOBufferInfo {
+    fn local_apic_mmio(&self, ctx: &mut InitializationContext<Stage1>) -> MMIOBufferInfo {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -72,7 +72,7 @@ impl Acpi {
         unsafe { MMIOBufferInfo::new_raw(PhysAddr::new(madt.lapic_base().into()), 1) }
     }
 
-    fn io_apics(&self, ctx: &mut InitializationContext<Phase1>) -> Vec<(MMIOBufferInfo, usize)> {
+    fn io_apics(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<(MMIOBufferInfo, usize)> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -93,7 +93,7 @@ impl Acpi {
 
     pub fn interrupt_overrides(
         &self,
-        ctx: &mut InitializationContext<Phase1>,
+        ctx: &mut InitializationContext<Stage1>,
     ) -> Vec<IoApicInterruptSourceOverride> {
         let madt = self
             .xrsdt
@@ -111,7 +111,7 @@ impl Acpi {
     }
 
     /// Call the callback with a list of apic or x2apic id
-    fn processors(&self, ctx: &mut InitializationContext<Phase1>) -> Vec<usize> {
+    fn processors(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<usize> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
@@ -157,7 +157,7 @@ impl AcpiSdtData for EmptySdt {
 impl<T: AcpiSdtData> AcpiSdt<T> {
     unsafe fn new(
         address: u64,
-        ctx: &mut InitializationContext<Phase1>,
+        ctx: &mut InitializationContext<Stage1>,
     ) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
         unsafe {

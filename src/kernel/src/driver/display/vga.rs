@@ -8,7 +8,7 @@ use conquer_once::spin::OnceCell;
 use pager::address::VirtAddr;
 use spin::Mutex;
 
-use crate::initialization_context::{InitializationContext, Phase1};
+use crate::initialization_context::{InitializationContext, Stage1};
 use crate::port::{Port, Port8Bit, PortReadWrite};
 
 // WARNING: This module is no longer used, and update.
@@ -30,7 +30,7 @@ pub struct Vga {
 pub static DRIVER: OnceCell<Mutex<Vga>> = OnceCell::uninit();
 
 impl Vga {
-    pub fn new(ctx: &mut InitializationContext<Phase1>) -> Self {
+    pub fn new(ctx: &mut InitializationContext<Stage1>) -> Self {
         Self {
             misc_port: ctx.alloc_port(0x3c2).expect("VGA Port was taken"),
             crtc_index_port: ctx.alloc_port(0x3d4).expect("VGA Port was taken"),
@@ -162,6 +162,6 @@ impl Vga {
     }
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase1>) {
+pub fn init(ctx: &mut InitializationContext<Stage1>) {
     DRIVER.init_once(|| Mutex::from(Vga::new(ctx)));
 }

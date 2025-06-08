@@ -49,7 +49,7 @@ use driver::{
 };
 use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
-use initialization_context::{InitializationContext, Phase0};
+use initialization_context::{InitializationContext, Stage0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
@@ -62,7 +62,7 @@ static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
 pub fn init(boot_bridge: *mut RawBootBridge) {
     let boot_bridge = BootBridge::new(boot_bridge);
-    let mut phase0 = InitializationContext::<Phase0>::start(boot_bridge);
+    let mut phase0 = InitializationContext::<Stage0>::start(boot_bridge);
     logger::init(&phase0);
     qemu_init(&mut phase0);
     let phase1 = memory::init(phase0);
@@ -214,7 +214,7 @@ pub enum QemuExitCode {
 
 static QEMU_EXIT_PORT: OnceCell<Mutex<Port<Port32Bit, PortWrite>>> = OnceCell::uninit();
 
-fn qemu_init(ctx: &mut InitializationContext<Phase0>) {
+fn qemu_init(ctx: &mut InitializationContext<Stage0>) {
     QEMU_EXIT_PORT.init_once(|| {
         ctx.context_mut()
             .port_allocator

@@ -2,21 +2,17 @@ use bootbridge::MemoryType;
 use pager::{
     address::VirtAddr,
     allocator::FrameAllocator,
-    paging::{
-        create_mappings,
-        table::RecurseLevel4,
-        ActivePageTable,
-    },
+    paging::{create_mappings, table::RecurseLevel4, ActivePageTable},
     EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 
-use crate::initialization_context::{InitializationContext, Phase0};
+use crate::initialization_context::{InitializationContext, Stage0};
 
 use super::GENERAL_VIRTUAL_ALLOCATOR;
 
 pub unsafe fn remap_the_kernel<A>(
     allocator: &mut A,
-    ctx: &mut InitializationContext<Phase0>,
+    ctx: &mut InitializationContext<Stage0>,
 ) -> ActivePageTable<RecurseLevel4>
 where
     A: FrameAllocator,

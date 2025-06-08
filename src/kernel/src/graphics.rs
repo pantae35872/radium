@@ -13,7 +13,7 @@ use pager::{
 use spin::mutex::Mutex;
 
 use crate::{
-    initialization_context::{InitializationContext, Phase2},
+    initialization_context::{InitializationContext, Stage2},
     interrupt,
     memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
@@ -445,7 +445,7 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
     }
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase2>) {
+pub fn init(ctx: &mut InitializationContext<Stage2>) {
     log!(Trace, "Registering graphic");
     let graphics_info = ctx.context().boot_bridge().graphics_info();
     let start = virt_addr_alloc(

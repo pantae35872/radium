@@ -1,7 +1,7 @@
-use crate::initialization_context::{InitializationContext, Phase1};
+use crate::initialization_context::{InitializationContext, Stage1};
 
 pub mod vga;
 
-pub fn init(ctx: &mut InitializationContext<Phase1>) {
+pub fn init(ctx: &mut InitializationContext<Stage1>) {
     vga::init(ctx);
 }

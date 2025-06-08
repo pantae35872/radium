@@ -7,7 +7,7 @@ use pager::{EntryFlags, Mapper, PAGE_SIZE};
 
 use crate::{
     graphics::{color::Color, graphic},
-    initialization_context::{InitializationContext, Phase2},
+    initialization_context::{InitializationContext, Stage2},
     memory::virt_addr_alloc,
 };
 
@@ -33,7 +33,7 @@ pub struct TtfRenderer {
 // TODO: ts needs a rewrite
 impl TtfRenderer {
     pub fn new(
-        ctx: &mut InitializationContext<Phase2>,
+        ctx: &mut InitializationContext<Stage2>,
         foreground_color: Color,
         background_color: Color,
     ) -> Self {

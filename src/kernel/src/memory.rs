@@ -12,7 +12,7 @@ use stack_allocator::StackAllocator;
 
 use crate::{
     driver::acpi::Acpi,
-    initialization_context::{select_context, InitializationContext, Phase0, Phase1},
+    initialization_context::{select_context, InitializationContext, Stage0, Stage1},
     initialize_guard, log, DWARF_DATA,
 };
 
@@ -28,7 +28,7 @@ pub const STACK_ALLOC_SIZE: u64 = 16384;
 /// Initialize the memory
 ///
 /// If this is being called outside kernel initialization this will panic
-pub fn init(mut ctx: InitializationContext<Phase0>) -> InitializationContext<Phase1> {
+pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Stage1> {
     initialize_guard!();
     // SAFETY: This safe because the initialize_guard_above
     unsafe { prepare_flags() };
@@ -109,7 +109,7 @@ pub unsafe fn prepare_flags() {
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 /// and the bootbridge memory map is valid
-unsafe fn init_allocator(ctx: &InitializationContext<Phase0>) -> BuddyAllocator<64> {
+unsafe fn init_allocator(ctx: &InitializationContext<Stage0>) -> BuddyAllocator<64> {
     let area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
     log!(Info, "UEFI memory map usable:");
     ctx.context()
@@ -246,7 +246,7 @@ impl MMIOBufferInfo {
 }
 
 select_context! {
-    (Phase2, Phase3, FinalPhase) => {
+    (Stage2, Stage3, End) => {
         pub fn mmio_device<T: MMIODevice<A>, A>(
             &mut self,
             args: A,
@@ -276,7 +276,7 @@ select_context! {
             Some(T::new(buf, args))
         }
     }
-    (Phase1, Phase2, FinalPhase) => {
+    (Stage1, Stage2, End) => {
         pub fn stack_allocator(&mut self) -> WithTable<'_, StackAllocator, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)

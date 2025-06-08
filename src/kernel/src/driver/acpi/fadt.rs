@@ -1,5 +1,5 @@
 use crate::{
-    initialization_context::{InitializationContext, Phase1},
+    initialization_context::{InitializationContext, Stage1},
     inline_if,
 };
 
@@ -71,7 +71,7 @@ struct GenericAddressStructure {
 }
 
 impl AcpiSdt<Fadt> {
-    pub fn dsdt(&self, ctx: &mut InitializationContext<Phase1>) -> &'static AcpiSdt<Dsdt> {
+    pub fn dsdt(&self, ctx: &mut InitializationContext<Stage1>) -> &'static AcpiSdt<Dsdt> {
         unsafe {
             AcpiSdt::<Dsdt>::new(
                 inline_if!(

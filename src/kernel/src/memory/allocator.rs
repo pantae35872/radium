@@ -1,7 +1,7 @@
 use core::ptr;
 
 use crate::{
-    initialization_context::{InitializationContext, Phase1},
+    initialization_context::{InitializationContext, Stage1},
     memory::virt_addr_alloc,
 };
 use alloc::alloc::*;
@@ -69,7 +69,7 @@ static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAll
 /// SAFETY:
 /// The caller must ensure that this is called on kernel initializaton only
 /// And must be called after the memory controller is initialize
-pub unsafe fn init(ctx: &mut InitializationContext<Phase1>) {
+pub unsafe fn init(ctx: &mut InitializationContext<Stage1>) {
     let heap_start = virt_addr_alloc(HEAP_SIZE / PAGE_SIZE);
     ctx.mapper().map_range(
         heap_start,

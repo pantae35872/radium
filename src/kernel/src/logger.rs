@@ -7,7 +7,7 @@ use sentinel::{log, set_logger, LogLevel, LoggerBackend};
 use static_log::StaticLog;
 
 use crate::{
-    initialization_context::{InitializationContext, Phase0},
+    initialization_context::{InitializationContext, Stage0},
     initialize_guard, print, serial_print,
 };
 
@@ -101,7 +101,7 @@ impl LoggerBackend for MainLogger {
     }
 }
 
-pub fn init(ctx: &InitializationContext<Phase0>) {
+pub fn init(ctx: &InitializationContext<Stage0>) {
     initialize_guard!();
     // SAFETY: This is safe because the above interrupt guard
     unsafe {

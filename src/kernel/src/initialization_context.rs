@@ -135,22 +135,22 @@ macro_rules! select_context {
 pub(crate) use select_context;
 
 create_initialization_chain! {
-    Phase0 {
+    Stage0 {
         boot_bridge: BootBridge,
         port_allocator: PortAllocator,
-    } => Phase1 {
+    } => Stage1 {
         active_table: ActivePageTable<RecurseLevel4>,
         buddy_allocator: BuddyAllocator<64>,
         stack_allocator: StackAllocator,
-    } => Phase2 {
+    } => Stage2 {
         processors: Vec<usize>,
         local_apic_mmio: MMIOBufferInfo,
         io_apics: Vec<(MMIOBufferInfo, usize)>,
         interrupt_source_overrides: Vec<IoApicInterruptSourceOverride>,
         acpi: Acpi,
-    } => Phase3 {
+    } => Stage3 {
         local_initializer: Option<LocalInitializer>,
-    } => FinalPhase {
+    } => End {
         io_apic_manager: IoApicManager,
     }
 }
@@ -181,9 +181,9 @@ pub struct InitializationContext<T: AnyInitializationPhase> {
 }
 
 impl<T: AnyInitializationPhase> InitializationContext<T> {
-    pub fn start(boot_bridge: BootBridge) -> InitializationContext<Phase0> {
+    pub fn start(boot_bridge: BootBridge) -> InitializationContext<Stage0> {
         InitializationContext {
-            context: Phase0 {
+            context: Stage0 {
                 boot_bridge,
                 port_allocator: PortAllocator::new(),
             },

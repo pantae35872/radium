@@ -6,7 +6,7 @@ use sentinel::log;
 use thread::{Thread, ThreadPool};
 
 use crate::{
-    initialization_context::{FinalPhase, InitializationContext},
+    initialization_context::{End, InitializationContext},
     interrupt::FullInterruptStackFrame,
     smp::cpu_local,
 };
@@ -59,7 +59,7 @@ pub fn driv_exit() -> ! {
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<FinalPhase>) -> Self {
+    pub fn new(ctx: &mut InitializationContext<End>) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
@@ -174,7 +174,7 @@ impl Dispatcher {
     }
 }
 
-pub fn init(ctx: &mut InitializationContext<FinalPhase>) {
+pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
         i.register(|builder, ctx, _id| {
             builder.scheduler(LocalScheduler::new(ctx));

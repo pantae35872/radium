@@ -154,7 +154,7 @@ impl<S: PortSize> Port<S, PortReadWrite> {
 }
 
 select_context! {
-    (Phase0, Phase1, Phase2, Phase3, FinalPhase) => {
+    (Stage0, Stage1, Stage2, Stage3, End) => {
         pub fn alloc_port<P: PortPermission, S: PortSize>(&mut self, address: u16) -> Option<Port<S, P>> {
             self.context_mut().port_allocator.allocate(address)
         }

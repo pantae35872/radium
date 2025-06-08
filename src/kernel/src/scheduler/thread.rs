@@ -6,7 +6,7 @@ use sentinel::log;
 
 use crate::{
     hlt_loop,
-    initialization_context::{FinalPhase, InitializationContext},
+    initialization_context::{End, InitializationContext},
     interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
     smp::cpu_local,
@@ -191,7 +191,7 @@ impl ThreadPool {
     }
 
     fn alloc_context(
-        ctx: &mut InitializationContext<FinalPhase>,
+        ctx: &mut InitializationContext<End>,
     ) -> Result<ThreadContext, SchedulerError> {
         log!(Trace, "Allocating new thread context");
         Ok(ThreadContext {

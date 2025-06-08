@@ -2,7 +2,7 @@ use core::fmt;
 use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
-use crate::initialization_context::{InitializationContext, Phase2};
+use crate::initialization_context::{InitializationContext, Stage2};
 use crate::interrupt;
 use conquer_once::spin::OnceCell;
 use sentinel::log;
@@ -38,7 +38,7 @@ macro_rules! println {
     }};
 }
 
-pub fn init(ctx: &mut InitializationContext<Phase2>, foreground_color: Color, background: Color) {
+pub fn init(ctx: &mut InitializationContext<Stage2>, foreground_color: Color, background: Color) {
     log!(Trace, "Initializing text output");
     DRIVER.init_once(|| Mutex::new(Print::new(ctx, foreground_color, background)));
 }
@@ -49,7 +49,7 @@ pub struct Print {
 
 impl Print {
     pub fn new(
-        ctx: &mut InitializationContext<Phase2>,
+        ctx: &mut InitializationContext<Stage2>,
         foreground: Color,
         background: Color,
     ) -> Self {

@@ -1,9 +1,9 @@
 use core::arch::asm;
 use core::sync::atomic::Ordering;
 
-use crate::initialization_context::FinalPhase;
+use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
-use crate::initialization_context::Phase3;
+use crate::initialization_context::Stage3;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
@@ -56,7 +56,7 @@ impl InterruptIndex {
     }
 }
 
-fn disable_pic(ctx: &mut InitializationContext<Phase3>) {
+fn disable_pic(ctx: &mut InitializationContext<Stage3>) {
     let mut pic_1_data: Port<Port8Bit, PortReadWrite> =
         ctx.alloc_port(0x21).expect("PIC Port is already taken");
     let mut pic_2_data: Port<Port8Bit, PortReadWrite> =
@@ -81,7 +81,7 @@ fn create_idt() -> &'static Idt {
     idt
 }
 
-pub fn init(mut ctx: InitializationContext<Phase3>) -> InitializationContext<FinalPhase> {
+pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End> {
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
             LocalApicArguments {
@@ -94,18 +94,17 @@ pub fn init(mut ctx: InitializationContext<Phase3>) -> InitializationContext<Fin
         .unwrap();
     disable_pic(&mut ctx);
 
-    let lapic =
-        move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<FinalPhase>, id| {
-            log!(Info, "Initializing interrupts for CPU: {id}");
-            let idt = create_idt();
-            idt.load();
-            cpu.idt(idt);
-            let mut lapic = lapic.clone();
-            lapic.enable();
-            lapic.disable_timer();
+    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<End>, id| {
+        log!(Info, "Initializing interrupts for CPU: {id}");
+        let idt = create_idt();
+        idt.load();
+        cpu.idt(idt);
+        let mut lapic = lapic.clone();
+        lapic.enable();
+        lapic.disable_timer();
 
-            cpu.lapic(lapic);
-        };
+        cpu.lapic(lapic);
+    };
 
     let mut io_apic_manager = IoApicManager::new();
     let io_apics = ctx.context().io_apics().clone();
@@ -117,7 +116,7 @@ pub fn init(mut ctx: InitializationContext<Phase3>) -> InitializationContext<Fin
         .iter()
         .for_each(|source_override| io_apic_manager.add_source_override(source_override));
 
-    let lapic_calibration = |ctx: &mut InitializationContext<FinalPhase>, id| {
+    let lapic_calibration = |ctx: &mut InitializationContext<End>, id| {
         log!(Trace, "Calibrating APIC for cpu: {id}");
         ctx.redirect_legacy_irqs(
             0,
