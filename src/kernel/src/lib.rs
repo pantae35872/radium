@@ -101,6 +101,7 @@ pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
     init(boot_info, test_main);
 }
 
+#[inline(always)]
 pub fn hlt() {
     unsafe {
         core::arch::asm!("hlt", options(nostack, preserves_flags, nomem));
