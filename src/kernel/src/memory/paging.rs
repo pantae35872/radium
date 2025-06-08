@@ -1,20 +1,16 @@
 use bootbridge::MemoryType;
 use pager::{
-    address::{PhysAddr, VirtAddr},
-    allocator::{linear_allocator::LinearAllocator, FrameAllocator},
+    address::VirtAddr,
+    allocator::FrameAllocator,
     paging::{
         create_mappings,
-        table::{DirectLevel4, RecurseLevel4, Table},
-        ActivePageTable, Entry,
+        table::RecurseLevel4,
+        ActivePageTable,
     },
-    registers::{Cr3, Cr3Flags},
     EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
 
-use crate::{
-    initialization_context::{InitializationContext, Phase0},
-    DWARF_DATA,
-};
+use crate::initialization_context::{InitializationContext, Phase0};
 
 use super::GENERAL_VIRTUAL_ALLOCATOR;
 

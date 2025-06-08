@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use pager::gdt::{Descriptor, Gdt, TaskStateSegment, DOUBLE_FAULT_IST_INDEX};
-use pager::registers::{lgdt, load_tss, DescriptorTablePointer, SegmentSelector, CS};
+use pager::registers::{load_tss, CS};
 
 use crate::initialization_context::{FinalPhase, InitializationContext, Phase3};
 use crate::smp::CpuLocalBuilder;

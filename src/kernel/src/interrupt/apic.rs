@@ -11,7 +11,7 @@ use crate::{
     driver::pit::PIT,
     inline_if,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    smp::{cpu_local, CpuLocalBuilder},
+    smp::cpu_local,
 };
 use sentinel::log;
 

@@ -1,13 +1,11 @@
 use core::{
     fmt::{Debug, LowerHex},
     marker::PhantomData,
-    ops::BitOr,
 };
 
 use bit_field::BitField;
-use sentinel::log;
 
-use crate::initialization_context::{select_context, FinalPhase, Phase0, Phase1, Phase2};
+use crate::initialization_context::select_context;
 
 const X86_PORT_SIZE: usize = 0xFFFF; // X86 port size is 16 bit
 const X86_PORT_BITMAP_SIZE: usize = 2 * X86_PORT_SIZE / 8 + 1; // 2 Bits per port, R/W

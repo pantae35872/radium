@@ -42,7 +42,7 @@ use spin::Mutex;
 use uguid::Guid;
 
 use crate::{
-    initialization_context::{FinalPhase, InitializationContext, Phase1},
+    initialization_context::{FinalPhase, InitializationContext},
     memory::virt_addr_alloc,
 };
 

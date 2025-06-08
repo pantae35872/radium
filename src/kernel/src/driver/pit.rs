@@ -8,7 +8,6 @@ use crate::{
     initialization_context::{FinalPhase, InitializationContext},
     interrupt::InterruptIndex,
     port::{Port, Port8Bit, PortReadWrite, PortWrite},
-    serial_println,
     smp::cpu_local,
 };
 

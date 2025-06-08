@@ -1,7 +1,4 @@
-use core::{
-    mem::zeroed,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::mem::zeroed;
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};

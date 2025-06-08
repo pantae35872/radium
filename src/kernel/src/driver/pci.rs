@@ -6,7 +6,7 @@ use spin::Mutex;
 use crate::{
     initialization_context::{FinalPhase, InitializationContext},
     inline_if,
-    port::{Port, Port32Bit, PortRead, PortReadWrite, PortWrite},
+    port::{Port, Port32Bit, PortReadWrite, PortWrite},
 };
 
 pub static DRIVER: Mutex<PCIControler> = Mutex::new(PCIControler::new());

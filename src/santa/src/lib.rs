@@ -348,14 +348,14 @@ impl<'a> Elf<'a> {
         self.header().program_entries_len as usize
     }
 
-    pub fn program_header_iter(&self) -> ProgramHeaderIter {
+    pub fn program_header_iter(&self) -> ProgramHeaderIter<'_> {
         ProgramHeaderIter {
             elf: self,
             index: 0,
         }
     }
 
-    pub fn section_header_iter(&self) -> SectionHeaderIter {
+    pub fn section_header_iter(&self) -> SectionHeaderIter<'_> {
         SectionHeaderIter {
             elf: self,
             index: 0,

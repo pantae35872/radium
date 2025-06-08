@@ -9,7 +9,7 @@ use crate::{
         self,
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
-    initialization_context::{select_context, FinalPhase, InitializationContext, Phase3},
+    initialization_context::{select_context, InitializationContext, Phase3},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
