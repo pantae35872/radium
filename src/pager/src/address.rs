@@ -1,5 +1,6 @@
 use core::{
     fmt,
+    hash::Hash,
     ops::{Add, AddAssign, Sub},
 };
 
@@ -377,6 +378,19 @@ impl VirtAddr {
     #[inline(always)]
     pub const fn is_null(self) -> bool {
         self.0 == 0
+    }
+}
+
+impl Hash for VirtAddr {
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        // Use splitmix64
+        let mut x = self.0;
+        x ^= x >> 30;
+        x = x.overflowing_mul(0xbf58476d1ce4e5b9).0;
+        x ^= x >> 27;
+        x = x.overflowing_mul(0x94d049bb133111eb).0;
+        x ^= x >> 31;
+        state.write_u64(x);
     }
 }
 

@@ -2,7 +2,6 @@ use core::{error::Error, fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
-use raw_cpuid::cpuid;
 use sentinel::log;
 use spin::{Mutex, RwLock};
 

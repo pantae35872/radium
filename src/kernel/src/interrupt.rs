@@ -9,6 +9,8 @@ use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::DRIVCALL_EXIT;
+use crate::scheduler::DRIVCALL_FUTEX_WAIT;
+use crate::scheduler::DRIVCALL_FUTEX_WAKE;
 use crate::scheduler::DRIVCALL_SLEEP;
 use crate::scheduler::DRIVCALL_SPAWN;
 use crate::serial_println;
@@ -231,6 +233,23 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_SPAWN => todo!("Implement Spawn drivcall"),
+            DRIVCALL_FUTEX_WAIT => {
+                cpu_local().local_scheduler().futex_wait(
+                    VirtAddr::new(stack_frame.rax),
+                    current_thread,
+                    stack_frame.rcx as usize,
+                );
+
+                is_scheduleable_interrupt = true;
+            }
+            DRIVCALL_FUTEX_WAKE => {
+                cpu_local()
+                    .local_scheduler()
+                    .futex_wake(VirtAddr::new(stack_frame.rax), stack_frame.rcx as usize);
+
+                cpu_local().local_scheduler().push_thread(current_thread);
+                is_scheduleable_interrupt = true;
+            }
             DRIVCALL_EXIT => {
                 cpu_local().local_scheduler().exit_thread(current_thread);
                 is_scheduleable_interrupt = true;

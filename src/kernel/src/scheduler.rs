@@ -7,8 +7,14 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
+use alloc::{
+    collections::{binary_heap::BinaryHeap, vec_deque::VecDeque},
+    vec,
+    vec::Vec,
+};
 use derivative::Derivative;
+use hashbrown::HashMap;
+use pager::address::VirtAddr;
 use sentinel::log;
 use thread::{Thread, ThreadPool};
 
@@ -24,6 +30,8 @@ mod thread;
 pub const DRIVCALL_SPAWN: u64 = 1;
 pub const DRIVCALL_SLEEP: u64 = 2;
 pub const DRIVCALL_EXIT: u64 = 3;
+pub const DRIVCALL_FUTEX_WAIT: u64 = 4;
+pub const DRIVCALL_FUTEX_WAKE: u64 = 5;
 
 static THREAD_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
     [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
@@ -55,6 +63,7 @@ pub struct LocalScheduler {
     hlt_thread: Option<Thread>,
     rr_queue: VecDeque<Thread>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
+    futex_map: HashMap<VirtAddr, Vec<Thread>>,
     timer_count: usize,
     scheduled_ms: usize,
     should_schedule: bool,
@@ -82,6 +91,7 @@ impl LocalScheduler {
             )),
             sleep_queue: BinaryHeap::new(),
             should_schedule: false,
+            futex_map: Default::default(),
             timer_count: 0,
             scheduled_ms: 0,
             pool: ThreadPool::new(),
@@ -170,11 +180,32 @@ impl LocalScheduler {
         }
     }
 
+    pub fn futex_wait(&mut self, addr: VirtAddr, thread: Thread, expected: usize) {
+        serial_println!("Waiting: {addr:x?}");
+        if unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() }.load(Ordering::SeqCst)
+            != expected
+        {
+            self.rr_queue.push_back(thread);
+        } else {
+            self.futex_map
+                .entry(addr)
+                .or_insert(Default::default())
+                .push(thread);
+        }
+    }
+
+    pub fn futex_wake(&mut self, addr: VirtAddr, num_waiters: usize) {
+        self.futex_map.entry(addr).and_modify(|v| {
+            let threads = v.drain(..num_waiters.min(v.len())).collect::<Vec<Thread>>();
+            self.rr_queue.extend(threads);
+        });
+    }
+
     pub fn schedule(&mut self) -> Option<Thread> {
         if !self.should_schedule {
             return None;
         }
-        self.migrate_if_required();
+        //self.migrate_if_required();
         while let Some(sleep_thread) = self.sleep_queue.peek() {
             if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue
@@ -218,6 +249,26 @@ pub fn sleep(in_millis: usize) {
 
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_SLEEP, in("rax") in_millis); // Do a driv call
+    }
+}
+
+/// Put the current thread into a sleep, until futex_wake is called;
+///
+/// # Safety
+/// The caller must ensure that addr is a valid address
+pub unsafe fn futex_wait(addr: VirtAddr, expected: usize) {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_FUTEX_WAIT, in("rax") addr.as_u64(), in("rcx") expected);
+    }
+}
+
+/// Wake all the thread waiting on this address
+///
+/// # Safety
+/// The caller must ensure that addr is a valid address
+pub unsafe fn futex_wake(addr: VirtAddr, num_waiters: usize) {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_FUTEX_WAKE, in("rax") addr.as_u64(), in("rcx") num_waiters);
     }
 }
 
