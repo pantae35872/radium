@@ -1,4 +1,11 @@
-use core::{arch::asm, cmp::Reverse, error::Error, fmt::Display, hint::unreachable_unchecked};
+use core::{
+    arch::asm,
+    cmp::Reverse,
+    error::Error,
+    fmt::Display,
+    hint::unreachable_unchecked,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
 use derivative::Derivative;
@@ -8,7 +15,8 @@ use thread::{Thread, ThreadPool};
 use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::FullInterruptStackFrame,
-    smp::cpu_local,
+    serial_println,
+    smp::{cpu_local, MAX_CPU},
 };
 
 mod thread;
@@ -16,6 +24,9 @@ mod thread;
 pub const DRIVCALL_SPAWN: u64 = 1;
 pub const DRIVCALL_SLEEP: u64 = 2;
 pub const DRIVCALL_EXIT: u64 = 3;
+
+static THREAD_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
+    [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
 // TODO: Implement the idea of custom syscall, worker threads
 //static SYSCALL_MAP: [AtomicPtr<ThreadQueueNode>; 512] =
 //    [const { AtomicPtr::new(core::ptr::null_mut()) }; 512];
@@ -85,6 +96,23 @@ impl LocalScheduler {
         self.pool.free(thread);
     }
 
+    pub fn check_migrate(&mut self) {
+        match self.pool.check_migrate() {
+            Some(thread) => {
+                serial_println!(
+                    "received thread {} on cpu {}",
+                    thread.global_id(),
+                    cpu_local().cpu_id()
+                );
+                self.rr_queue.push_back(thread);
+            }
+            None => log!(
+                Warning,
+                "Migrate interrupt received but no thread we placed on the queue"
+            ),
+        };
+    }
+
     pub fn sleep_thread(&mut self, thread: Thread, amount_millis: usize) {
         let sleep_entry = SleepEntry {
             wakeup_time: self.timer_count + amount_millis,
@@ -109,10 +137,44 @@ impl LocalScheduler {
         self.scheduled_ms = 10;
     }
 
+    fn migrate_if_required(&mut self) {
+        let local_core = cpu_local().cpu_id();
+        let local_count = self.rr_queue.len();
+
+        THREAD_COUNT_EACH_CORE[local_core].store(local_count, Ordering::Relaxed);
+
+        let mut target_core = usize::MAX;
+        let mut min_count = usize::MAX;
+
+        for (core_id, count) in THREAD_COUNT_EACH_CORE.iter().enumerate() {
+            let count = count.load(Ordering::Relaxed);
+
+            if core_id == local_core || count == usize::MAX {
+                continue;
+            }
+
+            if count < min_count {
+                min_count = count;
+                target_core = core_id;
+            }
+        }
+
+        if target_core == usize::MAX || local_count <= min_count + 1 {
+            return;
+        }
+
+        if let Some(thread) = self.rr_queue.pop_back() {
+            let _ = self.pool.migrate(target_core, thread);
+            THREAD_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
+            THREAD_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
     pub fn schedule(&mut self) -> Option<Thread> {
         if !self.should_schedule {
             return None;
         }
+        self.migrate_if_required();
         while let Some(sleep_thread) = self.sleep_queue.peek() {
             if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue

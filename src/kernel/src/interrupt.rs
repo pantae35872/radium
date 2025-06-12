@@ -11,6 +11,7 @@ use crate::scheduler::Dispatcher;
 use crate::scheduler::DRIVCALL_EXIT;
 use crate::scheduler::DRIVCALL_SLEEP;
 use crate::scheduler::DRIVCALL_SPAWN;
+use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
 use crate::PANIC_COUNT;
@@ -43,6 +44,7 @@ pub enum InterruptIndex {
     PITVector,
     ErrorVector,
     DriverCall = 0x90,
+    ThreadMigrate = 0x91,
     SpuriousInterruptsVector = 0xFF,
 }
 
@@ -235,6 +237,9 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
+        idx if idx == InterruptIndex::ThreadMigrate.as_u8() => {
+            cpu_local().local_scheduler().check_migrate();
+        }
         idx => {
             log!(Error, "Unhandled external interrupts {}", idx);
             return;

@@ -1,21 +1,25 @@
-use core::{fmt::Display, mem::zeroed};
+use core::{error::Error, fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
+use raw_cpuid::cpuid;
 use sentinel::log;
-use spin::RwLock;
+use spin::{Mutex, RwLock};
 
 use crate::{
     const_assert, hlt_loop,
     initialization_context::{End, InitializationContext},
-    interrupt::FullInterruptStackFrame,
+    interrupt::{FullInterruptStackFrame, InterruptIndex},
     memory::stack_allocator::Stack,
-    smp::cpu_local,
+    serial_println,
+    smp::{cpu_id_to_apic_id, cpu_local, MAX_CPU},
 };
 
 use super::{driv_exit, SchedulerError};
 
 static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
+static THREAD_MIGRATE_QUEUE: [Mutex<Option<(Thread, ThreadContext)>>; MAX_CPU] =
+    [const { Mutex::new(None) }; MAX_CPU];
 
 #[derive(Debug)]
 pub struct ThreadPool {
@@ -159,6 +163,17 @@ impl Thread {
         }
     }
 
+    pub fn migrate(&mut self, new_local_thread: u32) {
+        let new_local = LocalThreadId {
+            core: cpu_local().cpu_id() as u32,
+            thread: new_local_thread,
+        };
+        GLOBAL_THREAD_ID_MAP
+            .write()
+            .migrate(self.global_id(), new_local);
+        self.local_id = new_local;
+    }
+
     #[inline]
     pub fn local_id(&self) -> LocalThreadId {
         self.local_id
@@ -229,6 +244,31 @@ impl Display for LocalThreadId {
         )
     }
 }
+
+#[derive(Debug)]
+pub enum ThreadMigrationError {
+    ThreadQueueFull,
+    ThreadQueueLocked,
+    SchedulerError(SchedulerError),
+}
+
+impl Display for ThreadMigrationError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ThreadQueueFull => write!(f, "Thread queue full"),
+            Self::ThreadQueueLocked => write!(f, "Thread queue locked"),
+            Self::SchedulerError(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl From<SchedulerError> for ThreadMigrationError {
+    fn from(value: SchedulerError) -> Self {
+        Self::SchedulerError(value)
+    }
+}
+
+impl Error for ThreadMigrationError {}
 
 impl GlobalThreadIdPool {
     pub const fn new() -> Self {
@@ -330,15 +370,73 @@ impl ThreadPool {
         Ok(thread)
     }
 
-    pub fn free(&mut self, thread: Thread) {
-        if thread.local_id().core != cpu_local().cpu_id() as u32 {
-            todo!("Implement cross core thread freeing");
+    pub fn check_migrate(&mut self) -> Option<Thread> {
+        let (mut thread, thread_ctx) =
+            match THREAD_MIGRATE_QUEUE[cpu_local().cpu_id()].lock().take() {
+                Some(thread) => thread,
+                None => return None,
+            };
+
+        let id = self.pool.len();
+        thread.migrate(id as u32);
+        assert!(thread_ctx.alive);
+        self.pool.push(thread_ctx);
+        Some(thread)
+    }
+
+    pub fn migrate(
+        &mut self,
+        cpu_id_destination: usize,
+        migrate_thread: Thread,
+    ) -> Result<(), ThreadMigrationError> {
+        serial_println!(
+            "Migrating thread {} to cpu {cpu_id_destination}",
+            migrate_thread.global_id()
+        );
+
+        if THREAD_MIGRATE_QUEUE[cpu_id_destination].is_locked() {
+            return Err(ThreadMigrationError::ThreadQueueLocked);
         }
+
+        let mut thread = THREAD_MIGRATE_QUEUE[cpu_id_destination].lock();
+        if thread.is_some() {
+            return Err(ThreadMigrationError::ThreadQueueFull);
+        }
+
+        // FIXME: This create extra thread everytime the thread is migrated to a different core, we
+        // need to mark the thread in the migrater as "available for replacement" and not allocate
+        // extra context
+        let mut new_ctx = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
+        self.dead_thread
+            .push(migrate_thread.local_id().thread as usize);
+        new_ctx.alive = false;
+        let current_ctx = core::mem::replace(
+            &mut self.pool[migrate_thread.local_id().thread as usize],
+            new_ctx,
+        );
+
+        *thread = Some((migrate_thread, current_ctx));
+
+        drop(thread);
+
+        cpu_local().lapic().send_fixed_ipi(
+            cpu_id_to_apic_id(cpu_id_destination),
+            InterruptIndex::ThreadMigrate,
+        );
+
+        Ok(())
+    }
+
+    pub fn free(&mut self, thread: Thread) {
+        assert!(
+            thread.local_id().core == cpu_local().cpu_id() as u32,
+            "Thread has been migrated without changing the local id"
+        );
         assert!(
             thread.local_id().thread != 0 || thread.local_id().thread != 1,
             "Thread ID 0 and 1 should not be freed"
         );
-        log!(Trace, "Freeing thread: {}", thread.local_id());
+        log!(Debug, "Freeing thread: {}", thread.local_id());
         self.dead_thread.push(thread.local_id().thread as usize);
         self.pool[thread.local_id().thread as usize].alive = false;
         GLOBAL_THREAD_ID_MAP.write().free(thread.global_id());

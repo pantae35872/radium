@@ -37,7 +37,8 @@ use crate::{
 
 pub const MAX_CPU: usize = 64;
 
-static APIC_ID_TO_CPU_ID: OnceCell<Mutex<[Option<usize>; MAX_CPU]>> = OnceCell::uninit();
+static APIC_ID_TO_CPU_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
+static CPU_ID_TO_APIC_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
 static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
 
 pub const TRAMPOLINE_START: PhysAddr = PhysAddr::new(0x7000);
@@ -186,10 +187,6 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
     ctx.lock().initialize_current();
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
-
-    cpu_local().local_scheduler().spawn(|| {
-        log!(Info, "Hello from cpu: {}", cpu_local().cpu_id());
-    });
 
     cpu_local().local_scheduler().start_scheduling();
 
@@ -420,11 +417,19 @@ fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
     }
 }
 
-fn apic_id_to_cpu_id(apic_id: usize) -> usize {
+pub fn cpu_id_to_apic_id(cpu_id: usize) -> usize {
+    CPU_ID_TO_APIC_ID
+        .get()
+        .expect("CPU ID to APIC ID mapping must be initialized core initialization")
+        .get(cpu_id)
+        .expect("cpu id out of range")
+        .expect("cpu id is not mapped in the mapping") as usize
+}
+
+pub fn apic_id_to_cpu_id(apic_id: usize) -> usize {
     APIC_ID_TO_CPU_ID
         .get()
         .expect("APIC ID to cpu ID mapping must be initialized core initialization")
-        .lock()
         .get(apic_id)
         .expect("apic id out of range")
         .expect("apic id is not mapped in the mapping") as usize
@@ -470,6 +475,7 @@ impl InitializationContext<End> {
 
 pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
     let processors = ctx.context().processors();
+    let mut cpu_id_to_apic_id = [None; MAX_CPU];
     APIC_ID_TO_CPU_ID.init_once(|| {
         let mut id = [None; MAX_CPU];
         let mut current_id = 0;
@@ -483,10 +489,12 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
                 BSP_CPU_ID.init_once(|| current_id);
             }
             id[apic_id] = Some(current_id);
+            cpu_id_to_apic_id[current_id] = Some(apic_id);
             current_id += 1;
         });
-        id.into()
+        id
     });
+    CPU_ID_TO_APIC_ID.init_once(|| cpu_id_to_apic_id);
     ctx.next(Some(LocalInitializer::new()))
 }
 

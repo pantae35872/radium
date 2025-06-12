@@ -403,6 +403,21 @@ impl LocalApic {
         self.write_icr(icr);
     }
 
+    pub fn send_fixed_ipi(&mut self, destination: usize, destination_vector: InterruptIndex) {
+        let mut icr = 0u64;
+        if self.x2apic {
+            icr.set_bits(32..64, destination as u64);
+        } else {
+            icr.set_bits(56..64, destination as u64);
+        }
+        icr.set_bits(0..8, destination_vector.as_usize() as u64);
+        icr.set_bits(8..11, IpiDeliveryMode::Fixed as u8 as u64);
+        icr.set_bit(11, IpiDestMode::Physical as u8 == 1);
+        icr.set_bit(14, true);
+        icr.set_bit(14, false);
+        self.write_icr(icr);
+    }
+
     fn disable_local_interrupt_pins(&mut self) {
         log!(
             Trace,
