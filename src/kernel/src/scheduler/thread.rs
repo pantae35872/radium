@@ -2,7 +2,6 @@ use core::{error::Error, fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
-use sentinel::log;
 use spin::{Mutex, RwLock};
 
 use crate::{
@@ -10,7 +9,6 @@ use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{FullInterruptStackFrame, InterruptIndex},
     memory::stack_allocator::Stack,
-    serial_println,
     smp::{cpu_local, CoreId, MAX_CPU},
 };
 
@@ -24,6 +22,7 @@ static THREAD_MIGRATE_QUEUE: [Mutex<Option<(Thread, ThreadContext)>>; MAX_CPU] =
 pub struct ThreadPool {
     pool: Vec<ThreadContext>,
     dead_thread: Vec<usize>,
+    invalid_thread: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -288,30 +287,16 @@ impl GlobalThreadIdPool {
             let id = &mut self.pool[free];
             *id = local_id;
 
-            //log!(
-            //    Trace,
-            //    "Thread ID Pool is giving out global thread id: `{free}` for local thread id: {local_id}"
-            //);
-
             return free;
         }
 
         let id = self.pool.len();
         self.pool.push(local_id);
-        //log!(
-        //    Trace,
-        //    "Thread ID Pool is giving out global thread id: `{id}` for local thread id: {local_id}"
-        //);
         id
     }
 
     fn free(&mut self, global_id: usize) -> LocalThreadId {
         self.free_id.push(global_id);
-        //log!(
-        //    Trace,
-        //    "Thread ID Pool is freeing global id: `{}`",
-        //    global_id
-        //);
         return self.pool[global_id];
     }
 }
@@ -319,17 +304,16 @@ impl GlobalThreadIdPool {
 impl ThreadPool {
     /// Create new thread pool, fails if failed to allocate the context for the hlt thread
     pub fn new() -> Self {
-        //log!(Debug, "Creating new thread pool");
         Self {
             pool: vec![unsafe { zeroed() }, unsafe { zeroed() }],
             dead_thread: Vec::new(),
+            invalid_thread: Vec::new(),
         }
     }
 
     fn alloc_context(
         ctx: &mut InitializationContext<End>,
     ) -> Result<ThreadContext, SchedulerError> {
-        //log!(Trace, "Allocating new thread context");
         Ok(ThreadContext {
             alive: true,
             stack: ctx
@@ -351,12 +335,18 @@ impl ThreadPool {
                 "Invalid state, there's alive thread in the dead thread pool"
             );
             thread_ctx.alive = true;
-            // TODO: Clear previous thread data context for security
             return Ok(Thread::new(
                 f,
                 LocalThreadId::create_local(dead as u32),
                 thread_ctx,
             ));
+        }
+
+        if let Some(id) = self.invalid_thread.pop() {
+            let new_context = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
+            let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
+            self.pool[id] = new_context;
+            return Ok(thread);
         }
 
         let new_context = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
@@ -387,11 +377,6 @@ impl ThreadPool {
         dest: CoreId,
         migrate_thread: Thread,
     ) -> Result<(), ThreadMigrationError> {
-        //serial_println!(
-        //    "Migrating thread {} to core {dest}",
-        //    migrate_thread.global_id()
-        //);
-
         if THREAD_MIGRATE_QUEUE[dest.id()].is_locked() {
             return Err(ThreadMigrationError::ThreadQueueLocked);
         }
@@ -404,13 +389,13 @@ impl ThreadPool {
         // FIXME: This create extra thread everytime the thread is migrated to a different core, we
         // need to mark the thread in the migrater as "available for replacement" and not allocate
         // extra context
-        let mut new_ctx = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
-        self.dead_thread
+        self.invalid_thread
             .push(migrate_thread.local_id().thread as usize);
-        new_ctx.alive = false;
         let current_ctx = core::mem::replace(
             &mut self.pool[migrate_thread.local_id().thread as usize],
-            new_ctx,
+            // SAFETY: This is ok because we will never use invalid thread since we pushed it into
+            // invalid thread list
+            unsafe { zeroed() },
         );
 
         *thread = Some((migrate_thread, current_ctx));
@@ -433,7 +418,6 @@ impl ThreadPool {
             thread.local_id().thread != 0 || thread.local_id().thread != 1,
             "Thread ID 0 and 1 should not be freed"
         );
-        //log!(Debug, "Freeing thread: {}", thread.local_id());
         self.dead_thread.push(thread.local_id().thread as usize);
         self.pool[thread.local_id().thread as usize].alive = false;
         GLOBAL_THREAD_ID_MAP.write().free(thread.global_id());
