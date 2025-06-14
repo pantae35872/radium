@@ -1,4 +1,5 @@
 use core::{
+    fmt::Display,
     num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
     u64,
@@ -21,25 +22,27 @@ use pager::{
     allocator::linear_allocator::LinearAllocator,
     registers::{Cr3, GsBase, KernelGsBase},
 };
-use raw_cpuid::CpuId;
 use spin::Mutex;
 
 use crate::{
     hlt_loop,
     initialization_context::{select_context, End, InitializationContext, Stage2, Stage3},
-    interrupt::{self, apic::LocalApic, idt::Idt},
+    interrupt::{
+        self,
+        apic::{apic_id, ApicId, LocalApic},
+        idt::Idt,
+    },
     log,
     memory::{self},
-    println,
     scheduler::{sleep, LocalScheduler},
     serial_println,
 };
 
 pub const MAX_CPU: usize = 64;
 
-static APIC_ID_TO_CPU_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
-static CPU_ID_TO_APIC_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
-static BSP_CPU_ID: OnceCell<usize> = OnceCell::uninit();
+pub static APIC_ID_TO_CPU_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
+pub static CPU_ID_TO_APIC_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
+static BSP_CORE_ID: OnceCell<CoreId> = OnceCell::uninit();
 
 pub const TRAMPOLINE_START: PhysAddr = PhysAddr::new(0x7000);
 pub const TRAMPOLINE_END: PhysAddr = PhysAddr::new(0x9000);
@@ -156,13 +159,14 @@ impl ApInitializer {
         }
     }
 
-    fn boot_ap(&self, apic_id: usize, ctx: Arc<Mutex<InitializationContext<End>>>) {
+    fn boot_ap(&self, apic_id: ApicId, ctx: Arc<Mutex<InitializationContext<End>>>) {
         self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
-        cpu_local().lapic().send_init_ipi(apic_id);
-
+        cpu_local().lapic().send_init_ipi(apic_id, true);
         sleep(10);
+        cpu_local().lapic().send_init_ipi(apic_id, false);
+
         for _ in 0..2 {
             cpu_local().lapic().send_startup_ipi(apic_id);
             sleep(1);
@@ -188,6 +192,10 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
+    cpu_local().local_scheduler().spawn(|| loop {
+        serial_println!("core {}", cpu_local().core_id());
+        sleep(1000);
+    });
     cpu_local().local_scheduler().start_scheduling();
 
     hlt_loop();
@@ -195,15 +203,73 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
 
 pub struct LocalInitializer {
     local_initializers: Vec<
-        Box<dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, usize) + Send + Sync>,
+        Box<dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync>,
     >,
-    after_initializers: Vec<Box<dyn Fn(&mut InitializationContext<End>, usize) + Send + Sync>>,
+    after_initializers: Vec<Box<dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync>>,
     after_bsps: Vec<Box<dyn FnOnce(&mut InitializationContext<End>) + Send + Sync>>,
 }
 
+impl LocalInitializer {
+    pub const fn new() -> Self {
+        Self {
+            local_initializers: Vec::new(),
+            after_initializers: Vec::new(),
+            after_bsps: Vec::new(),
+        }
+    }
+
+    pub fn after_bsp(
+        &mut self,
+        initializer: impl FnOnce(&mut InitializationContext<End>) + Send + Sync + 'static,
+    ) {
+        self.after_bsps.push(Box::new(initializer));
+    }
+
+    pub fn register_after(
+        &mut self,
+        initializer: impl Fn(&mut InitializationContext<End>, CoreId) + Send + Sync + 'static,
+    ) {
+        self.after_initializers.push(Box::new(initializer));
+    }
+
+    pub fn register(
+        &mut self,
+        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
+            + Send
+            + Sync
+            + 'static,
+    ) {
+        self.local_initializers.push(Box::new(initializer));
+    }
+
+    fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
+        let mut cpu_local_builder = CpuLocalBuilder::new();
+        let id = CoreId::from(apic_id());
+        log!(Debug, "Initializing cpu: {id}");
+
+        self.local_initializers
+            .iter()
+            .for_each(|e| e(&mut cpu_local_builder, ctx, id));
+
+        init_local(cpu_local_builder, id);
+
+        // We enable the interrupts after we're sure that the local has been initialized
+        interrupt::enable();
+
+        if BSP_CORE_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
+            log!(Debug, "initialization bsp, bsp processor id: {id}");
+            while let Some(f) = self.after_bsps.pop() {
+                f(ctx);
+            }
+        }
+
+        self.after_initializers.iter().for_each(|e| e(ctx, id));
+    }
+}
+
 pub struct CpuLocal {
-    cpu_id: usize,
-    apic_id: usize,
+    core_id: CoreId,
+    apic_id: ApicId,
     lapic: LocalApic,
     code_seg: SegmentSelector,
     thread_id: usize,
@@ -211,8 +277,54 @@ pub struct CpuLocal {
     local_scheduler: LocalScheduler,
     ctx: Arc<Mutex<InitializationContext<End>>>,
     pub last_interrupt_no: u8,
+    pub is_in_isr: bool,
     idt: &'static Idt,
     gdt: &'static Gdt,
+}
+
+impl CpuLocal {
+    #[inline]
+    pub fn core_id(&self) -> CoreId {
+        self.core_id
+    }
+
+    #[inline]
+    pub fn apic_id(&self) -> ApicId {
+        self.apic_id
+    }
+
+    pub fn set_tpms(&mut self, tpms: NonZeroUsize) {
+        self.ticks_per_ms = Some(tpms.get());
+    }
+
+    pub fn ticks_per_ms(&self) -> usize {
+        self.ticks_per_ms.expect("TPMS is not calibrated")
+    }
+
+    pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
+        &mut self.local_scheduler
+    }
+
+    pub fn ctx(&self) -> &Mutex<InitializationContext<End>> {
+        &self.ctx
+    }
+
+    pub fn code_seg(&self) -> SegmentSelector {
+        self.code_seg
+    }
+
+    /// Setting the tid is unsafe, and can cause undefined behaviour
+    pub unsafe fn set_tid(&mut self, id: usize) {
+        self.thread_id = id;
+    }
+
+    pub fn current_thread_id(&self) -> usize {
+        self.thread_id
+    }
+
+    pub fn lapic(&mut self) -> &mut LocalApic {
+        &mut self.lapic
+    }
 }
 
 pub struct CpuLocalBuilder {
@@ -270,7 +382,7 @@ impl CpuLocalBuilder {
         let lapic = self.lapic?;
         Some(Box::<CpuLocal>::leak(
             CpuLocal {
-                cpu_id: apic_id_to_cpu_id(lapic.id()),
+                core_id: lapic.id().into(),
                 idt: self.idt?,
                 apic_id: lapic.id(),
                 code_seg: self.code_seg?,
@@ -279,6 +391,7 @@ impl CpuLocalBuilder {
                 last_interrupt_no: 0,
                 ticks_per_ms: None,
                 thread_id: 0,
+                is_in_isr: false,
                 lapic,
                 gdt: self.gdt?,
             }
@@ -287,126 +400,18 @@ impl CpuLocalBuilder {
     }
 }
 
-impl LocalInitializer {
-    pub const fn new() -> Self {
-        Self {
-            local_initializers: Vec::new(),
-            after_initializers: Vec::new(),
-            after_bsps: Vec::new(),
-        }
-    }
-
-    pub fn after_bsp(
-        &mut self,
-        initializer: impl FnOnce(&mut InitializationContext<End>) + Send + Sync + 'static,
-    ) {
-        self.after_bsps.push(Box::new(initializer));
-    }
-
-    pub fn register_after(
-        &mut self,
-        initializer: impl Fn(&mut InitializationContext<End>, usize) + Send + Sync + 'static,
-    ) {
-        self.after_initializers.push(Box::new(initializer));
-    }
-
-    pub fn register(
-        &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, usize)
-            + Send
-            + Sync
-            + 'static,
-    ) {
-        self.local_initializers.push(Box::new(initializer));
-    }
-
-    fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
-        let mut cpu_local_builder = CpuLocalBuilder::new();
-        let id = apic_id_to_cpu_id(apic_id());
-        log!(Debug, "Initializing cpu: {id}");
-
-        self.local_initializers
-            .iter()
-            .for_each(|e| e(&mut cpu_local_builder, ctx, id));
-
-        init_local(cpu_local_builder, id);
-
-        // We enable the interrupts after we're sure that the local has been initialized
-        interrupt::enable();
-
-        if BSP_CPU_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
-            log!(Debug, "initialization bsp, bsp processor id: {id}");
-            while let Some(f) = self.after_bsps.pop() {
-                f(ctx);
-            }
-        }
-
-        self.after_initializers.iter().for_each(|e| e(ctx, id));
-    }
-}
-
-impl CpuLocal {
-    pub fn apic_id(&self) -> usize {
-        self.apic_id
-    }
-
-    pub fn set_tpms(&mut self, tpms: NonZeroUsize) {
-        self.ticks_per_ms = Some(tpms.get());
-    }
-
-    pub fn ticks_per_ms(&self) -> usize {
-        self.ticks_per_ms.expect("TPMS is not calibrated")
-    }
-
-    pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
-        &mut self.local_scheduler
-    }
-
-    pub fn ctx(&self) -> &Mutex<InitializationContext<End>> {
-        &self.ctx
-    }
-
-    pub fn cpu_id(&self) -> usize {
-        self.cpu_id
-    }
-
-    pub fn code_seg(&self) -> SegmentSelector {
-        self.code_seg
-    }
-
-    /// Setting the tid is unsafe, and can cause undefined behaviour
-    pub unsafe fn set_tid(&mut self, id: usize) {
-        self.thread_id = id;
-    }
-
-    pub fn current_thread_id(&self) -> usize {
-        self.thread_id
-    }
-
-    pub fn lapic(&mut self) -> &mut LocalApic {
-        &mut self.lapic
-    }
-}
-
-fn apic_id() -> usize {
-    CpuId::new()
-        .get_feature_info()
-        .unwrap()
-        .initial_local_apic_id() as usize
-}
-
-fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
+fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
     let cpu_local = match builder.build() {
         Some(e) => e,
         None => {
-            log!(Error, "Failed to initialize CPU: {cpu_id}");
+            log!(Error, "Failed to initialize Core: {core_id}");
             interrupt::disable();
             hlt_loop();
         }
     };
     log!(
         Trace,
-        "CPU {cpu_id} Local address at: {:#x}",
+        "CORE {core_id} Local address at: {:#x}",
         cpu_local as *const CpuLocal as u64
     );
     let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
@@ -417,16 +422,51 @@ fn init_local(builder: CpuLocalBuilder, cpu_id: usize) {
     }
 }
 
-pub fn cpu_id_to_apic_id(cpu_id: usize) -> usize {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct CoreId(usize);
+
+impl CoreId {
+    pub fn new(id: usize) -> Option<Self> {
+        if CPU_ID_TO_APIC_ID
+            .get()
+            .expect("CPU ID to APIC ID mapping must be initialized core initialization")
+            .get(id)
+            .is_none()
+        {
+            return None;
+        }
+        Some(Self(id))
+    }
+
+    #[inline]
+    pub fn id(&self) -> usize {
+        self.0
+    }
+}
+
+impl Display for CoreId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<ApicId> for CoreId {
+    fn from(apic_id: ApicId) -> Self {
+        Self(apic_id_to_core_id(apic_id.id()))
+    }
+}
+
+pub fn core_id_to_apic_id(core_id: usize) -> usize {
     CPU_ID_TO_APIC_ID
         .get()
         .expect("CPU ID to APIC ID mapping must be initialized core initialization")
-        .get(cpu_id)
+        .get(core_id)
         .expect("cpu id out of range")
         .expect("cpu id is not mapped in the mapping") as usize
 }
 
-pub fn apic_id_to_cpu_id(apic_id: usize) -> usize {
+pub fn apic_id_to_core_id(apic_id: usize) -> usize {
     APIC_ID_TO_CPU_ID
         .get()
         .expect("APIC ID to cpu ID mapping must be initialized core initialization")
@@ -486,10 +526,10 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
                 "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}"
             );
             if apic_id == bsp_apic_id {
-                BSP_CPU_ID.init_once(|| current_id);
+                BSP_CORE_ID.init_once(|| CoreId(current_id));
             }
-            id[apic_id] = Some(current_id);
-            cpu_id_to_apic_id[current_id] = Some(apic_id);
+            id[apic_id.id()] = Some(current_id);
+            cpu_id_to_apic_id[current_id] = Some(apic_id.id());
             current_id += 1;
         });
         id

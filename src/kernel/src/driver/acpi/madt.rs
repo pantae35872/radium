@@ -2,6 +2,8 @@ use bit_field::BitField;
 use c_enum::c_enum;
 use pager::address::PhysAddr;
 
+use crate::interrupt::apic::ApicId;
+
 use super::{AcpiSdt, AcpiSdtData};
 
 #[derive(Debug)]
@@ -122,8 +124,9 @@ pub struct MadtInterruptsIter {
 }
 
 impl MadtLocalX2Apic {
-    pub fn apic_id(&self) -> usize {
-        self.local_x2apic_id as usize
+    pub fn apic_id(&self) -> ApicId {
+        // SAFETY: We know this is valid because it's coming from acpi
+        unsafe { ApicId::new_unchecked(self.local_x2apic_id as usize) }
     }
 }
 
@@ -154,8 +157,9 @@ impl Iterator for MadtInterruptsIter {
 }
 
 impl MadtLocalApic {
-    pub fn apic_id(&self) -> u8 {
-        self.apic_id
+    pub fn apic_id(&self) -> ApicId {
+        // SAFETY: We know this is valid because it's coming from acpi
+        unsafe { ApicId::new_unchecked(self.apic_id.into()) }
     }
 }
 

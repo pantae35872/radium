@@ -4,7 +4,7 @@ use pager::paging::{table::RecurseLevel4, ActivePageTable};
 
 use crate::{
     driver::acpi::{madt::IoApicInterruptSourceOverride, Acpi},
-    interrupt::io_apic::IoApicManager,
+    interrupt::{apic::ApicId, io_apic::IoApicManager},
     memory::{
         allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator, MMIOBufferInfo,
     },
@@ -143,7 +143,7 @@ create_initialization_chain! {
         buddy_allocator: BuddyAllocator<64>,
         stack_allocator: StackAllocator,
     } => Stage2 {
-        processors: Vec<usize>,
+        processors: Vec<ApicId>,
         local_apic_mmio: MMIOBufferInfo,
         io_apics: Vec<(MMIOBufferInfo, usize)>,
         interrupt_source_overrides: Vec<IoApicInterruptSourceOverride>,

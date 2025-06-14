@@ -10,17 +10,13 @@ extern crate lazy_static;
 extern crate radium;
 extern crate spin;
 
-use core::cell::UnsafeCell;
-use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicUsize, Ordering};
-
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use pager::address::VirtAddr;
 use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
-use radium::scheduler::{futex_wait, futex_wake, sleep};
+use radium::scheduler::sleep;
 use radium::smp::cpu_local;
+use radium::utils::mutex::Mutex;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
 use sentinel::log;
 
@@ -29,65 +25,7 @@ use sentinel::log;
 // TODO: Implements waker based async mutex
 // TODO: Impelemnts kernel services executor
 
-static TEST_MUTEX: DumbMutex<Vec<usize>> = DumbMutex::new(Vec::new());
-
-struct DumbMutex<T> {
-    lock: AtomicUsize,
-    data: UnsafeCell<T>,
-}
-
-unsafe impl<T> Sync for DumbMutex<T> {}
-
-struct MutexGuard<'a, T> {
-    lock: &'a AtomicUsize,
-    data: *mut T,
-}
-
-impl<T> DumbMutex<T> {
-    pub const fn new(value: T) -> Self {
-        Self {
-            lock: AtomicUsize::new(0),
-            data: UnsafeCell::new(value),
-        }
-    }
-
-    pub fn lock(&self) -> MutexGuard<'_, T> {
-        while self
-            .lock
-            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            unsafe { futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1) };
-        }
-        return MutexGuard {
-            lock: &self.lock,
-            data: unsafe { &mut *self.data.get() },
-        };
-    }
-}
-
-impl<'a, T> Drop for MutexGuard<'a, T> {
-    fn drop(&mut self) {
-        self.lock.store(0, Ordering::Release);
-        unsafe {
-            futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64), 1);
-        }
-    }
-}
-
-impl<'a, T> DerefMut for MutexGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.data }
-    }
-}
-
-impl<'a, T> Deref for MutexGuard<'a, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.data }
-    }
-}
+static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
@@ -99,24 +37,23 @@ fn kmain_thread() {
     log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
     cpu_local().local_scheduler().spawn(|| {
         for i in 0..64 {
-            let mut mutex = TEST_MUTEX.lock();
-            println!(
-                "hello from thread: {}, {i}, {:?}",
+            serial_println!(
+                "Thread {} [{i}]: popped {:?}",
                 cpu_local().current_thread_id(),
-                mutex.pop()
+                TEST_MUTEX.lock().pop()
             );
-            println!("{:?}", uefi_runtime().lock().get_time());
-            sleep(1000);
+            sleep(100);
         }
     });
     cpu_local().local_scheduler().spawn(|| {
         for i in 0..64 {
             serial_println!(
-                "hello from thread: {}, {i}",
+                "Thread {} [{i}]: trying to push",
                 cpu_local().current_thread_id()
             );
-            sleep(50);
+            sleep(100);
             TEST_MUTEX.lock().push(i * 10);
+            serial_println!("Thread {} [{i}]: pushed", cpu_local().current_thread_id());
         }
     });
 

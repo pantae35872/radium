@@ -15,7 +15,7 @@ use crate::{
 };
 use sentinel::log;
 
-use super::InterruptIndex;
+use super::{apic::ApicId, InterruptIndex};
 
 pub struct IoApicManager {
     io_apics: Vec<IoApic>,
@@ -45,7 +45,7 @@ pub enum DeliveryMode {
 }
 
 #[derive(Debug)]
-pub enum Destination {
+pub enum IoApicDestination {
     PhysicalDestination(usize),
     LogicalDestination,
 }
@@ -86,7 +86,7 @@ struct RawRedirectionTableEntry {
 pub struct RedirectionTableEntry {
     vector: InterruptIndex,
     delivery_mode: DeliveryMode,
-    destination: Destination,
+    destination: IoApicDestination,
     pin_polarity: PinPolarity,
     trigger_mode: TriggerMode,
 }
@@ -104,11 +104,11 @@ impl Default for PinPolarity {
 }
 
 impl RedirectionTableEntry {
-    pub fn new(vector: InterruptIndex, apic_id: usize) -> Self {
+    pub fn new(vector: InterruptIndex, apic_id: ApicId) -> Self {
         Self {
             vector,
             delivery_mode: DeliveryMode::Fixed,
-            destination: Destination::PhysicalDestination(apic_id),
+            destination: IoApicDestination::PhysicalDestination(apic_id.id()),
             pin_polarity: PinPolarity::default(),
             trigger_mode: TriggerMode::default(),
         }
@@ -310,8 +310,8 @@ impl RawRedirectionTableEntry {
         low.set_bit(
             11,
             match entry.destination {
-                Destination::LogicalDestination => true,
-                Destination::PhysicalDestination(_) => false,
+                IoApicDestination::LogicalDestination => true,
+                IoApicDestination::PhysicalDestination(_) => false,
             },
         );
         low.set_bit(13, entry.pin_polarity as u8 != 0);
@@ -319,10 +319,10 @@ impl RawRedirectionTableEntry {
         high.set_bits(
             24..32,
             match entry.destination {
-                Destination::LogicalDestination => {
+                IoApicDestination::LogicalDestination => {
                     panic!("Unsupported destination mode in IOAPIC")
                 }
-                Destination::PhysicalDestination(e) => e as u32,
+                IoApicDestination::PhysicalDestination(e) => e as u32,
             },
         );
         self.low.write(low);

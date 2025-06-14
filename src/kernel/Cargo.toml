@@ -28,6 +28,10 @@ kernel_proc = { path = "../kernel_proc" }
 pager = { path = "../pager" }
 sentinel = { path = "../sentinel" }
 
+[dependencies.thiserror]
+version = "2.0.12"
+default-features = false
+
 [dependencies.derivative]
 version = "2.2.0"
 default-features = false

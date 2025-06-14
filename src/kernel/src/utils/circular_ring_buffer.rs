@@ -230,12 +230,6 @@ pub mod lockfree {
         }
 
         fn write(&self, value: T) {
-            // this may not be lock free, but it's threaded safe, but not interrupt safe, if interrupts
-            // occurs while in writing state it'll be a dead lock, but if it's another core or another
-            // thread other core will just wait for this to finish writing, even if it's another thread
-            // on the same core it's will *almost* be a dead lock, if the system can gureentee that no
-            // thread will be stay on the cpu forever, this will causes no dead lock. but if it's in an interrupts
-            // or in an kernel panic. this that "thread" may stay forever causing a dead lock
             interrupt::without_interrupts(|| loop {
                 match self
                     .state

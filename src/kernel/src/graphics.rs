@@ -1,3 +1,4 @@
+use crate::utils::mutex::Mutex;
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bootbridge::{BootBridge, GraphicsInfo, PixelFormat};
@@ -10,7 +11,6 @@ use pager::{
     registers::{Xcr0, Xcr0Flags},
     EntryFlags, Mapper, PAGE_SIZE,
 };
-use spin::mutex::Mutex;
 
 use crate::{
     initialization_context::{InitializationContext, Stage2},
@@ -471,5 +471,5 @@ pub fn init(ctx: &mut InitializationContext<Stage2>) {
             None,
         )
         .expect("Failed to create graphics driver");
-    DRIVER.init_once(|| graphics.into());
+    DRIVER.init_once(|| Mutex::new(graphics));
 }

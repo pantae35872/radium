@@ -13,6 +13,7 @@ use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
+    interrupt::apic::ApicId,
     memory::{virt_addr_alloc, MMIOBufferInfo},
 };
 
@@ -111,16 +112,14 @@ impl Acpi {
     }
 
     /// Call the callback with a list of apic or x2apic id
-    fn processors(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<usize> {
+    fn processors(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<ApicId> {
         let madt = self
             .xrsdt
             .get::<Madt>(ctx)
             .expect("MADT table is required for Processors initialization");
         madt.iter()
             .filter_map(|e| match e {
-                InterruptControllerStructure::LocalApic(proccesor) => {
-                    Some(proccesor.apic_id() as usize)
-                }
+                InterruptControllerStructure::LocalApic(proccesor) => Some(proccesor.apic_id()),
                 InterruptControllerStructure::LocalX2Apic(processor) => Some(processor.apic_id()),
                 _ => None,
             })

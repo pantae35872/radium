@@ -1,5 +1,5 @@
+use crate::utils::mutex::Mutex;
 use lazy_static::lazy_static;
-use spin::Mutex;
 use uart_16550::SerialPort;
 
 use crate::interrupt;
@@ -15,14 +15,10 @@ lazy_static! {
 #[doc(hidden)]
 pub fn _print(args: ::core::fmt::Arguments) {
     use core::fmt::Write;
-    interrupt::without_interrupts(|| {
-        SERIAL1
-            .lock()
-            .write_fmt(args)
-            .expect("Printing to serial failed"); // FIXME: This could be a problem, if the other
-                                                  // threads are on the same core this will
-                                                  // deadlock
-    });
+    SERIAL1
+        .lock()
+        .write_fmt(args)
+        .expect("Printing to serial failed");
 }
 
 #[macro_export]

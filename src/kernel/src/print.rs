@@ -3,10 +3,9 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Stage2};
-use crate::interrupt;
+use crate::utils::mutex::Mutex;
 use conquer_once::spin::OnceCell;
 use sentinel::log;
-use spin::Mutex;
 
 use self::ttf_renderer::TtfRenderer;
 
@@ -22,13 +21,11 @@ macro_rules! print {
 }
 
 pub fn _print(args: Arguments) {
-    interrupt::without_interrupts(|| {
-        if let Some(driver) = DRIVER.get() {
-            driver.lock().write_fmt(args).unwrap();
-        } else {
-            panic!("Use of uninitialize driver (Print driver)");
-        }
-    });
+    if let Some(driver) = DRIVER.get() {
+        driver.lock().write_fmt(args).unwrap();
+    } else {
+        panic!("Use of uninitialize driver (Print driver)");
+    }
 }
 
 #[macro_export]

@@ -142,8 +142,8 @@ fn panic(info: &PanicInfo) -> ! {
     if cpu_local_avaiable() {
         log!(
             Critical,
-            "PANIC on cpu: {}, thread id: {}",
-            cpu_local().cpu_id(),
+            "PANIC on core: {}, thread id: {}",
+            cpu_local().core_id(),
             cpu_local().current_thread_id()
         );
     }

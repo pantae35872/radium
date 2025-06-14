@@ -11,7 +11,7 @@ use crate::{
     interrupt::{FullInterruptStackFrame, InterruptIndex},
     memory::stack_allocator::Stack,
     serial_println,
-    smp::{cpu_id_to_apic_id, cpu_local, MAX_CPU},
+    smp::{cpu_local, CoreId, MAX_CPU},
 };
 
 use super::{driv_exit, SchedulerError};
@@ -34,11 +34,11 @@ struct GlobalThreadIdPool {
 
 #[derive(Debug, Clone, Copy)]
 pub struct LocalThreadId {
-    core: u32,
+    core: CoreId,
     thread: u32,
 }
 
-const_assert!(size_of::<LocalThreadId>() == size_of::<u64>());
+const_assert!(size_of::<LocalThreadId>() == size_of::<u64>() * 2);
 
 #[derive(Debug)]
 struct ThreadContext {
@@ -164,7 +164,7 @@ impl Thread {
 
     pub fn migrate(&mut self, new_local_thread: u32) {
         let new_local = LocalThreadId {
-            core: cpu_local().cpu_id() as u32,
+            core: cpu_local().core_id(),
             thread: new_local_thread,
         };
         GLOBAL_THREAD_ID_MAP
@@ -184,11 +184,8 @@ impl Thread {
     }
 
     #[must_use]
-    pub fn hlt_thread(stack: Stack, core: usize) -> Self {
-        let local_id = LocalThreadId {
-            core: core as u32,
-            thread: 1,
-        };
+    pub fn hlt_thread(stack: Stack, core: CoreId) -> Self {
+        let local_id = LocalThreadId { core, thread: 1 };
         let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
         Thread {
             global_id,
@@ -220,7 +217,7 @@ impl Thread {
 impl LocalThreadId {
     pub fn create_local(thread: u32) -> Self {
         Self {
-            core: cpu_local().cpu_id() as u32,
+            core: cpu_local().core_id(),
             thread,
         }
     }
@@ -370,11 +367,13 @@ impl ThreadPool {
     }
 
     pub fn check_migrate(&mut self) -> Option<Thread> {
-        let (mut thread, thread_ctx) =
-            match THREAD_MIGRATE_QUEUE[cpu_local().cpu_id()].lock().take() {
-                Some(thread) => thread,
-                None => return None,
-            };
+        let (mut thread, thread_ctx) = match THREAD_MIGRATE_QUEUE[cpu_local().core_id().id()]
+            .lock()
+            .take()
+        {
+            Some(thread) => thread,
+            None => return None,
+        };
 
         let id = self.pool.len();
         thread.migrate(id as u32);
@@ -385,19 +384,19 @@ impl ThreadPool {
 
     pub fn migrate(
         &mut self,
-        cpu_id_destination: usize,
+        dest: CoreId,
         migrate_thread: Thread,
     ) -> Result<(), ThreadMigrationError> {
-        serial_println!(
-            "Migrating thread {} to cpu {cpu_id_destination}",
-            migrate_thread.global_id()
-        );
+        //serial_println!(
+        //    "Migrating thread {} to core {dest}",
+        //    migrate_thread.global_id()
+        //);
 
-        if THREAD_MIGRATE_QUEUE[cpu_id_destination].is_locked() {
+        if THREAD_MIGRATE_QUEUE[dest.id()].is_locked() {
             return Err(ThreadMigrationError::ThreadQueueLocked);
         }
 
-        let mut thread = THREAD_MIGRATE_QUEUE[cpu_id_destination].lock();
+        let mut thread = THREAD_MIGRATE_QUEUE[dest.id()].lock();
         if thread.is_some() {
             return Err(ThreadMigrationError::ThreadQueueFull);
         }
@@ -418,17 +417,16 @@ impl ThreadPool {
 
         drop(thread);
 
-        cpu_local().lapic().send_fixed_ipi(
-            cpu_id_to_apic_id(cpu_id_destination),
-            InterruptIndex::ThreadMigrate,
-        );
+        cpu_local()
+            .lapic()
+            .send_fixed_ipi(dest, InterruptIndex::ThreadMigrate);
 
         Ok(())
     }
 
     pub fn free(&mut self, thread: Thread) {
         assert!(
-            thread.local_id().core == cpu_local().cpu_id() as u32,
+            thread.local_id().core == cpu_local().core_id(),
             "Thread has been migrated without changing the local id"
         );
         assert!(

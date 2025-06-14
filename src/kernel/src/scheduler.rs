@@ -9,7 +9,6 @@ use core::{
 
 use alloc::{
     collections::{binary_heap::BinaryHeap, vec_deque::VecDeque},
-    vec,
     vec::Vec,
 };
 use derivative::Derivative;
@@ -20,9 +19,10 @@ use thread::{Thread, ThreadPool};
 
 use crate::{
     initialization_context::{End, InitializationContext},
-    interrupt::FullInterruptStackFrame,
+    interrupt::{FullInterruptStackFrame, InterruptIndex},
     serial_println,
-    smp::{cpu_local, MAX_CPU},
+    smp::{cpu_local, CoreId, MAX_CPU},
+    utils::spin_mpsc::SpinMPSC,
 };
 
 mod thread;
@@ -35,6 +35,10 @@ pub const DRIVCALL_FUTEX_WAKE: u64 = 5;
 
 static THREAD_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
     [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
+
+static FUTEX_CHECK: [SpinMPSC<(VirtAddr, usize), 256>; MAX_CPU] =
+    [const { SpinMPSC::new() }; MAX_CPU];
+
 // TODO: Implement the idea of custom syscall, worker threads
 //static SYSCALL_MAP: [AtomicPtr<ThreadQueueNode>; 512] =
 //    [const { AtomicPtr::new(core::ptr::null_mut()) }; 512];
@@ -80,14 +84,14 @@ pub fn driv_exit() -> ! {
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<End>, cpu_id: usize) -> Self {
+    pub fn new(ctx: &mut InitializationContext<End>, current_core_id: CoreId) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
                 ctx.stack_allocator()
                     .alloc_stack(2)
                     .expect("Failed to allocate stack for hlt thread"),
-                cpu_id,
+                current_core_id,
             )),
             sleep_queue: BinaryHeap::new(),
             should_schedule: false,
@@ -104,23 +108,6 @@ impl LocalScheduler {
 
     pub fn exit_thread(&mut self, thread: Thread) {
         self.pool.free(thread);
-    }
-
-    pub fn check_migrate(&mut self) {
-        match self.pool.check_migrate() {
-            Some(thread) => {
-                serial_println!(
-                    "received thread {} on cpu {}",
-                    thread.global_id(),
-                    cpu_local().cpu_id()
-                );
-                self.rr_queue.push_back(thread);
-            }
-            None => log!(
-                Warning,
-                "Migrate interrupt received but no thread we placed on the queue"
-            ),
-        };
     }
 
     pub fn sleep_thread(&mut self, thread: Thread, amount_millis: usize) {
@@ -147,8 +134,25 @@ impl LocalScheduler {
         self.scheduled_ms = 10;
     }
 
+    pub fn check_migrate(&mut self) {
+        match self.pool.check_migrate() {
+            Some(thread) => {
+                //serial_println!(
+                //    "received thread {} on core {}",
+                //    thread.global_id(),
+                //    cpu_local().core_id()
+                //);
+                self.rr_queue.push_back(thread);
+            }
+            None => log!(
+                Warning,
+                "Migrate interrupt received but no thread we placed on the queue"
+            ),
+        };
+    }
+
     fn migrate_if_required(&mut self) {
-        let local_core = cpu_local().cpu_id();
+        let local_core = cpu_local().core_id().id();
         let local_count = self.rr_queue.len();
 
         THREAD_COUNT_EACH_CORE[local_core].store(local_count, Ordering::Relaxed);
@@ -174,14 +178,17 @@ impl LocalScheduler {
         }
 
         if let Some(thread) = self.rr_queue.pop_back() {
-            let _ = self.pool.migrate(target_core, thread);
+            let _ = self.pool.migrate(
+                CoreId::new(target_core)
+                    .expect("Unintialized core selected when calcuating thread migration"),
+                thread,
+            );
             THREAD_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
             THREAD_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
         }
     }
 
     pub fn futex_wait(&mut self, addr: VirtAddr, thread: Thread, expected: usize) {
-        serial_println!("Waiting: {addr:x?}");
         if unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() }.load(Ordering::SeqCst)
             != expected
         {
@@ -194,9 +201,28 @@ impl LocalScheduler {
         }
     }
 
+    pub fn check_futex(&mut self) {
+        // FIXME: This can wake more threads than required, invent some way to track the num
+        // waiters across cores
+        while let Some((futex, _num_waiters)) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
+            self.futex_map.entry(futex).and_modify(|v| {
+                let threads = v.drain(..v.len()).collect::<Vec<Thread>>();
+                self.rr_queue.extend(threads);
+            });
+        }
+    }
+
     pub fn futex_wake(&mut self, addr: VirtAddr, num_waiters: usize) {
         self.futex_map.entry(addr).and_modify(|v| {
             let threads = v.drain(..num_waiters.min(v.len())).collect::<Vec<Thread>>();
+            FUTEX_CHECK
+                .iter()
+                .enumerate()
+                .filter(|(core, _)| cpu_local().core_id().id() != *core)
+                .for_each(|(_, e)| e.push((addr, num_waiters)).expect("FUTEX FULL"));
+            cpu_local()
+                .lapic()
+                .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
             self.rr_queue.extend(threads);
         });
     }
