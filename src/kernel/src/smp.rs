@@ -43,6 +43,7 @@ pub const MAX_CPU: usize = 64;
 
 pub static APIC_ID_TO_CPU_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
 pub static CPU_ID_TO_APIC_ID: OnceCell<[Option<usize>; MAX_CPU]> = OnceCell::uninit();
+pub static ALL_AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static BSP_CORE_ID: OnceCell<CoreId> = OnceCell::uninit();
 
 pub const TRAMPOLINE_START: PhysAddr = PhysAddr::new(0x7000);
@@ -575,5 +576,6 @@ pub fn init_aps(mut ctx: InitializationContext<End>) {
             }
             ap_initializer.boot_ap(apic_id, ctx.clone());
         });
+        ALL_AP_INITIALIZED.store(true, Ordering::Relaxed);
     });
 }

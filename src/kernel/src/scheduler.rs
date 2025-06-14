@@ -225,7 +225,15 @@ impl LocalScheduler {
             .filter(|(core, _)| {
                 cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
             })
-            .for_each(|(_, e)| e.push(addr).expect("FUTEX FULL"));
+            .for_each(|(c, e)| match e.push(addr) {
+                Some(_) => {}
+                None => {
+                    if FUTEX_CHECK[cpu_local().core_id().id()].pop().is_none() {
+                        panic!("FULL FUTEX, with NO FUTEX in a queue??");
+                    }
+                    panic!("FULL FUTEX ON CORE: {c}")
+                }
+            });
         cpu_local()
             .lapic()
             .broadcast_fixed_ipi(InterruptIndex::CheckFutex);

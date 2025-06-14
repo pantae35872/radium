@@ -52,8 +52,9 @@ use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Stage0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
+use scheduler::sleep;
 use sentinel::log;
-use smp::{cpu_local, cpu_local_avaiable};
+use smp::{cpu_local, cpu_local_avaiable, ALL_AP_INITIALIZED};
 use spin::Mutex;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
@@ -80,7 +81,13 @@ where
     smp::init_aps(final_phase);
     uefi_runtime::init(&mut cpu_local().ctx().lock());
 
-    cpu_local().local_scheduler().spawn(main_thread);
+    cpu_local().local_scheduler().spawn(|| {
+        while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
+            sleep(1000);
+        }
+        sleep(1000);
+        main_thread()
+    });
     cpu_local().local_scheduler().start_scheduling();
 
     hlt_loop();

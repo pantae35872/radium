@@ -21,7 +21,7 @@ impl<T, const N: usize> SpinMPSC<T, N> {
     }
 
     pub fn push(&self, value: T) -> Option<()> {
-        let mut tail = self.head.load(Ordering::Relaxed);
+        let mut tail = self.tail.load(Ordering::Relaxed);
 
         loop {
             let head = self.head.load(Ordering::Acquire);
