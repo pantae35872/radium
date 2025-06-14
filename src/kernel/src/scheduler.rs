@@ -187,12 +187,7 @@ impl LocalScheduler {
     pub fn futex_wait(&mut self, addr: VirtAddr, thread: Thread, expected: usize) {
         let val = unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() };
 
-        if self.wake_marker.remove(&addr).is_some() {
-            self.rr_queue.push_front(thread);
-            return;
-        }
-
-        if val.load(Ordering::SeqCst) != expected {
+        if self.wake_marker.remove(&addr).is_some() && val.load(Ordering::SeqCst) != expected {
             self.rr_queue.push_front(thread);
             return;
         }
@@ -202,10 +197,16 @@ impl LocalScheduler {
 
     pub fn check_futex(&mut self) {
         while let Some(futex) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
+            let mut any_woken = false;
             self.futex_map.entry(futex).and_modify(|v| {
-                v.drain(..).for_each(|e| self.rr_queue.push_back(e));
+                if let Some(e) = v.pop() {
+                    self.rr_queue.push_front(e);
+                    any_woken = true;
+                }
             });
-            self.wake_marker.insert(futex, ());
+            if !any_woken {
+                self.wake_marker.insert(futex, ());
+            }
         }
     }
 
@@ -213,11 +214,15 @@ impl LocalScheduler {
         let mut any_woken = false;
 
         self.futex_map.entry(addr).and_modify(|v| {
-            v.drain(..).for_each(|e| {
-                self.rr_queue.push_back(e);
+            if let Some(e) = v.pop() {
+                self.rr_queue.push_front(e);
                 any_woken = true;
-            });
+            }
         });
+
+        if any_woken {
+            return;
+        }
 
         FUTEX_CHECK
             .iter()
@@ -225,22 +230,17 @@ impl LocalScheduler {
             .filter(|(core, _)| {
                 cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
             })
-            .for_each(|(c, e)| match e.push(addr) {
-                Some(_) => {}
-                None => {
-                    if FUTEX_CHECK[cpu_local().core_id().id()].pop().is_none() {
-                        panic!("FULL FUTEX, with NO FUTEX in a queue??");
-                    }
-                    panic!("FULL FUTEX ON CORE: {c}")
+            .for_each(|(c, e)| {
+                while e.push(addr).is_none() {
+                    cpu_local()
+                        .lapic()
+                        .send_fixed_ipi(CoreId::new(c).unwrap(), InterruptIndex::CheckFutex);
                 }
             });
+
         cpu_local()
             .lapic()
             .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
-
-        if any_woken {
-            return;
-        }
 
         self.wake_marker.insert(addr, ());
     }
