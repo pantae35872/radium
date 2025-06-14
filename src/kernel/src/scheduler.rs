@@ -67,6 +67,7 @@ pub struct LocalScheduler {
     rr_queue: VecDeque<Thread>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
     futex_map: HashMap<VirtAddr, Vec<Thread>>,
+    wake_marker: HashMap<VirtAddr, ()>,
     timer_count: usize,
     scheduled_ms: usize,
     should_schedule: bool,
@@ -95,6 +96,7 @@ impl LocalScheduler {
             sleep_queue: BinaryHeap::new(),
             should_schedule: false,
             futex_map: Default::default(),
+            wake_marker: Default::default(),
             timer_count: 0,
             scheduled_ms: 0,
             pool: ThreadPool::new(),
@@ -136,11 +138,6 @@ impl LocalScheduler {
     pub fn check_migrate(&mut self) {
         match self.pool.check_migrate() {
             Some(thread) => {
-                //serial_println!(
-                //    "received thread {} on core {}",
-                //    thread.global_id(),
-                //    cpu_local().core_id()
-                //);
                 self.rr_queue.push_back(thread);
             }
             None => log!(
@@ -188,40 +185,56 @@ impl LocalScheduler {
     }
 
     pub fn futex_wait(&mut self, addr: VirtAddr, thread: Thread, expected: usize) {
-        if unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() }.load(Ordering::SeqCst)
-            != expected
-        {
+        let val = unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() };
+
+        if self.wake_marker.remove(&addr).is_some() {
             self.rr_queue.push_front(thread);
-        } else {
-            self.futex_map
-                .entry(addr)
-                .or_insert(Default::default())
-                .push(thread);
+            return;
         }
+
+        if val.load(Ordering::SeqCst) != expected {
+            self.rr_queue.push_front(thread);
+            return;
+        }
+
+        self.futex_map.entry(addr).or_default().push(thread);
     }
 
     pub fn check_futex(&mut self) {
         while let Some(futex) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
             self.futex_map.entry(futex).and_modify(|v| {
-                v.drain(..v.len()).for_each(|e| self.rr_queue.push_back(e));
+                v.drain(..).for_each(|e| self.rr_queue.push_back(e));
             });
+            self.wake_marker.insert(futex, ());
         }
     }
 
     pub fn futex_wake(&mut self, addr: VirtAddr) {
+        let mut any_woken = false;
+
         self.futex_map.entry(addr).and_modify(|v| {
-            v.drain(..v.len()).for_each(|e| self.rr_queue.push_back(e));
-            FUTEX_CHECK
-                .iter()
-                .enumerate()
-                .filter(|(core, _)| {
-                    cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
-                })
-                .for_each(|(_, e)| e.push(addr).expect("FUTEX FULL"));
-            cpu_local()
-                .lapic()
-                .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
+            v.drain(..).for_each(|e| {
+                self.rr_queue.push_back(e);
+                any_woken = true;
+            });
         });
+
+        FUTEX_CHECK
+            .iter()
+            .enumerate()
+            .filter(|(core, _)| {
+                cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
+            })
+            .for_each(|(_, e)| e.push(addr).expect("FUTEX FULL"));
+        cpu_local()
+            .lapic()
+            .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
+
+        if any_woken {
+            return;
+        }
+
+        self.wake_marker.insert(addr, ());
     }
 
     pub fn schedule(&mut self) -> Option<Thread> {
@@ -232,7 +245,7 @@ impl LocalScheduler {
         while let Some(sleep_thread) = self.sleep_queue.peek() {
             if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue
-                    .push_back(self.sleep_queue.pop().unwrap().0.thread);
+                    .push_front(self.sleep_queue.pop().unwrap().0.thread);
             } else {
                 break;
             }
@@ -250,11 +263,11 @@ impl LocalScheduler {
         F: FnOnce() + Send + 'static,
     {
         let thread = Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
-        log!(
-            Trace,
-            "Spawned new thread Global ID: {}",
-            thread.global_id()
-        );
+        //log!(
+        //    Trace,
+        //    "Spawned new thread Global ID: {}",
+        //    thread.global_id()
+        //);
         self.rr_queue.push_back(thread);
     }
 }

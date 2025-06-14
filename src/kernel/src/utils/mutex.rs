@@ -31,6 +31,10 @@ impl<T> Mutex<T> {
         }
     }
 
+    pub unsafe fn force_unlock(&self) {
+        self.lock.store(0, Ordering::SeqCst);
+    }
+
     pub fn lock(&self) -> MutexGuard<'_, T> {
         while self
             .lock
@@ -39,9 +43,9 @@ impl<T> Mutex<T> {
         {
             // TODO: Due to futex is not yet stable enough to use, threads can be dead lock or lost
             // permanently
-            //if cpu_local_avaiable() && !cpu_local().is_in_isr {
-            //    unsafe { futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1) };
-            //}
+            if cpu_local_avaiable() && !cpu_local().is_in_isr {
+                unsafe { futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1) };
+            }
         }
         return MutexGuard {
             lock: &self.lock,
@@ -52,13 +56,13 @@ impl<T> Mutex<T> {
 
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
-        self.lock.store(0, Ordering::Release);
+        self.lock.store(0, Ordering::SeqCst);
 
         // TODO: Due to futex is not yet stable enough to use, threads can be dead lock or lost
         // permanently
-        //if cpu_local_avaiable() && !cpu_local().is_in_isr {
-        //    unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };
-        //}
+        if cpu_local_avaiable() && !cpu_local().is_in_isr {
+            unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };
+        }
     }
 }
 

@@ -126,6 +126,8 @@ static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     interrupt::disable();
+    print::DRIVER.get().inspect(|e| unsafe { e.force_unlock() });
+    unsafe { serial::SERIAL1.force_unlock() };
     match PANIC_COUNT.fetch_add(1, Ordering::SeqCst) {
         0 => {}
         1 => {

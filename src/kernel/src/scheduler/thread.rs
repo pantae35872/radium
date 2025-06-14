@@ -288,30 +288,30 @@ impl GlobalThreadIdPool {
             let id = &mut self.pool[free];
             *id = local_id;
 
-            log!(
-                Trace,
-                "Thread ID Pool is giving out global thread id: `{free}` for local thread id: {local_id}"
-            );
+            //log!(
+            //    Trace,
+            //    "Thread ID Pool is giving out global thread id: `{free}` for local thread id: {local_id}"
+            //);
 
             return free;
         }
 
         let id = self.pool.len();
         self.pool.push(local_id);
-        log!(
-            Trace,
-            "Thread ID Pool is giving out global thread id: `{id}` for local thread id: {local_id}"
-        );
+        //log!(
+        //    Trace,
+        //    "Thread ID Pool is giving out global thread id: `{id}` for local thread id: {local_id}"
+        //);
         id
     }
 
     fn free(&mut self, global_id: usize) -> LocalThreadId {
         self.free_id.push(global_id);
-        log!(
-            Trace,
-            "Thread ID Pool is freeing global id: `{}`",
-            global_id
-        );
+        //log!(
+        //    Trace,
+        //    "Thread ID Pool is freeing global id: `{}`",
+        //    global_id
+        //);
         return self.pool[global_id];
     }
 }
@@ -319,7 +319,7 @@ impl GlobalThreadIdPool {
 impl ThreadPool {
     /// Create new thread pool, fails if failed to allocate the context for the hlt thread
     pub fn new() -> Self {
-        log!(Debug, "Creating new thread pool");
+        //log!(Debug, "Creating new thread pool");
         Self {
             pool: vec![unsafe { zeroed() }, unsafe { zeroed() }],
             dead_thread: Vec::new(),
@@ -329,7 +329,7 @@ impl ThreadPool {
     fn alloc_context(
         ctx: &mut InitializationContext<End>,
     ) -> Result<ThreadContext, SchedulerError> {
-        log!(Trace, "Allocating new thread context");
+        //log!(Trace, "Allocating new thread context");
         Ok(ThreadContext {
             alive: true,
             stack: ctx
@@ -433,7 +433,7 @@ impl ThreadPool {
             thread.local_id().thread != 0 || thread.local_id().thread != 1,
             "Thread ID 0 and 1 should not be freed"
         );
-        log!(Debug, "Freeing thread: {}", thread.local_id());
+        //log!(Debug, "Freeing thread: {}", thread.local_id());
         self.dead_thread.push(thread.local_id().thread as usize);
         self.pool[thread.local_id().thread as usize].alive = false;
         GLOBAL_THREAD_ID_MAP.write().free(thread.global_id());
