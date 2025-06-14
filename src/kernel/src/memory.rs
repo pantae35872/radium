@@ -86,7 +86,7 @@ pub unsafe fn prepare_flags() {
         enable_nxe_bit();
         enable_write_protect_bit();
 
-        Cr4::write_or(Cr4Flags::OSXSAVE);
+        Cr4::write_or(Cr4Flags::OSXSAVE | Cr4Flags::OSFXS);
         let mut flags = Xcr0Flags::empty();
         if esi.xcr0_supports_sse_128() {
             flags |= Xcr0Flags::SEE;

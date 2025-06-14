@@ -77,6 +77,7 @@ fn create_idt() -> &'static Idt {
     idt.general_protection
         .set_handler_fn(general_protection_fault_handler);
     idt.page_fault.set_handler_fn(page_fault_handler);
+    idt.invalid_opcode.set_handler_fn(invalid_opcode);
     unsafe {
         idt.double_fault
             .set_handler_fn(double_fault_handler)
@@ -248,10 +249,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             DRIVCALL_FUTEX_WAKE => {
                 cpu_local()
                     .local_scheduler()
-                    .futex_wake(VirtAddr::new(stack_frame.rax), stack_frame.rcx as usize);
-
-                cpu_local().local_scheduler().push_thread(current_thread);
-                is_scheduleable_interrupt = true;
+                    .futex_wake(VirtAddr::new(stack_frame.rax));
             }
             DRIVCALL_EXIT => {
                 cpu_local().local_scheduler().exit_thread(current_thread);
@@ -287,6 +285,10 @@ fn eoi(idx: u8) {
     if idx != InterruptIndex::DriverCall.as_u8() {
         cpu_local().lapic().eoi();
     }
+}
+
+extern "x86-interrupt" fn invalid_opcode(stack_frame: InterruptStackFrame) {
+    panic!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
 }
 
 extern "x86-interrupt" fn general_protection_fault_handler(

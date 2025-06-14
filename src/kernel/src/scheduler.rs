@@ -36,8 +36,7 @@ pub const DRIVCALL_FUTEX_WAKE: u64 = 5;
 static THREAD_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
     [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
 
-static FUTEX_CHECK: [SpinMPSC<(VirtAddr, usize), 256>; MAX_CPU] =
-    [const { SpinMPSC::new() }; MAX_CPU];
+static FUTEX_CHECK: [SpinMPSC<VirtAddr, 256>; MAX_CPU] = [const { SpinMPSC::new() }; MAX_CPU];
 
 // TODO: Implement the idea of custom syscall, worker threads
 //static SYSCALL_MAP: [AtomicPtr<ThreadQueueNode>; 512] =
@@ -192,7 +191,7 @@ impl LocalScheduler {
         if unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() }.load(Ordering::SeqCst)
             != expected
         {
-            self.rr_queue.push_back(thread);
+            self.rr_queue.push_front(thread);
         } else {
             self.futex_map
                 .entry(addr)
@@ -202,28 +201,26 @@ impl LocalScheduler {
     }
 
     pub fn check_futex(&mut self) {
-        // FIXME: This can wake more threads than required, invent some way to track the num
-        // waiters across cores
-        while let Some((futex, _num_waiters)) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
+        while let Some(futex) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
             self.futex_map.entry(futex).and_modify(|v| {
-                let threads = v.drain(..v.len()).collect::<Vec<Thread>>();
-                self.rr_queue.extend(threads);
+                v.drain(..v.len()).for_each(|e| self.rr_queue.push_back(e));
             });
         }
     }
 
-    pub fn futex_wake(&mut self, addr: VirtAddr, num_waiters: usize) {
+    pub fn futex_wake(&mut self, addr: VirtAddr) {
         self.futex_map.entry(addr).and_modify(|v| {
-            let threads = v.drain(..num_waiters.min(v.len())).collect::<Vec<Thread>>();
+            v.drain(..v.len()).for_each(|e| self.rr_queue.push_back(e));
             FUTEX_CHECK
                 .iter()
                 .enumerate()
-                .filter(|(core, _)| cpu_local().core_id().id() != *core)
-                .for_each(|(_, e)| e.push((addr, num_waiters)).expect("FUTEX FULL"));
+                .filter(|(core, _)| {
+                    cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
+                })
+                .for_each(|(_, e)| e.push(addr).expect("FUTEX FULL"));
             cpu_local()
                 .lapic()
                 .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
-            self.rr_queue.extend(threads);
         });
     }
 
@@ -231,7 +228,7 @@ impl LocalScheduler {
         if !self.should_schedule {
             return None;
         }
-        //self.migrate_if_required();
+        self.migrate_if_required();
         while let Some(sleep_thread) = self.sleep_queue.peek() {
             if self.timer_count >= sleep_thread.0.wakeup_time as usize {
                 self.rr_queue
@@ -292,9 +289,9 @@ pub unsafe fn futex_wait(addr: VirtAddr, expected: usize) {
 ///
 /// # Safety
 /// The caller must ensure that addr is a valid address
-pub unsafe fn futex_wake(addr: VirtAddr, num_waiters: usize) {
+pub unsafe fn futex_wake(addr: VirtAddr) {
     unsafe {
-        asm!("int 0x90", in("rdi") DRIVCALL_FUTEX_WAKE, in("rax") addr.as_u64(), in("rcx") num_waiters);
+        asm!("int 0x90", in("rdi") DRIVCALL_FUTEX_WAKE, in("rax") addr.as_u64());
     }
 }
 

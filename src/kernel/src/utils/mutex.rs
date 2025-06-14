@@ -37,9 +37,11 @@ impl<T> Mutex<T> {
             .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            if cpu_local_avaiable() && !cpu_local().is_in_isr {
-                unsafe { futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1) };
-            }
+            // TODO: Due to futex is not yet stable enough to use, threads can be dead lock or lost
+            // permanently
+            //if cpu_local_avaiable() && !cpu_local().is_in_isr {
+            //    unsafe { futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1) };
+            //}
         }
         return MutexGuard {
             lock: &self.lock,
@@ -52,9 +54,11 @@ impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
         self.lock.store(0, Ordering::Release);
 
-        if cpu_local_avaiable() && !cpu_local().is_in_isr {
-            unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64), 1) };
-        }
+        // TODO: Due to futex is not yet stable enough to use, threads can be dead lock or lost
+        // permanently
+        //if cpu_local_avaiable() && !cpu_local().is_in_isr {
+        //    unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };
+        //}
     }
 }
 

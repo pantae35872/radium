@@ -34,6 +34,7 @@ use crate::{
     },
     log,
     memory::{self},
+    println,
     scheduler::{sleep, LocalScheduler},
     serial_println,
 };
@@ -194,6 +195,7 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
 
     cpu_local().local_scheduler().spawn(|| loop {
         serial_println!("core {}", cpu_local().core_id());
+        println!("core {}", cpu_local().core_id());
         sleep(1000);
     });
     cpu_local().local_scheduler().start_scheduling();
@@ -278,11 +280,17 @@ pub struct CpuLocal {
     ctx: Arc<Mutex<InitializationContext<End>>>,
     pub last_interrupt_no: u8,
     pub is_in_isr: bool,
+    core_count: usize,
     idt: &'static Idt,
     gdt: &'static Gdt,
 }
 
 impl CpuLocal {
+    #[inline]
+    pub fn core_count(&self) -> usize {
+        self.core_count
+    }
+
     #[inline]
     pub fn core_id(&self) -> CoreId {
         self.core_id
@@ -332,6 +340,7 @@ pub struct CpuLocalBuilder {
     gdt: Option<&'static Gdt>,
     idt: Option<&'static Idt>,
     code_seg: Option<SegmentSelector>,
+    core_count: Option<usize>,
     initialization_contex: Option<Arc<Mutex<InitializationContext<End>>>>,
     local_scheduler: Option<LocalScheduler>,
 }
@@ -345,6 +354,7 @@ impl CpuLocalBuilder {
             code_seg: None,
             initialization_contex: None,
             local_scheduler: None,
+            core_count: None,
         }
     }
 
@@ -355,6 +365,11 @@ impl CpuLocalBuilder {
 
     pub fn scheduler(&mut self, scheduler: LocalScheduler) -> &mut Self {
         self.local_scheduler = Some(scheduler);
+        self
+    }
+
+    pub fn core_count(&mut self, core_count: usize) -> &mut Self {
+        self.core_count = Some(core_count);
         self
     }
 
@@ -392,6 +407,7 @@ impl CpuLocalBuilder {
                 ticks_per_ms: None,
                 thread_id: 0,
                 is_in_isr: false,
+                core_count: self.core_count?,
                 lapic,
                 gdt: self.gdt?,
             }
@@ -543,8 +559,10 @@ pub fn init_aps(mut ctx: InitializationContext<End>) {
     let ctx = Arc::new(Mutex::new(ctx));
     let ctx_cloned = Arc::clone(&ctx);
     ctx.lock().local_initializer(|i| {
-        i.register(move |builder, _ctx, _id| {
-            builder.ctx(ctx_cloned.clone());
+        i.register(move |builder, ctx, _id| {
+            builder
+                .core_count(ctx.context().processors().len())
+                .ctx(ctx_cloned.clone());
         })
     });
     ctx.lock().initialize_current();
