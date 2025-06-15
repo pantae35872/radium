@@ -117,7 +117,7 @@ fn kmain_thread() {
     });
 
     log!(Debug, "This should be the last log");
-    LOGGER.flush_all(&[|s| serial_print!("{s}")]);
+    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     #[cfg(test)]
     test_main();
