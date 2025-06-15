@@ -1,3 +1,5 @@
+// Derived from https://github.com/tchajed/futex-tutorial/blob/main/mutex_better.c
+
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
@@ -10,6 +12,10 @@ use crate::{
     scheduler::{futex_wait, futex_wake},
     smp::{cpu_local, cpu_local_avaiable},
 };
+
+const UNLOCKED: usize = 0;
+const LOCKED_NO_WAIT: usize = 1;
+const LOCKED_WAIT: usize = 2;
 
 pub struct Mutex<T> {
     lock: AtomicUsize,
@@ -36,19 +42,50 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        while self
+        assert!(cpu_local_avaiable() && !cpu_local().is_in_isr);
+        let mut c = UNLOCKED;
+        if self
             .lock
-            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
+            .compare_exchange_weak(c, LOCKED_NO_WAIT, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
         {
-            if cpu_local_avaiable() && !cpu_local().is_in_isr {
-                while self.lock.load(Ordering::Relaxed) == 1 {
-                    unsafe {
-                        futex_wait(VirtAddr::new(&self.lock as *const AtomicUsize as u64), 1)
-                    };
-                }
+            return MutexGuard {
+                lock: &self.lock,
+                data: unsafe { &mut *self.data.get() },
+            };
+        }
+        loop {
+            if c == LOCKED_WAIT
+                || self
+                    .lock
+                    .compare_exchange(
+                        LOCKED_NO_WAIT,
+                        LOCKED_WAIT,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .err()
+                    .is_some()
+            {
+                unsafe {
+                    futex_wait(
+                        VirtAddr::new(&self.lock as *const AtomicUsize as u64),
+                        LOCKED_WAIT,
+                    )
+                };
+            }
+
+            c = UNLOCKED;
+
+            if self
+                .lock
+                .compare_exchange_weak(c, LOCKED_WAIT, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
             }
         }
+
         return MutexGuard {
             lock: &self.lock,
             data: unsafe { &mut *self.data.get() },
@@ -58,9 +95,9 @@ impl<T> Mutex<T> {
 
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
-        self.lock.store(0, Ordering::Release);
-
-        if cpu_local_avaiable() && !cpu_local().is_in_isr {
+        assert!(cpu_local_avaiable() && !cpu_local().is_in_isr);
+        if self.lock.fetch_sub(1, Ordering::Release) != LOCKED_NO_WAIT {
+            self.lock.store(UNLOCKED, Ordering::Release);
             unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };
         }
     }
