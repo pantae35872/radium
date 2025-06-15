@@ -171,7 +171,14 @@ impl LocalScheduler {
         if let Some(thread) = self.rr_queue.pop_back() {
             let core = CoreId::new(target_core)
                 .expect("Unintialized core selected when calcuating thread migration");
+            log!(
+                Trace,
+                "Migrating thread {} to core {}",
+                thread.global_id(),
+                core
+            );
             self.pool.migrate(core, thread);
+
             THREAD_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
             THREAD_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
         }
@@ -270,11 +277,11 @@ impl LocalScheduler {
         F: FnOnce() + Send + 'static,
     {
         let thread = Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
-        //log!(
-        //    Trace,
-        //    "Spawned new thread Global ID: {}",
-        //    thread.global_id()
-        //);
+        log!(
+            Trace,
+            "Spawned new thread Global ID: {}",
+            thread.global_id()
+        );
         self.rr_queue.push_back(thread);
     }
 }

@@ -8,7 +8,8 @@ use static_log::StaticLog;
 
 use crate::{
     initialization_context::{InitializationContext, Stage0},
-    initialize_guard, print, serial_print,
+    initialize_guard, inline_if, print, serial_print,
+    smp::{cpu_local, cpu_local_avaiable},
 };
 
 mod static_log;
@@ -97,13 +98,31 @@ impl MainLogger {
 
 impl LoggerBackend for MainLogger {
     fn log(&self, module_path: &'static str, level: LogLevel, formatter: Arguments) {
-        if module_path == "radium::memory" || module_path == "radium::interrupt::apic" {
-            return;
-        }
-        self.write(
-            level,
-            format_args!("<- [\x1b[93m{module_path}\x1b[0m] : {}", formatter),
-        );
+        if cpu_local_avaiable() {
+            if cpu_local().is_in_isr {
+                self.write(
+                    level,
+                    format_args!(
+                        "<- [\x1b[93m{module_path}\x1b[0m] [C {core} : \x1b[94mIN ISR\x1b[0m] : {formatter}",
+                        core = cpu_local().core_id().id(),
+                    ),
+                );
+            } else {
+                self.write(
+                    level,
+                    format_args!(
+                        "<- [\x1b[93m{module_path}\x1b[0m] [C {core} : T {thread}] : {formatter}",
+                        core = cpu_local().core_id().id(),
+                        thread = cpu_local().current_thread_id(),
+                    ),
+                );
+            }
+        } else {
+            self.write(
+                level,
+                format_args!("<- [\x1b[93m{module_path}\x1b[0m] [C ? : T ?] : {formatter}",),
+            );
+        };
     }
 }
 
