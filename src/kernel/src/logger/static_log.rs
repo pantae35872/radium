@@ -290,7 +290,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         };
 
         let _ = writer.write_fmt(format_args!(
-            "{}: {}",
+            "[{}] {}",
             master.level,
             str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)],).unwrap()
         ));
@@ -355,7 +355,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         };
 
         let _ = writer.write_fmt(format_args!(
-            "{}: {}",
+            "[{}] {}",
             master_header.level,
             str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)],)
                 .unwrap()
