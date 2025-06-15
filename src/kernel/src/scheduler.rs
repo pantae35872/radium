@@ -15,7 +15,7 @@ use derivative::Derivative;
 use hashbrown::HashMap;
 use pager::address::VirtAddr;
 use sentinel::log;
-use thread::{Thread, ThreadPool};
+use thread::{Thread, ThreadMigrationError, ThreadPool};
 
 use crate::{
     initialization_context::{End, InitializationContext},
@@ -32,6 +32,8 @@ pub const DRIVCALL_SLEEP: u64 = 2;
 pub const DRIVCALL_EXIT: u64 = 3;
 pub const DRIVCALL_FUTEX_WAIT: u64 = 4;
 pub const DRIVCALL_FUTEX_WAKE: u64 = 5;
+
+const MIGRATION_THRESHOLD: usize = 2;
 
 static THREAD_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
     [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
@@ -67,7 +69,7 @@ pub struct LocalScheduler {
     rr_queue: VecDeque<Thread>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
     futex_map: HashMap<VirtAddr, Vec<Thread>>,
-    wake_marker: HashMap<VirtAddr, ()>,
+    wake_marker: HashMap<VirtAddr, usize>,
     timer_count: usize,
     scheduled_ms: usize,
     should_schedule: bool,
@@ -136,15 +138,8 @@ impl LocalScheduler {
     }
 
     pub fn check_migrate(&mut self) {
-        match self.pool.check_migrate() {
-            Some(thread) => {
-                self.rr_queue.push_back(thread);
-            }
-            None => log!(
-                Warning,
-                "Migrate interrupt received but no thread we placed on the queue"
-            ),
-        };
+        self.pool
+            .check_migrate(|thread| self.rr_queue.push_back(thread));
     }
 
     fn migrate_if_required(&mut self) {
@@ -169,16 +164,14 @@ impl LocalScheduler {
             }
         }
 
-        if target_core == usize::MAX || local_count <= min_count + 1 {
+        if target_core == usize::MAX || local_count <= min_count + MIGRATION_THRESHOLD {
             return;
         }
 
         if let Some(thread) = self.rr_queue.pop_back() {
-            let _ = self.pool.migrate(
-                CoreId::new(target_core)
-                    .expect("Unintialized core selected when calcuating thread migration"),
-                thread,
-            );
+            let core = CoreId::new(target_core)
+                .expect("Unintialized core selected when calcuating thread migration");
+            self.pool.migrate(core, thread);
             THREAD_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
             THREAD_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
         }
@@ -187,12 +180,18 @@ impl LocalScheduler {
     pub fn futex_wait(&mut self, addr: VirtAddr, thread: Thread, expected: usize) {
         let val = unsafe { addr.as_ptr::<AtomicUsize>().as_ref().unwrap() };
 
-        if self.wake_marker.remove(&addr).is_some() && val.load(Ordering::SeqCst) != expected {
+        if val.load(Ordering::SeqCst) != expected
+            && self
+                .wake_marker
+                .get(&addr)
+                .is_some_and(|e| matches!(e.checked_sub(1), Some(_)))
+        {
+            self.wake_marker.entry(addr).and_modify(|e| *e -= 1);
             self.rr_queue.push_front(thread);
             return;
         }
 
-        self.futex_map.entry(addr).or_default().push(thread);
+        self.futex_map.entry(addr).or_default().push(thread)
     }
 
     pub fn check_futex(&mut self) {
@@ -205,7 +204,7 @@ impl LocalScheduler {
                 }
             });
             if !any_woken {
-                self.wake_marker.insert(futex, ());
+                *self.wake_marker.entry(futex).or_default() += 1;
             }
         }
     }
@@ -231,7 +230,7 @@ impl LocalScheduler {
                 cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
             })
             .for_each(|(c, e)| {
-                while e.push(addr).is_none() {
+                while e.push(addr).is_err() {
                     cpu_local()
                         .lapic()
                         .send_fixed_ipi(CoreId::new(c).unwrap(), InterruptIndex::CheckFutex);
@@ -242,7 +241,7 @@ impl LocalScheduler {
             .lapic()
             .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
 
-        self.wake_marker.insert(addr, ());
+        *self.wake_marker.entry(addr).or_default() += 1;
     }
 
     pub fn schedule(&mut self) -> Option<Thread> {

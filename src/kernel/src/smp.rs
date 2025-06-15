@@ -195,8 +195,16 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
     cpu_local().local_scheduler().spawn(|| loop {
-        serial_println!("core {}", cpu_local().core_id());
-        println!("core {}", cpu_local().core_id());
+        serial_println!(
+            "core {} thread {}",
+            cpu_local().core_id(),
+            cpu_local().current_thread_id()
+        );
+        println!(
+            "core {} thread {}",
+            cpu_local().core_id(),
+            cpu_local().current_thread_id()
+        );
         sleep(1000);
     });
     cpu_local().local_scheduler().start_scheduling();

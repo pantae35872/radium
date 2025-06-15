@@ -10,7 +10,7 @@ use alloc::sync::Arc;
 use bootbridge::RawBootBridge;
 use radium::{scheduler::sleep, serial_println, smp::cpu_local, utils::mutex::Mutex};
 
-const NUM_THREADS: usize = 8;
+const NUM_THREADS: usize = 16;
 const NUM_INCREMENTS: usize = 100_000;
 
 #[unsafe(no_mangle)]
@@ -35,7 +35,7 @@ fn mutex_increment() {
 
     let expected = NUM_THREADS * NUM_INCREMENTS;
 
-    sleep(120000);
+    sleep(320000);
 
     let result = *counter.lock();
 

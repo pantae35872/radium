@@ -10,13 +10,14 @@ use crate::{
     interrupt::{FullInterruptStackFrame, InterruptIndex},
     memory::stack_allocator::Stack,
     smp::{cpu_local, CoreId, MAX_CPU},
+    utils::spin_mpsc::SpinMPSC,
 };
 
 use super::{driv_exit, SchedulerError};
 
 static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
-static THREAD_MIGRATE_QUEUE: [Mutex<Option<(Thread, ThreadContext)>>; MAX_CPU] =
-    [const { Mutex::new(None) }; MAX_CPU];
+static THREAD_MIGRATE_QUEUE: [SpinMPSC<(Thread, ThreadContext), 256>; MAX_CPU] =
+    [const { SpinMPSC::new() }; MAX_CPU];
 
 #[derive(Debug)]
 pub struct ThreadPool {
@@ -356,57 +357,32 @@ impl ThreadPool {
         Ok(thread)
     }
 
-    pub fn check_migrate(&mut self) -> Option<Thread> {
-        let (mut thread, thread_ctx) = match THREAD_MIGRATE_QUEUE[cpu_local().core_id().id()]
-            .lock()
-            .take()
+    pub fn check_migrate(&mut self, mut callback: impl FnMut(Thread)) {
+        while let Some((mut thread, thread_ctx)) =
+            THREAD_MIGRATE_QUEUE[cpu_local().core_id().id()].pop()
         {
-            Some(thread) => thread,
-            None => return None,
-        };
-
-        let id = self.pool.len();
-        thread.migrate(id as u32);
-        assert!(thread_ctx.alive);
-        self.pool.push(thread_ctx);
-        Some(thread)
+            let id = self.pool.len();
+            thread.migrate(id as u32);
+            assert!(thread_ctx.alive);
+            self.pool.push(thread_ctx);
+            callback(thread);
+        }
     }
 
-    pub fn migrate(
-        &mut self,
-        dest: CoreId,
-        migrate_thread: Thread,
-    ) -> Result<(), ThreadMigrationError> {
-        if THREAD_MIGRATE_QUEUE[dest.id()].is_locked() {
-            return Err(ThreadMigrationError::ThreadQueueLocked);
-        }
-
-        let mut thread = THREAD_MIGRATE_QUEUE[dest.id()].lock();
-        if thread.is_some() {
-            return Err(ThreadMigrationError::ThreadQueueFull);
-        }
-
-        // FIXME: This create extra thread everytime the thread is migrated to a different core, we
-        // need to mark the thread in the migrater as "available for replacement" and not allocate
-        // extra context
+    pub fn migrate(&mut self, dest: CoreId, mut migrate_thread: Thread) {
         self.invalid_thread
             .push(migrate_thread.local_id().thread as usize);
-        let current_ctx = core::mem::replace(
+        let mut current_ctx = core::mem::replace(
             &mut self.pool[migrate_thread.local_id().thread as usize],
             // SAFETY: This is ok because we will never use invalid thread since we pushed it into
             // invalid thread list
             unsafe { zeroed() },
         );
 
-        *thread = Some((migrate_thread, current_ctx));
-
-        drop(thread);
-
-        cpu_local()
-            .lapic()
-            .send_fixed_ipi(dest, InterruptIndex::ThreadMigrate);
-
-        Ok(())
+        while let Err((m, c)) = THREAD_MIGRATE_QUEUE[dest.id()].push((migrate_thread, current_ctx))
+        {
+            (current_ctx, migrate_thread) = (c, m);
+        }
     }
 
     pub fn free(&mut self, thread: Thread) {

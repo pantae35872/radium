@@ -46,7 +46,6 @@ pub enum InterruptIndex {
     PITVector,
     ErrorVector,
     DriverCall = 0x90,
-    ThreadMigrate = 0x91,
     CheckFutex = 0x92,
     SpuriousInterruptsVector = 0xFF,
 }
@@ -218,6 +217,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
             cpu_local().local_scheduler().prepare_timer();
+            cpu_local().local_scheduler().check_migrate();
             cpu_local().local_scheduler().push_thread(current_thread);
             is_scheduleable_interrupt = true;
         }
@@ -257,9 +257,6 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
-        idx if idx == InterruptIndex::ThreadMigrate.as_u8() => {
-            cpu_local().local_scheduler().check_migrate();
-        }
         idx if idx == InterruptIndex::CheckFutex.as_u8() => {
             cpu_local().local_scheduler().check_futex();
         }
