@@ -47,6 +47,7 @@ const_assert!(size_of::<LocalThreadId>() == size_of::<u64>() * 2);
 #[derive(Debug)]
 struct ThreadContext {
     alive: bool,
+    pinned: bool,
     stack: Stack,
 }
 
@@ -381,6 +382,7 @@ impl ThreadPool {
     ) -> Result<ThreadContext, SchedulerError> {
         Ok(ThreadContext {
             alive: true,
+            pinned: false,
             stack: ctx
                 .stack_allocator()
                 .alloc_stack(256)
@@ -440,6 +442,24 @@ impl ThreadPool {
         }
     }
 
+    pub fn pin(&mut self, thread: &Thread) {
+        assert!(thread.local_id().core == cpu_local().core_id());
+
+        self.pool[thread.local_id().thread as usize].pinned = true;
+    }
+
+    pub fn unpin(&mut self, thread: &Thread) {
+        assert!(thread.local_id().core == cpu_local().core_id());
+
+        self.pool[thread.local_id().thread as usize].pinned = false;
+    }
+
+    pub fn is_pinned(&mut self, thread: &Thread) -> bool {
+        assert!(thread.local_id().core == cpu_local().core_id());
+
+        self.pool[thread.local_id().thread as usize].pinned
+    }
+
     pub fn migrate(&mut self, dest: CoreId, mut migrate_thread: Thread) {
         self.invalid_thread
             .push(migrate_thread.local_id().thread as usize);
@@ -467,6 +487,7 @@ impl ThreadPool {
         );
         self.dead_thread.push(thread.local_id().thread as usize);
         self.pool[thread.local_id().thread as usize].alive = false;
+        self.pool[thread.local_id().thread as usize].pinned = false;
         GLOBAL_THREAD_ID_MAP.write().free(thread.global_id());
     }
 }

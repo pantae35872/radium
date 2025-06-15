@@ -4,7 +4,6 @@ use core::{
     error::Error,
     fmt::{Debug, Display},
     hint::unreachable_unchecked,
-    num::NonZeroUsize,
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -18,10 +17,9 @@ use derivative::Derivative;
 use hashbrown::HashMap;
 use pager::address::VirtAddr;
 use sentinel::log;
-use thread::{global_id_to_local_id, Thread, ThreadMigrationError, ThreadPool};
+use thread::{global_id_to_local_id, Thread, ThreadPool};
 
 use crate::{
-    const_assert,
     initialization_context::{End, InitializationContext},
     interrupt::{FullInterruptStackFrame, InterruptIndex},
     smp::{cpu_local, CoreId, MAX_CPU},
@@ -44,6 +42,10 @@ pub const DRIVCALL_VSYS_REG: u64 = 6;
 pub const DRIVCALL_VSYS_WAIT: u64 = 7;
 pub const DRIVCALL_VSYS_REQ: u64 = 8;
 pub const DRIVCALL_VSYS_RET: u64 = 9;
+pub const DRIVCALL_INT_WAIT: u64 = 10;
+pub const DRIVCALL_PIN: u64 = 11;
+pub const DRIVCALL_UNPIN: u64 = 12;
+pub const DRIVCALL_ISPIN: u64 = 13;
 
 const MIGRATION_THRESHOLD: usize = 2;
 
@@ -80,6 +82,7 @@ pub struct LocalScheduler {
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
     futex_map: HashMap<VirtAddr, Vec<Thread>>,
     wake_marker: HashMap<VirtAddr, usize>,
+    interrupt_wait: [Vec<Thread>; 256],
     vsys_wait_request: HashMap<usize, Thread>,
     timer_count: usize,
     scheduled_ms: usize,
@@ -111,6 +114,7 @@ impl LocalScheduler {
             futex_map: Default::default(),
             wake_marker: Default::default(),
             vsys_wait_request: Default::default(),
+            interrupt_wait: [const { Vec::new() }; 256],
             timer_count: 0,
             scheduled_ms: 0,
             pool: ThreadPool::new(),
@@ -147,6 +151,34 @@ impl LocalScheduler {
         let tpms = cpu_local().ticks_per_ms();
         cpu_local().lapic().reset_timer(tpms * 10);
         self.scheduled_ms = 10;
+    }
+
+    pub fn interrupt_wake(&mut self, index: u8) {
+        self.interrupt_wait[index as usize]
+            .drain(..)
+            .for_each(|e| self.rr_queue.push_back(e));
+    }
+
+    pub fn interrupt_wait(&mut self, index: u8, thread: Thread) {
+        self.interrupt_wait[index as usize].push(thread);
+    }
+
+    pub fn unpin(&mut self, thread: &Thread) {
+        self.pool.unpin(thread);
+    }
+
+    pub fn pin(&mut self, thread: &Thread) {
+        self.pool.pin(thread);
+    }
+
+    pub fn is_pin(&mut self, mut thread: Thread) {
+        if self.pool.is_pinned(&thread) {
+            thread.state.rax = 1;
+        } else {
+            thread.state.rax = 0;
+        }
+
+        self.push_thread(thread);
     }
 
     pub fn check_migrate(&mut self) {
@@ -249,7 +281,12 @@ impl LocalScheduler {
             return;
         }
 
-        if let Some(thread) = self.rr_queue.pop_back() {
+        if let Some(thread) = self.rr_queue.pop_front() {
+            if self.pool.is_pinned(&thread) {
+                self.rr_queue.push_back(thread);
+                return;
+            }
+
             let core = CoreId::new(target_core)
                 .expect("Unintialized core selected when calcuating thread migration");
             log!(
@@ -463,6 +500,55 @@ pub fn vsys_req(number: usize) {
 pub fn vsys_reg(number: usize) {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_VSYS_REG, in("rax") number);
+    }
+}
+
+pub fn interrupt_wait_raw(idx: u8) {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_INT_WAIT, in("rax") idx as usize);
+    }
+}
+
+pub fn interrupt_wait(idx: InterruptIndex) {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_INT_WAIT, in("rax") idx.as_usize());
+    }
+}
+
+pub fn pinned<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let was_pinned = is_pin();
+    if !was_pinned {
+        pin();
+    }
+
+    let ret = f();
+
+    if !was_pinned {
+        unpin();
+    }
+    ret
+}
+
+pub fn is_pin() -> bool {
+    let is_pin: usize;
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_PIN, lateout("rax") is_pin);
+    };
+    is_pin == 1
+}
+
+pub fn unpin() {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_UNPIN);
+    }
+}
+
+pub fn pin() {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_PIN);
     }
 }
 

@@ -11,14 +11,19 @@ use crate::scheduler::Dispatcher;
 use crate::scheduler::DRIVCALL_EXIT;
 use crate::scheduler::DRIVCALL_FUTEX_WAIT;
 use crate::scheduler::DRIVCALL_FUTEX_WAKE;
+use crate::scheduler::DRIVCALL_INT_WAIT;
+use crate::scheduler::DRIVCALL_ISPIN;
+use crate::scheduler::DRIVCALL_PIN;
 use crate::scheduler::DRIVCALL_SLEEP;
 use crate::scheduler::DRIVCALL_SPAWN;
+use crate::scheduler::DRIVCALL_UNPIN;
 use crate::scheduler::DRIVCALL_VSYS_REG;
 use crate::scheduler::DRIVCALL_VSYS_REQ;
 use crate::scheduler::DRIVCALL_VSYS_RET;
 use crate::scheduler::DRIVCALL_VSYS_WAIT;
 use crate::serial_println;
 use crate::smp::cpu_local;
+use crate::smp::cpu_local_avaiable;
 use crate::smp::CpuLocalBuilder;
 use crate::PANIC_COUNT;
 use alloc::boxed::Box;
@@ -287,16 +292,34 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
                     .local_scheduler()
                     .vsys_return_thread(current_thread);
             }
+            DRIVCALL_INT_WAIT => match TryInto::<u8>::try_into(stack_frame.rax) {
+                Ok(idx) => {
+                    cpu_local()
+                        .local_scheduler()
+                        .interrupt_wait(idx, current_thread);
+                    is_scheduleable_interrupt = true;
+                }
+                Err(_) => {}
+            },
+            DRIVCALL_PIN => {
+                cpu_local().local_scheduler().pin(&current_thread);
+            }
+            DRIVCALL_UNPIN => {
+                cpu_local().local_scheduler().unpin(&current_thread);
+            }
+            DRIVCALL_ISPIN => {
+                cpu_local().local_scheduler().is_pin(current_thread);
+                is_scheduleable_interrupt = true;
+            }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
         idx if idx == InterruptIndex::CheckFutex.as_u8() => {
             cpu_local().local_scheduler().check_futex();
         }
-        idx => {
-            log!(Error, "Unhandled external interrupts {}", idx);
-            return;
-        }
+        _ => {}
     }
+
+    cpu_local().local_scheduler().interrupt_wake(idx);
 
     if is_scheduleable_interrupt {
         if let Some(sched_thread) = cpu_local().local_scheduler().schedule() {

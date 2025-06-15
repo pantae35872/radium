@@ -35,7 +35,7 @@ use crate::{
     log,
     memory::{self},
     println,
-    scheduler::{sleep, LocalScheduler},
+    scheduler::{pinned, sleep, LocalScheduler},
     serial_println,
 };
 
@@ -564,13 +564,15 @@ pub fn init_aps(mut ctx: InitializationContext<End>) {
     ctx.lock().initialize_current();
 
     cpu_local().local_scheduler().spawn(move || {
-        let processors = ctx.lock().context().processors().clone();
-        processors.iter().copied().for_each(|apic_id| {
-            if apic_id == cpu_local().apic_id() {
-                return;
-            }
-            ap_initializer.boot_ap(apic_id, ctx.clone());
-        });
-        ALL_AP_INITIALIZED.store(true, Ordering::Relaxed);
+        pinned(|| {
+            let processors = ctx.lock().context().processors().clone();
+            processors.iter().copied().for_each(|apic_id| {
+                if apic_id == cpu_local().apic_id() {
+                    return;
+                }
+                ap_initializer.boot_ap(apic_id, ctx.clone());
+            });
+            ALL_AP_INITIALIZED.store(true, Ordering::Relaxed);
+        })
     });
 }

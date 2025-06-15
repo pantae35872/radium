@@ -63,7 +63,7 @@ endif
 QEMU_FLAGS := -m 1G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
-	-smp cores=4 -usb -device usb-ehci,id=ehci -device usb-tablet,bus=usb-bus.0 \
+	-smp cores=8 -usb -device usb-ehci,id=ehci -device usb-tablet,bus=usb-bus.0 \
 	-no-reboot -serial stdio \
 
 KVM_FLAGS := -enable-kvm -cpu host,+rdrand,+sse,+mmx

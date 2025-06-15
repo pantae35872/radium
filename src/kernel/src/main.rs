@@ -14,20 +14,19 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
+use radium::driver::pit::PIT;
 use radium::driver::uefi_runtime::uefi_runtime;
+use radium::interrupt::io_apic::RedirectionTableEntry;
+use radium::interrupt::InterruptIndex;
 use radium::logger::LOGGER;
 use radium::scheduler::{
-    sleep, vsys_reg, VsysThread, DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ,
+    interrupt_wait, pin, pinned, sleep, unpin, vsys_reg, VsysThread, DRIVCALL_ERR_VSYSCALL_FULL,
+    DRIVCALL_VSYS_REQ,
 };
 use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
 use sentinel::log;
-
-// TODO: Implements acpi to get io apic
-// TODO: Use ahci interrupt (needs io apic) with waker
-// TODO: Implements waker based async mutex
-// TODO: Impelemnts kernel services executor
 
 static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 
@@ -43,21 +42,32 @@ fn kmain_thread() {
     cpu_local().local_scheduler().spawn(|| {
         vsys_reg(1); // VSYS 1
         loop {
-            println!("Waiting for threads...");
+            log!(Info, "Waiting for threads...");
             let mut thread1 = VsysThread::new(1);
-            println!(
+            log!(
+                Info,
                 "Handling 1: {}, with value sent: {}",
                 thread1.global_id(),
                 thread1.state.rcx
             );
 
+            //pinned(|| {
+            //    cpu_local().ctx().lock().redirect_legacy_irqs(
+            //        0,
+            //        RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().core_id()),
+            //    );
+            //    PIT.get().unwrap().lock().dumb_wait_10ms_test();
+            //    interrupt_wait(InterruptIndex::PITVector);
+            //});
+
             thread1.state.rsi = thread1.state.rcx + 1;
         }
     });
 
+    sleep(1000);
     for _ in 0..16 {
         cpu_local().local_scheduler().spawn(|| for send in 0..10 {
-            serial_println!(
+            log!(Info,
                 "Sending request from id {}...",
                 cpu_local().current_thread_id()
             );
@@ -68,13 +78,9 @@ fn kmain_thread() {
                 asm!("int 0x90", in("rdi") DRIVCALL_VSYS_REQ, in("rax") 1, in("rcx") send, out("rsi") ret, lateout("rdi") res);
             }
 
-            if res == DRIVCALL_ERR_VSYSCALL_FULL {
-                serial_println!("SYSCALL FULL");
-                continue;
-            }
-
+            assert!(res != DRIVCALL_ERR_VSYSCALL_FULL);
             assert_eq!(ret, send + 1);
-            serial_println!("Received: {ret}");
+            log!(Info, "Received: {ret}");
         });
     }
 
@@ -111,7 +117,7 @@ fn kmain_thread() {
     });
 
     log!(Debug, "This should be the last log");
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    LOGGER.flush_all(&[|s| serial_print!("{s}")]);
 
     #[cfg(test)]
     test_main();

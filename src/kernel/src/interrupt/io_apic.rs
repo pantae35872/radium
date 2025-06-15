@@ -104,11 +104,11 @@ impl Default for PinPolarity {
 }
 
 impl RedirectionTableEntry {
-    pub fn new(vector: InterruptIndex, apic_id: ApicId) -> Self {
+    pub fn new(vector: InterruptIndex, id: impl Into<ApicId>) -> Self {
         Self {
             vector,
             delivery_mode: DeliveryMode::Fixed,
-            destination: IoApicDestination::PhysicalDestination(apic_id.id()),
+            destination: IoApicDestination::PhysicalDestination(id.into().id()),
             pin_polarity: PinPolarity::default(),
             trigger_mode: TriggerMode::default(),
         }

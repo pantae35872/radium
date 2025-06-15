@@ -66,6 +66,21 @@ impl ProgrammableIntervalTimer {
     }
 
     /// This function is only used for APIC calibration, henice the name
+    pub fn dumb_wait_10ms_test(&mut self) {
+        let cmd = CommandBuilder::new()
+            .operating_mode(OperatingMode::InterruptOnTerminal)
+            .access_mode(AccessMode::LowHiByte)
+            .channel(Channel::Channel0)
+            .build();
+
+        unsafe { self.command.write(cmd) };
+
+        let pit = calculate_pit_divsor(100); // 100hz (10ms)
+        unsafe { self.channel0_data.write((pit & 0xFF) as u8) };
+        unsafe { self.channel0_data.write(((pit >> 8) & 0xFF) as u8) };
+    }
+
+    /// This function is only used for APIC calibration, henice the name
     pub fn dumb_wait_10ms(&mut self) {
         let cmd = CommandBuilder::new()
             .operating_mode(OperatingMode::InterruptOnTerminal)
