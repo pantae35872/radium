@@ -361,11 +361,18 @@ impl ThreadPool {
         while let Some((mut thread, thread_ctx)) =
             THREAD_MIGRATE_QUEUE[cpu_local().core_id().id()].pop()
         {
-            let id = self.pool.len();
-            thread.migrate(id as u32);
-            assert!(thread_ctx.alive);
-            self.pool.push(thread_ctx);
-            callback(thread);
+            if let Some(id) = self.invalid_thread.pop() {
+                thread.migrate(id as u32);
+                assert!(thread_ctx.alive);
+                self.pool[id] = thread_ctx;
+                callback(thread);
+            } else {
+                let id = self.pool.len();
+                thread.migrate(id as u32);
+                assert!(thread_ctx.alive);
+                self.pool.push(thread_ctx);
+                callback(thread);
+            }
         }
     }
 
