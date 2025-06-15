@@ -42,7 +42,15 @@ impl<T> Mutex<T> {
     }
 
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        assert!(cpu_local_avaiable() && !cpu_local().is_in_isr);
+        // FIXME: Use some one core mutex implementation because the situation where cpu local is
+        // not avaiable either the early initializatoin of the kernel or other cores
+        if !cpu_local_avaiable() {
+            return MutexGuard {
+                lock: &self.lock,
+                data: unsafe { &mut *self.data.get() },
+            };
+        }
+        assert!(!cpu_local().is_in_isr);
         let mut c = UNLOCKED;
         if self
             .lock
@@ -95,7 +103,10 @@ impl<T> Mutex<T> {
 
 impl<'a, T> Drop for MutexGuard<'a, T> {
     fn drop(&mut self) {
-        assert!(cpu_local_avaiable() && !cpu_local().is_in_isr);
+        if !cpu_local_avaiable() {
+            return;
+        }
+        assert!(!cpu_local().is_in_isr);
         if self.lock.fetch_sub(1, Ordering::Release) != LOCKED_NO_WAIT {
             self.lock.store(UNLOCKED, Ordering::Release);
             unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };

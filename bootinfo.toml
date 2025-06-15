@@ -7,6 +7,6 @@ any_key_boot = false
 early_boot_kernel_page_table_page_count = 64 # 64 Pages for kernel elf 
 
 [kernel_config]
-font_size = 10 
-log_level = 1
+font_size = 14
+log_level = 2
 

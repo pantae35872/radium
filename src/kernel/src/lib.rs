@@ -79,8 +79,8 @@ where
     let mut final_phase = interrupt::init(phase3);
     scheduler::init(&mut final_phase);
     pit::init(&mut final_phase);
+    uefi_runtime::init(&mut final_phase);
     smp::init_aps(final_phase);
-    uefi_runtime::init(&mut cpu_local().ctx().lock());
 
     cpu_local().local_scheduler().spawn(|| {
         while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {

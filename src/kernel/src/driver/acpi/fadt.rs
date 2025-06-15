@@ -1,4 +1,5 @@
 use crate::{
+    const_assert,
     initialization_context::{InitializationContext, Stage1},
     inline_if,
 };
@@ -46,12 +47,12 @@ pub struct Fadt {
     boot_architecture_flags: u16,
     _reserved2: u8,
     flags: u32,
-    reset_register: GenericAddressStructure,
-    reset_value: u8,
+    pub reset_register: GenericAddressStructure,
+    pub reset_value: u8,
     _reserved3: [u8; 3],
     x_firmware_control: u64,
     x_dsdt: u64,
-    x_pm1a_event_block: GenericAddressStructure,
+    pub x_pm1a_event_block: GenericAddressStructure,
     x_pm1b_event_block: GenericAddressStructure,
     x_pm1a_control_block: GenericAddressStructure,
     x_pm1b_control_block: GenericAddressStructure,
@@ -61,14 +62,19 @@ pub struct Fadt {
     x_gpe1_block: GenericAddressStructure,
 }
 
+const_assert!(size_of::<AcpiSdt<Fadt>>() == 244);
+
+#[derive(Debug)]
 #[repr(C, packed)]
-struct GenericAddressStructure {
+pub struct GenericAddressStructure {
     address_space: u8,
     bit_width: u8,
     bit_offset: u8,
     access_size: u8,
     address: u64,
 }
+
+const_assert!(size_of::<GenericAddressStructure>() == 12);
 
 impl AcpiSdt<Fadt> {
     pub fn dsdt(&self, ctx: &mut InitializationContext<Stage1>) -> &'static AcpiSdt<Dsdt> {

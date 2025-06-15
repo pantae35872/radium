@@ -97,7 +97,13 @@ impl MainLogger {
 
 impl LoggerBackend for MainLogger {
     fn log(&self, module_path: &'static str, level: LogLevel, formatter: Arguments) {
-        self.write(level, format_args!("{module_path}: {}", formatter));
+        if module_path == "radium::memory" || module_path == "radium::interrupt::apic" {
+            return;
+        }
+        self.write(
+            level,
+            format_args!("<- [\x1b[93m{module_path}\x1b[0m] : {}", formatter),
+        );
     }
 }
 

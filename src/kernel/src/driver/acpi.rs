@@ -2,6 +2,7 @@ use core::fmt::Display;
 
 use alloc::{fmt, vec::Vec};
 use aml::{AmlContext, AmlHandle};
+use fadt::{Fadt, GenericAddressStructure};
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
@@ -25,8 +26,19 @@ mod rsdt;
 mod sdp;
 
 pub fn init(mut ctx: InitializationContext<Stage1>) -> InitializationContext<Stage2> {
-    log!(Trace, "Initializing acpi");
+    log!(Debug, "Initializing acpi");
     let acpi = unsafe { Acpi::new(&mut ctx) };
+    let fadt = acpi
+        .xrsdt
+        .get::<Fadt>(&mut ctx)
+        .expect("MADT table is required for APIC initialization");
+    log!(Trace, "FADT Reset register {:x?}", fadt.data.reset_register);
+    log!(
+        Trace,
+        "FADT PM1A Control Block {:x?}",
+        fadt.data.x_pm1a_event_block
+    );
+    log!(Trace, "FADT Reset value {:x?}", fadt.data.reset_value);
     let info = (
         acpi.processors(&mut ctx),
         acpi.local_apic_mmio(&mut ctx),
@@ -184,7 +196,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
                 virt_sdt,
                 Frame::containing_address(PhysAddr::new(address)),
                 sdt_size as usize,
-                EntryFlags::NO_CACHE,
+                EntryFlags::NO_EXECUTE,
             )
         };
         let table =

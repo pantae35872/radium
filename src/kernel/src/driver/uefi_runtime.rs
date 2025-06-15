@@ -340,6 +340,12 @@ impl UefiRuntime {
                 MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
             )
         }) {
+            log!(
+                Debug,
+                "UEFI Runtime memory range [0x{:x}-0x{:x}]",
+                ufu_stuff.phys_start,
+                ufu_stuff.phys_start + (ufu_stuff.page_count * PAGE_SIZE) as usize - 1
+            );
             let page = virt_addr_alloc(ufu_stuff.page_count);
             unsafe {
                 ctx.mapper().map_to_range_by_size(
