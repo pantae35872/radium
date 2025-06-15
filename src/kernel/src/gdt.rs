@@ -1,5 +1,5 @@
 use alloc::boxed::Box;
-use pager::gdt::{Descriptor, Gdt, TaskStateSegment, DOUBLE_FAULT_IST_INDEX};
+use pager::gdt::{Descriptor, Gdt, TaskStateSegment, DOUBLE_FAULT_IST_INDEX, GENERAL_STACK_INDEX};
 use pager::registers::{load_tss, CS};
 
 use crate::initialization_context::{End, InitializationContext, Stage3};
@@ -12,6 +12,10 @@ pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
             .stack_allocator()
             .alloc_stack(256)
             .expect("Failed to allocator stack for double fault handler");
+        let general_stack = ctx
+            .stack_allocator()
+            .alloc_stack(256)
+            .expect("Failed to allocator stack for double fault handler");
         log!(Trace, "Initializing gdt for core: {id}");
         log!(
             Debug,
@@ -21,6 +25,7 @@ pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
         );
         let tss = Box::leak(TaskStateSegment::new().into());
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = double_fault.top();
+        tss.interrupt_stack_table[GENERAL_STACK_INDEX as usize] = general_stack.top();
         let gdt = Box::leak(Gdt::new().into());
         let code_selector = gdt.add_entry(Descriptor::kernel_code_segment());
         let tss_selector = gdt.add_entry(Descriptor::tss_segment(tss));

@@ -13,6 +13,10 @@ use crate::scheduler::DRIVCALL_FUTEX_WAIT;
 use crate::scheduler::DRIVCALL_FUTEX_WAKE;
 use crate::scheduler::DRIVCALL_SLEEP;
 use crate::scheduler::DRIVCALL_SPAWN;
+use crate::scheduler::DRIVCALL_VSYS_REG;
+use crate::scheduler::DRIVCALL_VSYS_REQ;
+use crate::scheduler::DRIVCALL_VSYS_RET;
+use crate::scheduler::DRIVCALL_VSYS_WAIT;
 use crate::serial_println;
 use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
@@ -28,6 +32,7 @@ use io_apic::RedirectionTableEntry;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
 use pager::address::VirtAddr;
 use pager::gdt::DOUBLE_FAULT_IST_INDEX;
+use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
 use pager::registers::RFlagsFlags;
@@ -51,11 +56,13 @@ pub enum InterruptIndex {
 }
 
 impl InterruptIndex {
-    const fn as_u8(self) -> u8 {
+    #[inline]
+    pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
-    const fn as_usize(self) -> usize {
+    #[inline]
+    pub const fn as_usize(self) -> usize {
         self.as_u8() as usize
     }
 }
@@ -218,6 +225,8 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
             cpu_local().local_scheduler().prepare_timer();
             cpu_local().local_scheduler().check_migrate();
+            cpu_local().local_scheduler().check_return();
+            cpu_local().local_scheduler().check_vsys_request();
             cpu_local().local_scheduler().push_thread(current_thread);
             is_scheduleable_interrupt = true;
         }
@@ -254,6 +263,29 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             DRIVCALL_EXIT => {
                 cpu_local().local_scheduler().exit_thread(current_thread);
                 is_scheduleable_interrupt = true;
+            }
+            DRIVCALL_VSYS_REG => {
+                // TODO: Check if the request vsys is out of range
+                cpu_local()
+                    .local_scheduler()
+                    .vsys_reg(stack_frame.rax as usize, current_thread.global_id());
+            }
+            DRIVCALL_VSYS_WAIT => {
+                cpu_local()
+                    .local_scheduler()
+                    .vsys_wait(stack_frame.rax as usize, current_thread);
+                is_scheduleable_interrupt = true;
+            }
+            DRIVCALL_VSYS_REQ => {
+                cpu_local()
+                    .local_scheduler()
+                    .vsys_req(stack_frame.rax as usize, current_thread);
+                is_scheduleable_interrupt = true;
+            }
+            DRIVCALL_VSYS_RET => {
+                cpu_local()
+                    .local_scheduler()
+                    .vsys_return_thread(current_thread);
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },

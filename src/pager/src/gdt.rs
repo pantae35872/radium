@@ -90,6 +90,7 @@ pub enum Descriptor {
     SystemSegment(u64, u64),
 }
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
+pub const GENERAL_STACK_INDEX: u16 = 1;
 
 impl Descriptor {
     pub fn kernel_code_segment() -> Descriptor {

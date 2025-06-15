@@ -70,6 +70,7 @@ bitflags! {
         const AutomaticIBRSEnable = 1 << 21;
     }
 
+    #[repr(transparent)]
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct RFlagsFlags: u64 {
         const Carry = 1 << 0;

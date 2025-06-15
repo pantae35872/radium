@@ -2,6 +2,7 @@ use core::{error::Error, fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
+use sentinel::log;
 use spin::{Mutex, RwLock};
 
 use crate::{
@@ -9,6 +10,8 @@ use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{FullInterruptStackFrame, InterruptIndex},
     memory::stack_allocator::Stack,
+    port::Port8Bit,
+    serial_println,
     smp::{cpu_local, CoreId, MAX_CPU},
     utils::spin_mpsc::SpinMPSC,
 };
@@ -32,6 +35,7 @@ struct GlobalThreadIdPool {
     free_id: Vec<usize>,
 }
 
+#[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct LocalThreadId {
     core: CoreId,
@@ -46,36 +50,41 @@ struct ThreadContext {
     stack: Stack,
 }
 
+#[repr(C)]
+#[derive(Debug)]
+pub struct ThreadState {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rbp: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    pub instruction_pointer: VirtAddr,
+    pub code_segment: u64,
+    pub cpu_flags: RFlagsFlags,
+    pub stack_pointer: VirtAddr,
+    pub stack_segment: u64,
+}
+
+#[repr(C)]
 #[derive(Debug)]
 pub struct Thread {
     global_id: usize,
     local_id: LocalThreadId,
-    r15: u64,
-    r14: u64,
-    r13: u64,
-    r12: u64,
-    r11: u64,
-    r10: u64,
-    r9: u64,
-    r8: u64,
-    rsi: u64,
-    rdi: u64,
-    rbp: u64,
-    rdx: u64,
-    rcx: u64,
-    rbx: u64,
-    rax: u64,
-    instruction_pointer: VirtAddr,
-    code_segment: u64,
-    cpu_flags: RFlagsFlags,
-    stack_pointer: VirtAddr,
-    stack_segment: u64,
+    pub state: ThreadState,
 }
 
-impl Thread {
+impl ThreadState {
     pub fn restore(self, stack_frame: &mut FullInterruptStackFrame) {
-        // SAFETY: This is safe because thread can only be created in this module
-        unsafe { cpu_local().set_tid(self.global_id) };
         stack_frame.r15 = self.r15;
         stack_frame.r14 = self.r14;
         stack_frame.r13 = self.r13;
@@ -99,10 +108,7 @@ impl Thread {
     }
 
     pub fn capture(stack_frame: &FullInterruptStackFrame) -> Self {
-        let global_id = cpu_local().current_thread_id();
-        Thread {
-            global_id,
-            local_id: GLOBAL_THREAD_ID_MAP.read().translate(global_id),
+        Self {
             r15: stack_frame.r15,
             r14: stack_frame.r14,
             r13: stack_frame.r13,
@@ -127,18 +133,14 @@ impl Thread {
     }
 
     #[must_use]
-    fn new<F>(f: F, local_id: LocalThreadId, context: &ThreadContext) -> Self
+    fn new<F>(f: F, context: &ThreadContext) -> Self
     where
         F: FnOnce() + Send + 'static,
     {
         let boxed: *mut F = Box::into_raw(f.into());
         let rdi = boxed as u64;
 
-        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
-
-        Thread {
-            global_id,
-            local_id,
+        Self {
             r15: 0,
             r14: 0,
             r13: 0,
@@ -162,34 +164,9 @@ impl Thread {
         }
     }
 
-    pub fn migrate(&mut self, new_local_thread: u32) {
-        let new_local = LocalThreadId {
-            core: cpu_local().core_id(),
-            thread: new_local_thread,
-        };
-        GLOBAL_THREAD_ID_MAP
-            .write()
-            .migrate(self.global_id(), new_local);
-        self.local_id = new_local;
-    }
-
-    #[inline]
-    pub fn local_id(&self) -> LocalThreadId {
-        self.local_id
-    }
-
-    #[inline]
-    pub fn global_id(&self) -> usize {
-        self.global_id
-    }
-
     #[must_use]
-    pub fn hlt_thread(stack: Stack, core: CoreId) -> Self {
-        let local_id = LocalThreadId { core, thread: 1 };
-        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
-        Thread {
-            global_id,
-            local_id,
+    pub fn hlt_thread(stack: Stack) -> Self {
+        Self {
             r15: 0,
             r14: 0,
             r13: 0,
@@ -214,12 +191,99 @@ impl Thread {
     }
 }
 
+impl Thread {
+    pub fn restore(self, stack_frame: &mut FullInterruptStackFrame) {
+        // SAFETY: This is safe because thread can only be created in this module
+        unsafe { cpu_local().set_tid(self.global_id) };
+        self.state.restore(stack_frame);
+    }
+
+    pub fn capture(stack_frame: &FullInterruptStackFrame) -> Self {
+        let global_id = cpu_local().current_thread_id();
+        Thread {
+            global_id,
+            local_id: GLOBAL_THREAD_ID_MAP.read().translate(global_id),
+            state: ThreadState::capture(stack_frame),
+        }
+    }
+
+    #[must_use]
+    fn new<F>(f: F, local_id: LocalThreadId, context: &ThreadContext) -> Self
+    where
+        F: FnOnce() + Send + 'static,
+    {
+        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
+
+        Thread {
+            global_id,
+            local_id,
+            state: ThreadState::new(f, context),
+        }
+    }
+
+    pub fn migrate(&mut self, new_local_thread: u32) {
+        let new_local = LocalThreadId {
+            core: cpu_local().core_id(),
+            thread: new_local_thread,
+        };
+        GLOBAL_THREAD_ID_MAP
+            .write()
+            .migrate(self.global_id(), new_local);
+        self.local_id = new_local;
+    }
+
+    #[inline]
+    pub fn local_id(&self) -> LocalThreadId {
+        self.local_id
+    }
+
+    #[inline]
+    pub fn global_id(&self) -> usize {
+        self.global_id
+    }
+
+    // # Safety
+    // the caller must uphold a contract with an interrupt invoker that rcx is the pointer to the
+    // first argument
+    pub unsafe fn read_first_arg_rsi<T>(&self) -> T {
+        unsafe { core::ptr::read(self.state.rsi as *const T) }
+    }
+
+    // # Safety
+    // the caller must uphold a contract with an interrupt invoker that rcx is the return value
+    // addres
+    pub unsafe fn write_return_rcx<T>(&mut self, obj: T) {
+        unsafe {
+            core::ptr::write(self.state.rcx as *mut T, obj);
+        }
+    }
+
+    #[must_use]
+    pub fn hlt_thread(stack: Stack, core: CoreId) -> Self {
+        let local_id = LocalThreadId { core, thread: 1 };
+        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
+        Thread {
+            global_id,
+            local_id,
+            state: ThreadState::hlt_thread(stack),
+        }
+    }
+}
+
+pub fn global_id_to_local_id(global_id: usize) -> LocalThreadId {
+    GLOBAL_THREAD_ID_MAP.read().translate(global_id)
+}
+
 impl LocalThreadId {
     pub fn create_local(thread: u32) -> Self {
         Self {
             core: cpu_local().core_id(),
             thread,
         }
+    }
+
+    pub fn core(&self) -> CoreId {
+        self.core
     }
 
     pub fn is_bsp_thread(&self) -> bool {

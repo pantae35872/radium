@@ -7,7 +7,9 @@ pub fn fill_idt(_item: TokenStream) -> TokenStream {
         let interrupt_number = interrupt_number as usize;
         let fn_name = format_ident!("gen_interrupt_{}", interrupt_number);
         quote! {
-            unsafe { idt[#interrupt_number].set_handler_addr(VirtAddr::new(#fn_name as u64)) };
+            unsafe { idt[#interrupt_number]
+                .set_handler_addr(VirtAddr::new(#fn_name as u64))
+                .set_stack_index(GENERAL_STACK_INDEX) };
         }
     });
     let output = quote! {

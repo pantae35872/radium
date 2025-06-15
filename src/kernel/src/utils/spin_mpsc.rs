@@ -103,6 +103,26 @@ impl<T, const N: usize> SpinMPSC<T, N> {
         }
     }
 
+    pub fn peek(&self) -> Option<&T> {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
+        if head >= tail {
+            return None;
+        }
+        let pos = head;
+        let idx = pos % N;
+        let slot = &self.buffer[idx];
+        // check if ready: sequence == pos + 1
+        let seq = slot.sequence.load(Ordering::Acquire);
+        if seq == pos.wrapping_add(1) {
+            // Safe: writer has published T at this slot, and single consumer holds off pop until consuming.
+            let ptr = unsafe { (*slot.data.get()).as_ptr() };
+            Some(unsafe { &*ptr })
+        } else {
+            None
+        }
+    }
+
     /// Attempt to pop a value. Returns Some(T) if successful, or None if empty.
     /// Only a single consumer must call pop.
     pub fn pop(&self) -> Option<T> {
