@@ -17,7 +17,7 @@ use derivative::Derivative;
 use hashbrown::HashMap;
 use pager::address::VirtAddr;
 use sentinel::log;
-use thread::{global_id_to_local_id, Thread, ThreadPool};
+use thread::{global_id_to_local_id, Thread, ThreadHandle, ThreadPool};
 
 use crate::{
     initialization_context::{End, InitializationContext},
@@ -46,6 +46,7 @@ pub const DRIVCALL_INT_WAIT: u64 = 10;
 pub const DRIVCALL_PIN: u64 = 11;
 pub const DRIVCALL_UNPIN: u64 = 12;
 pub const DRIVCALL_ISPIN: u64 = 13;
+pub const DRIVCALL_THREAD_WAIT_EXIT: u64 = 14;
 
 const MIGRATION_THRESHOLD: usize = 2;
 
@@ -58,6 +59,8 @@ static VSYSCALL_REQUEST: [SpinMPSC<(usize, Thread), 256>; MAX_CPU] =
     [const { SpinMPSC::new() }; MAX_CPU];
 static VSYSCALL_RETURN: [SpinMPSC<Thread, 256>; MAX_CPU] = [const { SpinMPSC::new() }; MAX_CPU];
 static VSYSCALL_MAP: [OnceCell<usize>; MAX_VSYSCALL] = [const { OnceCell::uninit() }; MAX_VSYSCALL];
+
+static WAIT_EXIT_NOTICE: [SpinMPSC<usize, 256>; MAX_CPU] = [const { SpinMPSC::new() }; MAX_CPU];
 
 #[repr(C)]
 #[derive(Debug)]
@@ -84,6 +87,7 @@ pub struct LocalScheduler {
     wake_marker: HashMap<VirtAddr, usize>,
     interrupt_wait: [Vec<Thread>; 256],
     vsys_wait_request: HashMap<usize, Thread>,
+    thread_wait_exit: HashMap<usize, Vec<Thread>>,
     timer_count: usize,
     scheduled_ms: usize,
     should_schedule: bool,
@@ -114,6 +118,7 @@ impl LocalScheduler {
             futex_map: Default::default(),
             wake_marker: Default::default(),
             vsys_wait_request: Default::default(),
+            thread_wait_exit: Default::default(),
             interrupt_wait: [const { Vec::new() }; 256],
             timer_count: 0,
             scheduled_ms: 0,
@@ -126,6 +131,21 @@ impl LocalScheduler {
     }
 
     pub fn exit_thread(&mut self, thread: Thread) {
+        let global_id = thread.global_id();
+        self.thread_wait_exit.entry(global_id).and_modify(|e| {
+            e.drain(..)
+                .for_each(|thread| self.rr_queue.push_back(thread))
+        });
+        for (_, queue) in WAIT_EXIT_NOTICE
+            .iter()
+            .enumerate()
+            .filter(|(c, _)| *c != cpu_local().core_id().id() && *c < cpu_local().core_count())
+        {
+            while let Err(_) = queue.push(global_id) {
+                core::hint::spin_loop();
+            }
+        }
+
         self.pool.free(thread);
     }
 
@@ -390,17 +410,32 @@ impl LocalScheduler {
         )
     }
 
-    pub fn spawn<F>(&mut self, f: F)
+    pub fn check_thread_exit_notice(&mut self) {
+        while let Some(exited) = WAIT_EXIT_NOTICE[cpu_local().core_id().id()].pop() {
+            self.thread_wait_exit.entry(exited).and_modify(|e| {
+                e.drain(..)
+                    .for_each(|thread| self.rr_queue.push_back(thread))
+            });
+        }
+    }
+
+    pub fn thread_wait_exit(&mut self, thread: Thread, waiting_for: usize) {
+        self.thread_wait_exit
+            .entry(waiting_for)
+            .or_default()
+            .push(thread);
+    }
+
+    pub fn spawn<F>(&mut self, f: F) -> ThreadHandle
     where
         F: FnOnce() + Send + 'static,
     {
-        let thread = Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
-        log!(
-            Trace,
-            "Spawned new thread Global ID: {}",
-            thread.global_id()
-        );
+        let (thread, handle) =
+            Dispatcher::spawn(&mut self.pool, f).expect("Failed to spawn a thread");
+        let thread_id = thread.global_id();
+        log!(Trace, "Spawned new thread Global ID: {}", thread_id);
         self.rr_queue.push_back(thread);
+        handle
     }
 }
 
@@ -515,6 +550,12 @@ pub fn interrupt_wait(idx: InterruptIndex) {
     }
 }
 
+pub fn thread_wait_exit(thread_id: usize) {
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_THREAD_WAIT_EXIT, in("rax") thread_id);
+    }
+}
+
 pub fn pinned<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
@@ -575,7 +616,7 @@ impl Display for SchedulerError {
 impl Error for SchedulerError {}
 
 impl Dispatcher {
-    pub fn spawn<F>(pool: &mut ThreadPool, f: F) -> Result<Thread, SchedulerError>
+    pub fn spawn<F>(pool: &mut ThreadPool, f: F) -> Result<(Thread, ThreadHandle), SchedulerError>
     where
         F: FnOnce(),
         F: Send + 'static,

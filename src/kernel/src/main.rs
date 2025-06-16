@@ -65,6 +65,7 @@ fn kmain_thread() {
     });
 
     sleep(1000);
+
     for _ in 0..16 {
         cpu_local().local_scheduler().spawn(|| for send in 0..10 {
             log!(Info,
@@ -84,7 +85,8 @@ fn kmain_thread() {
         });
     }
 
-    cpu_local().local_scheduler().spawn(|| {
+    let mut handles = Vec::new();
+    handles.push(cpu_local().local_scheduler().spawn(|| {
         for i in 0..64 {
             serial_println!(
                 "Thread {} [{i}]: popped {:?}",
@@ -93,8 +95,8 @@ fn kmain_thread() {
             );
             sleep(100);
         }
-    });
-    cpu_local().local_scheduler().spawn(|| {
+    }));
+    handles.push(cpu_local().local_scheduler().spawn(|| {
         for i in 0..64 {
             serial_println!(
                 "Thread {} [{i}]: trying to push",
@@ -104,20 +106,22 @@ fn kmain_thread() {
             TEST_MUTEX.lock().push(i * 10);
             serial_println!("Thread {} [{i}]: pushed", cpu_local().current_thread_id());
         }
-    });
+    }));
 
-    sleep(5000);
-
-    cpu_local().local_scheduler().spawn(|| {
+    handles.push(cpu_local().local_scheduler().spawn(|| {
         log!(
             Debug,
             "this should be thread 2, current tid {}",
             cpu_local().current_thread_id()
         );
-    });
+    }));
+
+    for handle in handles {
+        handle.join();
+    }
 
     log!(Debug, "This should be the last log");
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    LOGGER.flush_all(&[|s| serial_print!("{s}") /* |s| print!("{s}") */]);
 
     #[cfg(test)]
     test_main();

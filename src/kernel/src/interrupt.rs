@@ -4,6 +4,7 @@ use core::sync::atomic::Ordering;
 use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
+use crate::memory::stack_allocator;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
@@ -16,6 +17,7 @@ use crate::scheduler::DRIVCALL_ISPIN;
 use crate::scheduler::DRIVCALL_PIN;
 use crate::scheduler::DRIVCALL_SLEEP;
 use crate::scheduler::DRIVCALL_SPAWN;
+use crate::scheduler::DRIVCALL_THREAD_WAIT_EXIT;
 use crate::scheduler::DRIVCALL_UNPIN;
 use crate::scheduler::DRIVCALL_VSYS_REG;
 use crate::scheduler::DRIVCALL_VSYS_REQ;
@@ -232,6 +234,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             cpu_local().local_scheduler().check_migrate();
             cpu_local().local_scheduler().check_return();
             cpu_local().local_scheduler().check_vsys_request();
+            cpu_local().local_scheduler().check_thread_exit_notice();
             cpu_local().local_scheduler().push_thread(current_thread);
             is_scheduleable_interrupt = true;
         }
@@ -309,6 +312,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
             }
             DRIVCALL_ISPIN => {
                 cpu_local().local_scheduler().is_pin(current_thread);
+                is_scheduleable_interrupt = true;
+            }
+            DRIVCALL_THREAD_WAIT_EXIT => {
+                cpu_local()
+                    .local_scheduler()
+                    .thread_wait_exit(current_thread, stack_frame.rax as usize);
                 is_scheduleable_interrupt = true;
             }
             number => log!(Error, "Unknown Driver call called, {number}"),

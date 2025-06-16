@@ -16,11 +16,93 @@ use crate::{
     utils::spin_mpsc::SpinMPSC,
 };
 
-use super::{driv_exit, SchedulerError};
+use super::{driv_exit, thread_wait_exit, SchedulerError};
 
 static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
+static THREAD_HANDLE_POOL: RwLock<ThreadHandlePool> = RwLock::new(ThreadHandlePool::new());
 static THREAD_MIGRATE_QUEUE: [SpinMPSC<(Thread, ThreadContext), 256>; MAX_CPU] =
     [const { SpinMPSC::new() }; MAX_CPU];
+
+#[derive(Debug)]
+struct ThreadHandlePool {
+    pool: Vec<ThreadHandleData>,
+    expire_handles: Vec<usize>,
+}
+
+impl ThreadHandlePool {
+    const fn new() -> Self {
+        Self {
+            pool: Vec::new(),
+            expire_handles: Vec::new(),
+        }
+    }
+
+    fn is_expired(&self, handle: &ThreadHandle) -> bool {
+        self.pool
+            .get(handle.handle_id)
+            .map(|e| e.expired || e.global_id != handle.global_id)
+            .unwrap_or(true)
+    }
+
+    fn create(&mut self, global_id: usize) -> ThreadHandle {
+        if let Some(expire) = self
+            .expire_handles
+            .pop_if(|e| self.pool[*e].global_id != global_id)
+        {
+            self.pool[expire].global_id = global_id;
+            self.pool[expire].expired = false;
+
+            return ThreadHandle {
+                handle_id: expire,
+                global_id,
+            };
+        }
+        let id = self.pool.len();
+        self.pool.push(ThreadHandleData {
+            expired: false,
+            global_id,
+        });
+        return ThreadHandle {
+            handle_id: id,
+            global_id,
+        };
+    }
+
+    fn free(&mut self, handle: usize) {
+        self.pool[handle].expired = true;
+        self.expire_handles.push(handle);
+    }
+}
+
+#[derive(Debug)]
+struct ThreadHandleData {
+    expired: bool,
+    global_id: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadHandle {
+    handle_id: usize,
+    global_id: usize,
+}
+
+impl ThreadHandle {
+    #[inline]
+    pub fn id(&self) -> Option<usize> {
+        let pool = THREAD_HANDLE_POOL.read();
+        if pool.is_expired(self) {
+            return None;
+        }
+
+        Some(pool.pool[self.handle_id].global_id)
+    }
+
+    pub fn join(self) {
+        if !THREAD_HANDLE_POOL.read().is_expired(&self) {
+            thread_wait_exit(self.global_id);
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct ThreadPool {
@@ -31,8 +113,60 @@ pub struct ThreadPool {
 
 #[derive(Debug)]
 struct GlobalThreadIdPool {
-    pool: Vec<LocalThreadId>,
+    pool: Vec<GlobalThreadIdData>,
     free_id: Vec<usize>,
+}
+
+#[derive(Debug)]
+struct GlobalThreadIdData {
+    local_id: LocalThreadId,
+    handle_id: usize,
+}
+
+impl GlobalThreadIdPool {
+    pub const fn new() -> Self {
+        Self {
+            pool: Vec::new(),
+            free_id: Vec::new(),
+        }
+    }
+
+    #[inline]
+    fn translate(&self, global_id: usize) -> LocalThreadId {
+        self.pool[global_id].local_id
+    }
+
+    fn migrate(&mut self, global_id: usize, new_local_id: LocalThreadId) {
+        self.pool[global_id].local_id = new_local_id;
+    }
+
+    fn alloc(&mut self, local_id: LocalThreadId) -> (usize, ThreadHandle) {
+        if let Some(free) = self.free_id.pop() {
+            let id = &mut self.pool[free];
+
+            let handle = THREAD_HANDLE_POOL.write().create(free);
+            id.local_id = local_id;
+            id.handle_id = handle.handle_id;
+
+            return (free, handle);
+        }
+
+        let id = self.pool.len();
+        let handle = THREAD_HANDLE_POOL.write().create(id);
+        self.pool.push(GlobalThreadIdData {
+            local_id,
+            handle_id: handle.handle_id,
+        });
+        (id, handle)
+    }
+
+    fn free(&mut self, global_id: usize) -> LocalThreadId {
+        self.free_id.push(global_id);
+        THREAD_HANDLE_POOL
+            .write()
+            .free(self.pool[global_id].handle_id);
+        return self.pool[global_id].local_id;
+    }
 }
 
 #[repr(C)]
@@ -209,17 +343,20 @@ impl Thread {
     }
 
     #[must_use]
-    fn new<F>(f: F, local_id: LocalThreadId, context: &ThreadContext) -> Self
+    fn new<F>(f: F, local_id: LocalThreadId, context: &ThreadContext) -> (Self, ThreadHandle)
     where
         F: FnOnce() + Send + 'static,
     {
-        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
+        let (global_id, handle) = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
 
-        Thread {
-            global_id,
-            local_id,
-            state: ThreadState::new(f, context),
-        }
+        (
+            Thread {
+                global_id,
+                local_id,
+                state: ThreadState::new(f, context),
+            },
+            handle,
+        )
     }
 
     pub fn migrate(&mut self, new_local_thread: u32) {
@@ -262,7 +399,7 @@ impl Thread {
     #[must_use]
     pub fn hlt_thread(stack: Stack, core: CoreId) -> Self {
         let local_id = LocalThreadId { core, thread: 1 };
-        let global_id = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
+        let (global_id, _handle) = GLOBAL_THREAD_ID_MAP.write().alloc(local_id);
         Thread {
             global_id,
             local_id,
@@ -331,42 +468,6 @@ impl From<SchedulerError> for ThreadMigrationError {
 
 impl Error for ThreadMigrationError {}
 
-impl GlobalThreadIdPool {
-    pub const fn new() -> Self {
-        Self {
-            pool: Vec::new(),
-            free_id: Vec::new(),
-        }
-    }
-
-    #[inline]
-    fn translate(&self, global_id: usize) -> LocalThreadId {
-        self.pool[global_id]
-    }
-
-    fn migrate(&mut self, global_id: usize, new_local_id: LocalThreadId) {
-        self.pool[global_id] = new_local_id;
-    }
-
-    fn alloc(&mut self, local_id: LocalThreadId) -> usize {
-        if let Some(free) = self.free_id.pop() {
-            let id = &mut self.pool[free];
-            *id = local_id;
-
-            return free;
-        }
-
-        let id = self.pool.len();
-        self.pool.push(local_id);
-        id
-    }
-
-    fn free(&mut self, global_id: usize) -> LocalThreadId {
-        self.free_id.push(global_id);
-        return self.pool[global_id];
-    }
-}
-
 impl ThreadPool {
     /// Create new thread pool, fails if failed to allocate the context for the hlt thread
     pub fn new() -> Self {
@@ -391,7 +492,7 @@ impl ThreadPool {
     }
 
     #[must_use]
-    pub fn alloc<F>(&mut self, f: F) -> Result<Thread, SchedulerError>
+    pub fn alloc<F>(&mut self, f: F) -> Result<(Thread, ThreadHandle), SchedulerError>
     where
         F: FnOnce() + Send + 'static,
     {
