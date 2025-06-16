@@ -75,7 +75,10 @@ pub fn initialize_graphics_kernel(
         let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
 
         let gop_info = mode.info();
-        boot_bridge.framebuffer_data(framebuffer, framebuffer_len * size_of::<u32>());
+        boot_bridge.framebuffer_data(
+            framebuffer,
+            (framebuffer_len * size_of::<u32>() + 4095) & !4095,
+        );
         boot_bridge.graphics_info(
             gop_info.resolution(),
             gop_info.stride(),
