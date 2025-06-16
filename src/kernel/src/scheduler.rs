@@ -538,24 +538,31 @@ pub fn vsys_reg(number: usize) {
     }
 }
 
+/// Wait until some interrupts occurs on the current core, often use in pair with [pin] [unpin] [pinned]
 pub fn interrupt_wait_raw(idx: u8) {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_INT_WAIT, in("rax") idx as usize);
     }
 }
 
+/// Wait until some interrupts occurs on the current core, often use in pair with [pin] [unpin] [pinned]
 pub fn interrupt_wait(idx: InterruptIndex) {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_INT_WAIT, in("rax") idx.as_usize());
     }
 }
 
+/// Wait until the provided thread id thread is exited
+///
+/// # Note
+/// If the thread have already exited this may block the thread forever
 pub fn thread_wait_exit(thread_id: usize) {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_THREAD_WAIT_EXIT, in("rax") thread_id);
     }
 }
 
+/// The closure provided will be gurrentee, to be pinned
 pub fn pinned<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
@@ -573,6 +580,7 @@ where
     ret
 }
 
+/// Check if the thread is pinned or not
 pub fn is_pin() -> bool {
     let is_pin: usize;
     unsafe {
@@ -581,12 +589,14 @@ pub fn is_pin() -> bool {
     is_pin == 1
 }
 
+/// UnPin a thread from the current core, this does not gurentee the thread will move immediately
 pub fn unpin() {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_UNPIN);
     }
 }
 
+/// Pin a thread to the current core
 pub fn pin() {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_PIN);
