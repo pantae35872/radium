@@ -71,14 +71,14 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
 /// The caller must ensure that this is only called on kernel initialization
 pub unsafe fn prepare_flags() {
     let esi = CpuId::new().get_extended_state_info().unwrap();
-    log!(Info, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
+    log!(Debug, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
     log!(
-        Info,
+        Debug,
         "Support AVX512 High?: {}",
         esi.xcr0_supports_avx512_zmm_hi256()
     );
     log!(
-        Info,
+        Debug,
         "Support AVX512 High Regs?: {}",
         esi.xcr0_supports_avx512_zmm_hi16()
     );

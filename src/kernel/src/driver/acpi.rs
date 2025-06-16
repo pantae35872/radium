@@ -32,13 +32,13 @@ pub fn init(mut ctx: InitializationContext<Stage1>) -> InitializationContext<Sta
         .xrsdt
         .get::<Fadt>(&mut ctx)
         .expect("MADT table is required for APIC initialization");
-    log!(Trace, "FADT Reset register {:x?}", fadt.data.reset_register);
+    log!(Info, "FADT Reset register {:x?}", fadt.data.reset_register);
     log!(
-        Trace,
+        Info,
         "FADT PM1A Control Block {:x?}",
         fadt.data.x_pm1a_event_block
     );
-    log!(Trace, "FADT Reset value {:x?}", fadt.data.reset_value);
+    log!(Info, "FADT Reset value {:x?}", fadt.data.reset_value);
     let info = (
         acpi.processors(&mut ctx),
         acpi.local_apic_mmio(&mut ctx),

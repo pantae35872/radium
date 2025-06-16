@@ -15,9 +15,9 @@ use core::arch::asm;
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
 use radium::driver::pit::PIT;
-use radium::driver::uefi_runtime::uefi_runtime;
+use radium::driver::uefi_runtime::{uefi_runtime, EfiStatus, ResetType};
 use radium::interrupt::io_apic::RedirectionTableEntry;
-use radium::interrupt::InterruptIndex;
+use radium::interrupt::{self, InterruptIndex};
 use radium::logger::LOGGER;
 use radium::scheduler::{
     self, interrupt_wait, pin, pinned, sleep, unpin, vsys_reg, VsysThread,
@@ -41,10 +41,10 @@ fn kmain_thread() {
     scheduler::spawn(|| {
         vsys_reg(1); // VSYS 1
         loop {
-            log!(Info, "Waiting for threads...");
+            log!(Trace, "Waiting for threads...");
             let mut thread1 = VsysThread::new(1);
             log!(
-                Info,
+                Trace,
                 "Handling 1: {}, with value sent: {}",
                 thread1.global_id(),
                 thread1.state.rcx
@@ -69,7 +69,7 @@ fn kmain_thread() {
         scheduler::spawn(|| {
             for send in 0..10 {
                 log!(
-                    Info,
+                    Trace,
                     "Sending request from id {}...",
                     cpu_local().current_thread_id()
                 );
@@ -82,7 +82,7 @@ fn kmain_thread() {
 
                 assert!(res != DRIVCALL_ERR_VSYSCALL_FULL);
                 assert_eq!(ret, send + 1);
-                log!(Info, "Received: {ret}");
+                log!(Trace, "Received: {ret}");
             }
         });
     }
