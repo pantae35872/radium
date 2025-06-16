@@ -87,6 +87,18 @@ pub struct ThreadHandle {
 }
 
 impl ThreadHandle {
+    pub fn into_raw(&self) -> (usize, usize) {
+        (self.handle_id, self.global_id)
+    }
+
+    /// Must be called with the value from [Self::into_raw]
+    pub unsafe fn from_raw(handle_id: usize, global_id: usize) -> Self {
+        Self {
+            handle_id,
+            global_id,
+        }
+    }
+
     #[inline]
     pub fn id(&self) -> Option<usize> {
         let pool = THREAD_HANDLE_POOL.read();

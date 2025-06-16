@@ -8,7 +8,7 @@ extern crate alloc;
 
 use alloc::{sync::Arc, vec::Vec};
 use bootbridge::RawBootBridge;
-use radium::{smp::cpu_local, utils::mutex::Mutex};
+use radium::{scheduler, utils::mutex::Mutex};
 
 const NUM_THREADS: usize = 64;
 const NUM_INCREMENTS: usize = 100_000;
@@ -25,7 +25,7 @@ fn mutex_increment() {
 
     for _ in 0..NUM_THREADS {
         let counter_clone = Arc::clone(&counter);
-        handles.push(cpu_local().local_scheduler().spawn(move || {
+        handles.push(scheduler::spawn(move || {
             for _ in 0..NUM_INCREMENTS {
                 let mut lock = counter_clone.lock();
                 *lock += 1;

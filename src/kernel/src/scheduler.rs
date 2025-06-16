@@ -9,6 +9,7 @@ use core::{
 };
 
 use alloc::{
+    boxed::Box,
     collections::{binary_heap::BinaryHeap, vec_deque::VecDeque},
     vec::Vec,
 };
@@ -600,6 +601,33 @@ pub fn unpin() {
 pub fn pin() {
     unsafe {
         asm!("int 0x90", in("rdi") DRIVCALL_PIN);
+    }
+}
+
+pub trait FnBox {
+    fn call_box(self: Box<Self>);
+}
+
+impl<F: FnOnce()> FnBox for F {
+    fn call_box(self: Box<Self>) {
+        (*self)()
+    }
+}
+
+pub fn spawn<F>(f: F) -> ThreadHandle
+where
+    F: FnOnce() + Send + 'static,
+{
+    let f: Box<dyn FnBox> = Box::new(f);
+    let f = Box::new(Box::into_raw(f));
+
+    let (handle_id, global_id): (usize, usize);
+    unsafe {
+        asm!("int 0x90", in("rdi") DRIVCALL_SPAWN, 
+            in("rax") Box::into_raw(f), 
+            lateout("rcx") handle_id, 
+            lateout("rdx") global_id);
+        ThreadHandle::from_raw(handle_id, global_id)
     }
 }
 
