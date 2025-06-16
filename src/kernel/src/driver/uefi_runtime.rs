@@ -337,7 +337,9 @@ impl UefiRuntime {
         for ufu_stuff in mem_map.entries_mut().filter(|e| {
             matches!(
                 e.ty,
-                MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
+                MemoryType::RUNTIME_SERVICES_CODE
+                    | MemoryType::RUNTIME_SERVICES_DATA
+                    | MemoryType::BOOT_SERVICES_DATA
             )
         }) {
             log!(

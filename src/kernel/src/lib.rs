@@ -79,7 +79,6 @@ where
     let mut final_phase = interrupt::init(phase3);
     scheduler::init(&mut final_phase);
     pit::init(&mut final_phase);
-    uefi_runtime::init(&mut final_phase);
     smp::init_aps(final_phase);
 
     cpu_local().local_scheduler().spawn(|| {
@@ -87,6 +86,9 @@ where
             sleep(1000);
         }
         sleep(1000);
+
+        uefi_runtime::init(&mut cpu_local().ctx().lock());
+
         main_thread()
     });
     cpu_local().local_scheduler().start_scheduling();

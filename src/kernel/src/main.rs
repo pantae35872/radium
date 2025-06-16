@@ -37,7 +37,6 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 
 fn kmain_thread() {
     println!("Hello, world!!!, from kmain thread");
-    log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
 
     scheduler::spawn(|| {
         vsys_reg(1); // VSYS 1
@@ -123,6 +122,7 @@ fn kmain_thread() {
         handle.join();
     }
 
+    log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
     log!(Debug, "This should be the last log");
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
