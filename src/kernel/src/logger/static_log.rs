@@ -443,24 +443,27 @@ mod tests {
         buffer.write_log(&format_args!("1234567890qwertyuiopasdf"), LogLevel::Trace);
 
         buffer.read(DummyFormatter::new(|s, c| match (s, c) {
-            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
-            (s, 1) => assert_eq!(s, ": "),
-            (s, 2) => assert_eq!(s, "Hello World!!"),
+            (s, 0) => assert_eq!(s, "["),
+            (s, 1) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 2) => assert_eq!(s, "] "),
+            (s, 3) => assert_eq!(s, "Hello World!!"),
             _ => unreachable!(),
         }));
 
         buffer.read(DummyFormatter::new(|s, c| match (s, c) {
-            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
-            (s, 1) => assert_eq!(s, ": "),
-            (s, 2) => assert_eq!(s, "1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156"),
-            (s, 3) => assert_eq!(s, "256509732480508934402278968101017787386018442744"),
+            (s, 0) => assert_eq!(s, "["),
+            (s, 1) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 2) => assert_eq!(s, "] "),
+            (s, 3) => assert_eq!(s, "1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156"),
+            (s, 4) => assert_eq!(s, "256509732480508934402278968101017787386018442744"),
             _ => unreachable!(),
         }));
 
         buffer.read(DummyFormatter::new(|s, c| match (s, c) {
-            (s, 0) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
-            (s, 1) => assert_eq!(s, ": "),
-            (s, 2) => assert_eq!(s, "1234567890qwertyuiopasdf"),
+            (s, 0) => assert_eq!(s, "["),
+            (s, 1) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
+            (s, 2) => assert_eq!(s, "] "),
+            (s, 3) => assert_eq!(s, "1234567890qwertyuiopasdf"),
             _ => unreachable!(),
         }));
     }
@@ -483,15 +486,17 @@ mod tests {
         buffer.write_slaves(&[116; DATA_SIZE_PER_CHUNK], first_id);
 
         buffer.read(DummyFormatter::new(|s, c| match (s, c) {
-            (s, 0) => assert_eq!(s, "\x1b[93mWARNING\x1b[0m"),
-            (s, 1) => assert_eq!(s, ": "),
-            (s, 2) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 0) => assert_eq!(s, "["),
+            (s, 1) => assert_eq!(s, "\x1b[93mWARNING\x1b[0m"),
+            (s, 2) => assert_eq!(s, "] "),
             (s, 3) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
             (s, 4) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
-            (s, 5) => assert_eq!(s, "\x1b[92mINFO\x1b[0m"),
-            (s, 6) => assert_eq!(s, ": "),
-            (s, 7) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
-            (s, 8) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 5) => assert_eq!(s, str::from_utf8(&[116; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 6) => assert_eq!(s, "["),
+            (s, 7) => assert_eq!(s, "\x1b[92mINFO\x1b[0m"),
+            (s, 8) => assert_eq!(s, "] "),
+            (s, 9) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
+            (s, 10) => assert_eq!(s, str::from_utf8(&[117; DATA_SIZE_PER_CHUNK]).unwrap()),
             _ => unreachable!(),
         }));
     }

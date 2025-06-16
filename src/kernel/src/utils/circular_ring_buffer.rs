@@ -303,10 +303,11 @@ pub mod lockfree {
 
     #[cfg(test)]
     mod tests {
-        use super::*;
+        use alloc::{sync::Arc, vec::Vec};
 
-        // TODO: this is only simple single threaded testing, do a multithreaded or multicore testing when we have
-        // thread
+        use crate::scheduler;
+
+        use super::*;
 
         #[test_case]
         pub fn read_write() {
@@ -376,6 +377,117 @@ pub mod lockfree {
             assert!(buffer.read().is_some_and(|e| e == 50));
             buffer.write(60);
             assert!(buffer.read().is_some_and(|e| e == 60));
+        }
+
+        #[test_case]
+        pub fn multithreaded_write() {
+            let buffer = Arc::new(CircularRingBuffer::<_, 256>::new());
+            let mut handles = Vec::new();
+            for _ in 0..16 {
+                let buffer = buffer.clone();
+                handles.push(scheduler::spawn(move || {
+                    for i in 0..128 {
+                        buffer.write(i);
+                    }
+                }));
+            }
+
+            for handle in handles {
+                handle.join();
+            }
+
+            while let Some(i) = buffer.read() {
+                assert!(i < 128);
+            }
+        }
+
+        #[test_case]
+        pub fn multithreaded_read_write() {
+            let buffer = Arc::new(CircularRingBuffer::<_, 1024>::new());
+            let mut handles = Vec::new();
+
+            for t in 0..8 {
+                let buffer = buffer.clone();
+                handles.push(scheduler::spawn(move || {
+                    for i in 0..100 {
+                        buffer.write(i + t * 100);
+                    }
+                }));
+            }
+
+            for _ in 0..4 {
+                let buffer = buffer.clone();
+                handles.push(scheduler::spawn(move || {
+                    let mut count = 0;
+                    while count < 200 {
+                        if buffer.read().is_some() {
+                            count += 1;
+                        }
+                    }
+                }));
+            }
+
+            for handle in handles {
+                handle.join();
+            }
+        }
+
+        #[test_case]
+        pub fn multithreaded_read_with_contention() {
+            let buffer = Arc::new(CircularRingBuffer::<_, 64>::new());
+            let mut handles = Vec::new();
+
+            for i in 0..64 {
+                buffer.write(i);
+            }
+
+            for _ in 0..8 {
+                let buffer = buffer.clone();
+                handles.push(scheduler::spawn(move || {
+                    let mut read_count = 0;
+                    while read_count < 8 {
+                        if buffer.read().is_some() {
+                            read_count += 1;
+                        }
+                    }
+                }));
+            }
+
+            for handle in handles {
+                handle.join();
+            }
+
+            assert!(buffer.read().is_none());
+        }
+
+        #[test_case]
+        pub fn multithreaded_overwrite_behavior() {
+            let buffer = Arc::new(CircularRingBuffer::<_, 16>::new());
+            let mut handles = Vec::new();
+
+            for _ in 0..4 {
+                let buffer = buffer.clone();
+                handles.push(scheduler::spawn(move || {
+                    for i in 0..128 {
+                        buffer.write(i);
+                    }
+                }));
+            }
+
+            let buffer = buffer.clone();
+            handles.push(scheduler::spawn(move || {
+                let mut count = 0;
+                while count < 128 {
+                    if let Some(v) = buffer.read() {
+                        assert!(v < 128);
+                        count += 1;
+                    }
+                }
+            }));
+
+            for handle in handles {
+                handle.join();
+            }
         }
     }
 }
