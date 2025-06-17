@@ -246,7 +246,6 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
         idx if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() => {
             log!(Warning, "Spurious Interrupt Detected");
         }
-        // FIXME: use simulated interrupts instead of software interrupts
         idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
             DRIVCALL_SLEEP => {
                 cpu_local()
