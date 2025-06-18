@@ -170,12 +170,8 @@ check: $(CRATES)
 
 $(CRATES):
 	@cd $@ && \
-		if [ "$@" == "src/bakery" ]; then \
-			cargo check --message-format=json --no-default-features --features alloc ; \
-		else \
-			cargo check --message-format=json --all-targets ;\
-			exit 0; \
-		fi
+		echo "$$(cat .cargo_check_cmd) --message-format=json" | bash; \
+		exit 0;
 
 test: 
 	cd src/kernel && cargo test --features testing $(RUN_ARGS)
