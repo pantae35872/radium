@@ -1,33 +1,80 @@
 use core::ptr::write_bytes;
 
 use alloc::vec;
-use bootbridge::BootBridgeBuilder;
 use pager::{
-    address::{Frame, PhysAddr},
+    address::{Frame, PhysAddr, VirtAddr},
     allocator::{linear_allocator::LinearAllocator, FrameAllocator},
     page_table_size,
     paging::{
         table::{DirectLevel4, Table},
         ActivePageTable, Entry,
     },
-    EntryFlags, Mapper, PageLevel, PAGE_SIZE,
+    EntryFlags, Mapper, PageLevel, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
 };
-use santa::Elf;
 use uefi::{
     proto::loaded_image::LoadedImage,
-    table::boot::{AllocateType, MemoryType},
+    table::boot::{AllocateType, MemoryDescriptor, MemoryMap, MemoryType},
 };
 use uefi_services::system_table;
 
-use crate::config::BootConfig;
+use crate::context::{InitializationContext, Stage2, Stage3, Stage5, Stage6};
 
-pub fn prepare_kernel_page(
-    config: &BootConfig,
-    boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
-    elf: &Elf<'static>,
-    kernel_phys_start: PhysAddr,
-) -> (u64, LinearAllocator) {
+pub fn finialize_mapping(
+    mut ctx: InitializationContext<Stage5>,
+    memory_map: MemoryMap<'static>,
+) -> InitializationContext<Stage6> {
+    prepare_direct_map(&mut ctx, &memory_map);
+
+    let mut kernel_table = ctx.active_table();
+
+    let entry_size = ctx.context().entry_size;
+    let allocator = &mut ctx.context_mut().allocator;
+
+    let memory_map = bootbridge::MemoryMap::new(
+        extract_memory_map(entry_size, memory_map),
+        entry_size,
+        MemoryDescriptor::VERSION as usize,
+    );
+
+    kernel_table.identity_map_object(&memory_map, allocator);
+
+    ctx.next(memory_map)
+}
+
+fn extract_memory_map<'a>(
+    entry_size: usize,
+    memory_map: uefi::table::boot::MemoryMap<'a>,
+) -> &'a [u8] {
+    let entries = memory_map.entries();
+    let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
+    let len = entries.len() * entry_size;
+    unsafe { core::slice::from_raw_parts(start, len) }
+}
+
+fn prepare_direct_map(ctx: &mut InitializationContext<Stage5>, memory_map: &MemoryMap<'static>) {
+    let mut kernel_table = ctx.active_table();
+    let allocator = &mut ctx.context_mut().allocator;
+    for usable in memory_map
+        .entries()
+        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+    {
+        let size = (usable.page_count * PAGE_SIZE) as usize;
+        unsafe {
+            kernel_table
+                .mapper_with_allocator(allocator)
+                .map_to_range_by_size(
+                    VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start).into(),
+                    PhysAddr::new(usable.phys_start).into(),
+                    size,
+                    EntryFlags::WRITABLE,
+                )
+        };
+    }
+}
+
+pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
     let system_table = system_table();
+    let config = ctx.config();
 
     let mut buf = vec![0; system_table.boot_services().memory_map_size().map_size * 2];
     let mem_map = system_table
@@ -76,7 +123,11 @@ pub fn prepare_kernel_page(
         &mut kernel_page_allocator,
     );
 
-    kernel_table.virtually_map_object(elf, kernel_phys_start, &mut kernel_page_allocator);
+    kernel_table.virtually_map_object(
+        ctx.context().elf(),
+        ctx.context().kernel_base,
+        &mut kernel_page_allocator,
+    );
 
     let protocol = system_table
         .boot_services()
@@ -86,6 +137,7 @@ pub fn prepare_kernel_page(
     let loaded_image_protocol = protocol.get().expect("Failed to get loaded image protocol");
 
     let (start, size) = loaded_image_protocol.info();
+
     unsafe {
         kernel_table
             .mapper_with_allocator(&mut kernel_page_allocator)
@@ -95,8 +147,6 @@ pub fn prepare_kernel_page(
                 EntryFlags::PRESENT,
             );
     };
-
-    boot_bridge.kernel_base(kernel_phys_start);
 
     // Do a recursive map
     kernel_table.p4_mut()[511] = Entry(
@@ -112,5 +162,5 @@ pub fn prepare_kernel_page(
         ) // 64 page should be sufficent for kernel elf
         .expect("Failed to allocate pages for kernel ap tables");
 
-    (kernel_pages_table, kernel_page_allocator)
+    ctx.next((kernel_pages_table, kernel_page_allocator))
 }

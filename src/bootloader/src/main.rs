@@ -8,33 +8,24 @@ use core::arch::asm;
 use boot_cfg_parser::toml::parser::TomlValue;
 use boot_services::LoaderFile;
 use bootbridge::BootBridgeBuilder;
-use config::BootConfig;
+use context::{InitializationContext, Stage0};
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
-use kernel_loader::load_kernel;
-use pager::{
-    address::{PhysAddr, VirtAddr},
-    paging::{
-        table::{DirectLevel4, Table},
-        ActivePageTable,
-    },
-    registers::{Cr0, Cr0Flags, Efer, EferFlags},
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
-};
+use kernel_loader::{load_kernel_elf, load_kernel_infos};
+use kernel_mapper::{finialize_mapping, prepare_kernel_page};
+use pager::registers::{Cr0, Cr0Flags, Efer, EferFlags};
+use sentinel::{set_logger, LogLevel, LoggerBackend};
 use uefi::{
     entry,
-    table::{
-        boot::{MemoryDescriptor, MemoryType},
-        Boot, SystemTable,
-    },
+    table::{boot::MemoryType, Boot, SystemTable},
     Handle, Status,
 };
 
-use uefi_services::println;
+use uefi_services::{print, println};
 extern crate alloc;
 
 pub mod boot_services;
 pub mod config;
-pub mod elf_loader;
+pub mod context;
 pub mod graphics;
 pub mod kernel_loader;
 pub mod kernel_mapper;
@@ -55,83 +46,66 @@ fn any_key_boot(system_table: &mut SystemTable<Boot>) {
     }
 }
 
+struct BasicUEFILogger;
+
+impl LoggerBackend for BasicUEFILogger {
+    fn log(
+        &self,
+        module_path: &'static str,
+        level: sentinel::LogLevel,
+        formatter: core::fmt::Arguments,
+    ) {
+        print!(
+            "[{}] <- [{module_path}] : {formatter}",
+            match level {
+                LogLevel::Debug => "DEBUG",
+                LogLevel::Info => "INFO",
+                LogLevel::Trace => "TRACE",
+                LogLevel::Error => "ERROR",
+                LogLevel::Warning => "WARNING",
+                LogLevel::Critical => "CRITICAL",
+                _ => unreachable!(),
+            }
+        );
+    }
+}
+
+static UEFI_LOGGER: BasicUEFILogger = BasicUEFILogger;
+
 #[entry]
 fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     uefi_services::init(&mut system_table).unwrap();
 
-    let mut boot_bridge = BootBridgeBuilder::new(|size: usize| {
+    initialize_graphics_bootloader(&mut system_table);
+    set_logger(&UEFI_LOGGER);
+
+    let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
+    let bootbridge_builder = BootBridgeBuilder::new(|size: usize| {
         uefi_services::system_table()
             .boot_services()
-            .allocate_pool(MemoryType::RUNTIME_SERVICES_DATA, size)
+            .allocate_pool(MemoryType::LOADER_DATA, size)
             .unwrap_or_else(|e| panic!("Failed to allocate memory for the boot information {}", e))
     });
 
-    initialize_graphics_bootloader(&mut system_table);
+    let stage0 = InitializationContext::<Stage0>::start(config);
+    let stage1 = load_kernel_infos(stage0);
+    let stage2 = load_kernel_elf(stage1);
+    let stage3 = prepare_kernel_page(stage2);
 
-    let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
-    let config: BootConfig = BootConfig::parse(&config);
-
-    let (entrypoint, table, mut allocator) = load_kernel(&mut boot_bridge, &config);
-
-    if config.any_key_boot() {
+    if stage3.config().any_key_boot() {
         any_key_boot(&mut system_table);
     }
 
-    initialize_graphics_kernel(&mut system_table, &mut boot_bridge, &config);
+    let stage4 = initialize_graphics_kernel(stage3);
+
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
-
-    let (system_table, mut memory_map) =
-        system_table.exit_boot_services(MemoryType::RUNTIME_SERVICES_DATA);
-
+    let (system_table, mut memory_map) = system_table.exit_boot_services(MemoryType::LOADER_DATA);
     memory_map.sort();
-    boot_bridge.runtime_service(system_table.as_ptr() as u64);
-
-    let entries = memory_map.entries();
-    let start = memory_map.get(0).unwrap() as *const MemoryDescriptor as *const u8;
-    let len = entries.len() * entry_size;
-    let memory_map_bytes: &[u8] = unsafe { core::slice::from_raw_parts(start, len) };
-
-    let mut kernel_table =
-        unsafe { ActivePageTable::new_custom(table as *mut Table<DirectLevel4>) };
-    kernel_table.identity_map_object(&boot_bridge, &mut allocator);
-    kernel_table.identity_map_object(
-        &bootbridge::MemoryMap::new(
-            memory_map_bytes,
-            entry_size,
-            MemoryDescriptor::VERSION as usize,
-        ),
-        &mut allocator,
-    );
-
-    assert!(memory_map
-        .entries()
-        .next()
-        .is_some_and(|e| e.phys_start == 0));
-
-    for usable in memory_map
-        .entries()
-        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-    {
-        let size = (usable.page_count * PAGE_SIZE) as usize;
-        unsafe {
-            kernel_table
-                .mapper_with_allocator(&mut allocator)
-                .map_to_range_by_size(
-                    VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start).into(),
-                    PhysAddr::new(usable.phys_start).into(),
-                    size,
-                    EntryFlags::WRITABLE,
-                )
-        };
-    }
-
-    boot_bridge.memory_map(
-        memory_map_bytes,
-        entry_size,
-        MemoryDescriptor::VERSION as usize,
-    );
-
-    let boot_bridge = boot_bridge.build().expect("Failed to build boot bridge");
+    let stage5 = stage4.next((entry_size, system_table.as_ptr() as u64));
+    let stage6 = finialize_mapping(stage5, memory_map);
+    let entrypoint = stage6.context().entry_point;
+    let table = stage6.context().table;
+    let boot_bridge = stage6.build_bridge(bootbridge_builder);
 
     unsafe {
         Efer::write_or(EferFlags::NoExecuteEnable);

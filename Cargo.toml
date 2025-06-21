@@ -1,5 +1,5 @@
 [workspace]
-members = ["src/boot_cfg_parser", "src/kernel", "src/bootloader", "src/bootbridge", "src/santa", "src/c_enum", "src/test_driver", "src/baker", "src/bakery", "src/kernel_proc", "src/pager", "src/sentinel"]
+members = ["src/boot_cfg_parser", "src/kernel", "src/bootloader", "src/bootbridge", "src/santa", "src/c_enum", "src/test_driver", "src/baker", "src/bakery", "src/kernel_proc", "src/pager", "src/sentinel", "src/rstd"]
 resolver = "2"
 
 [profile.dev]

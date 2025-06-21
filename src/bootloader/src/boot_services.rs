@@ -1,5 +1,7 @@
 use alloc::ffi::CString;
 use boot_cfg_parser::toml::{parse_toml, parser::TomlValue};
+use bootbridge::RawData;
+use pager::address::PhysAddr;
 use uefi::{
     proto::{
         loaded_image::LoadedImage,
@@ -128,6 +130,12 @@ impl LoaderFile {
     /// Borrow a buffer of a file
     pub fn buffer(&self) -> &[u8] {
         unsafe { &*self.buffer }
+    }
+
+    pub fn raw_data_permanent(self) -> RawData {
+        let d = self.permanent();
+        // SAFETY: This is comming from uefi and it's physical address so it's valid
+        unsafe { RawData::new(PhysAddr::new(d.as_ptr() as u64), d.len()) }
     }
 
     /// Consume self, create a permanent buffer of a file

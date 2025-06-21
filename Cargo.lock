@@ -494,6 +494,7 @@ dependencies = [
  "pager",
  "paste",
  "raw-cpuid",
+ "rstd",
  "santa",
  "sentinel",
  "spin",
@@ -513,6 +514,7 @@ dependencies = [
  "bootbridge",
  "pager",
  "santa",
+ "sentinel",
  "uart_16550",
  "uefi",
  "uefi-raw",
@@ -526,6 +528,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c6df7ab838ed27997ba19a4664507e6f82b41fe6e20be42929332156e5e85146"
 dependencies = [
  "bitflags 2.9.0",
+]
+
+[[package]]
+name = "rstd"
+version = "0.1.0"
+dependencies = [
+ "pager",
 ]
 
 [[package]]

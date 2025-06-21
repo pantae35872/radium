@@ -4,29 +4,12 @@ use core::sync::atomic::Ordering;
 use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
-use crate::memory::stack_allocator;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::FnBox;
-use crate::scheduler::DRIVCALL_EXIT;
-use crate::scheduler::DRIVCALL_FUTEX_WAIT;
-use crate::scheduler::DRIVCALL_FUTEX_WAKE;
-use crate::scheduler::DRIVCALL_INT_WAIT;
-use crate::scheduler::DRIVCALL_ISPIN;
-use crate::scheduler::DRIVCALL_PIN;
-use crate::scheduler::DRIVCALL_SLEEP;
-use crate::scheduler::DRIVCALL_SPAWN;
-use crate::scheduler::DRIVCALL_THREAD_WAIT_EXIT;
-use crate::scheduler::DRIVCALL_UNPIN;
-use crate::scheduler::DRIVCALL_VSYS_REG;
-use crate::scheduler::DRIVCALL_VSYS_REQ;
-use crate::scheduler::DRIVCALL_VSYS_RET;
-use crate::scheduler::DRIVCALL_VSYS_WAIT;
-use crate::serial_println;
 use crate::smp::cpu_local;
-use crate::smp::cpu_local_avaiable;
 use crate::smp::CpuLocalBuilder;
 use crate::PANIC_COUNT;
 use alloc::boxed::Box;
@@ -44,6 +27,20 @@ use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
 use pager::registers::RFlagsFlags;
+use rstd::drivcall::DRIVCALL_EXIT;
+use rstd::drivcall::DRIVCALL_FUTEX_WAIT;
+use rstd::drivcall::DRIVCALL_FUTEX_WAKE;
+use rstd::drivcall::DRIVCALL_INT_WAIT;
+use rstd::drivcall::DRIVCALL_ISPIN;
+use rstd::drivcall::DRIVCALL_PIN;
+use rstd::drivcall::DRIVCALL_SLEEP;
+use rstd::drivcall::DRIVCALL_SPAWN;
+use rstd::drivcall::DRIVCALL_THREAD_WAIT_EXIT;
+use rstd::drivcall::DRIVCALL_UNPIN;
+use rstd::drivcall::DRIVCALL_VSYS_REG;
+use rstd::drivcall::DRIVCALL_VSYS_REQ;
+use rstd::drivcall::DRIVCALL_VSYS_RET;
+use rstd::drivcall::DRIVCALL_VSYS_WAIT;
 use sentinel::log;
 
 pub mod apic;
@@ -82,7 +79,6 @@ fn disable_pic(ctx: &mut InitializationContext<Stage3>) {
         ctx.alloc_port(0xA1).expect("PIC Port is already taken");
     unsafe {
         pic_1_data.write(0xff);
-        pic_2_data.write(0xff);
     }
 }
 

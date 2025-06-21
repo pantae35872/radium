@@ -9,6 +9,7 @@ uefi-raw = "0.5.1"
 uefi-services = "0.24.0"
 uart_16550 = "0.2.0"
 pager = { path = "../pager" }
+sentinel = { path = "../sentinel" }
 
 [dependencies.boot_cfg_parser]
 path = "../boot_cfg_parser"
@@ -23,4 +24,3 @@ features = ["alloc"]
 
 [dependencies.santa]
 path = "../santa"
-

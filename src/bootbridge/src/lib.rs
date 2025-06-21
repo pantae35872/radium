@@ -1,7 +1,6 @@
 #![no_std]
 
 use core::{
-    cell::OnceCell,
     fmt::Debug,
     sync::atomic::{AtomicPtr, Ordering},
 };
@@ -20,6 +19,34 @@ use santa::Elf;
 pub struct RawData {
     start: PhysAddr,
     size: usize,
+}
+
+impl RawData {
+    /// # Safety
+    /// The caller must provide a valid start and size
+    pub unsafe fn new(start: PhysAddr, size: usize) -> Self {
+        RawData { start, size }
+    }
+
+    pub fn start(&self) -> PhysAddr {
+        self.start
+    }
+
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    pub fn end(&self) -> PhysAddr {
+        self.start + self.size - 1
+    }
+}
+
+impl IdentityMappable for RawData {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        unsafe {
+            mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE)
+        };
+    }
 }
 
 #[derive(Debug)]
@@ -166,13 +193,109 @@ pub struct RawBootBridge {
     runtime_service_ptr: PhysAddr,
 }
 
-pub struct BootBridgeBuilder<A>
-where
-    A: Fn(usize) -> *mut u8,
-{
-    // An allocator provided by the bootloader that should never fails
-    allocator: A,
-    boot_bridge: OnceCell<*mut RawBootBridge>,
+#[derive(Debug)]
+pub struct BootBridgeBuilder {
+    pub boot_bridge: *mut RawBootBridge,
+}
+
+impl IdentityMappable for BootBridgeBuilder {
+    fn map(&self, mapper: &mut impl pager::Mapper) {
+        let boot_bridge = self.boot_bridge;
+        unsafe {
+            mapper.identity_map_by_size(
+                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
+                size_of::<RawBootBridge>(),
+                EntryFlags::WRITABLE,
+            );
+        };
+    }
+}
+
+impl BootBridgeBuilder {
+    pub fn new(allocator: impl FnOnce(usize) -> *mut u8) -> Self {
+        BootBridgeBuilder {
+            boot_bridge: {
+                let ptr = allocator(core::mem::size_of::<RawBootBridge>());
+                ptr as *mut RawBootBridge
+            },
+        }
+    }
+
+    fn inner_bridge(&mut self) -> &'static mut RawBootBridge {
+        unsafe { &mut *self.boot_bridge }
+    }
+
+    pub fn framebuffer_data(&mut self, data: RawData) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.framebuffer_data = data;
+        self
+    }
+
+    pub fn kernel_config(&mut self, config: KernelConfig) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.kernel_config = config;
+        self
+    }
+
+    pub fn kernel_elf(&mut self, elf: Elf<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.kernel_elf = elf;
+        self
+    }
+
+    pub fn early_alloc(&mut self, early_alloc: LinearAllocator) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.early_alloc = early_alloc;
+        self
+    }
+
+    pub fn font_data(&mut self, data: RawData) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.font_data = data;
+        self
+    }
+
+    pub fn dwarf_data(&mut self, dwarf: DwarfBaker<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.dwarf_data = Some(dwarf);
+        self
+    }
+
+    pub fn graphics_info(&mut self, info: GraphicsInfo) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.graphics_info = info;
+        self
+    }
+
+    pub fn memory_map(&mut self, memory_map: MemoryMap<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.memory_map = memory_map;
+        self
+    }
+
+    pub fn kernel_base(&mut self, base: PhysAddr) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.kernel_base = base;
+        self
+    }
+
+    pub fn rsdp(&mut self, rsdp: PhysAddr) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.rsdp = rsdp;
+        self
+    }
+
+    pub fn runtime_service(&mut self, runtime_service_ptr: u64) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.runtime_service_ptr = PhysAddr::new(runtime_service_ptr);
+        self
+    }
+
+    /// Build the boot bridge and const return a pointer to it
+    /// Failed if the boot bridge is not initialized
+    pub fn build(self) -> *mut RawBootBridge {
+        self.boot_bridge as *mut RawBootBridge
+    }
 }
 
 pub struct BootBridge(AtomicPtr<RawBootBridge>);
@@ -243,24 +366,6 @@ impl BootBridge {
     }
 }
 
-impl<A> IdentityMappable for BootBridgeBuilder<A>
-where
-    A: Fn(usize) -> *mut u8,
-{
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        let boot_bridge = *self.boot_bridge.get().unwrap();
-        unsafe {
-            mapper.identity_map_by_size(
-                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            );
-            (*boot_bridge).dwarf_data.as_ref().unwrap().map(mapper);
-            (*boot_bridge).kernel_elf.map(mapper);
-        };
-    }
-}
-
 impl VirtuallyReplaceable for BootBridge {
     fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         let current = self.0.load(Ordering::SeqCst);
@@ -297,144 +402,6 @@ impl IdentityMappable for BootBridge {
 impl IdentityMappable for MemoryMap<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         self.memory_map.map(mapper);
-    }
-}
-
-impl IdentityMappable for RawData {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe {
-            mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE)
-        };
-    }
-}
-
-impl<A: Fn(usize) -> *mut u8> Debug for BootBridgeBuilder<A> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{:#x?}", self.boot_bridge.get())
-    }
-}
-
-impl<A> BootBridgeBuilder<A>
-where
-    A: Fn(usize) -> *mut u8,
-{
-    pub fn new(allocator: A) -> Self {
-        BootBridgeBuilder {
-            allocator,
-            boot_bridge: OnceCell::new(),
-        }
-    }
-
-    fn inner_bridge(&mut self) -> &'static mut RawBootBridge {
-        let boot_bridge = self.boot_bridge.get_or_init(|| {
-            let ptr = (self.allocator)(core::mem::size_of::<RawBootBridge>());
-            ptr as *mut RawBootBridge
-        });
-
-        unsafe { &mut **boot_bridge }
-    }
-
-    pub fn framebuffer_data(&mut self, start: u64, size: usize) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.framebuffer_data = RawData {
-            start: PhysAddr::new(start),
-            size,
-        };
-        self
-    }
-
-    pub fn kernel_config(&mut self, config: KernelConfig) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_config = config;
-        self
-    }
-
-    pub fn kernel_elf(&mut self, elf: Elf<'static>) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_elf = elf;
-        self
-    }
-
-    pub fn early_alloc(&mut self, early_alloc: LinearAllocator) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.early_alloc = early_alloc;
-        self
-    }
-
-    pub fn font_data(&mut self, start: u64, size: usize) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.font_data = RawData {
-            start: PhysAddr::new(start),
-            size,
-        };
-        self
-    }
-
-    pub fn dwarf_data(&mut self, dwarf: DwarfBaker<'static>) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.dwarf_data = Some(dwarf);
-        self
-    }
-
-    pub fn graphics_info(
-        &mut self,
-        resolution: (usize, usize),
-        stride: usize,
-        pixel_format: PixelFormat,
-    ) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.graphics_info = GraphicsInfo::new(resolution, stride, pixel_format);
-        self
-    }
-
-    pub fn memory_map(
-        &mut self,
-        memory_map: &'static [u8],
-        entry_size: usize,
-        entry_version: usize,
-    ) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.memory_map = MemoryMap::new(memory_map, entry_size, entry_version);
-        self
-    }
-
-    pub fn kernel_base(&mut self, base: PhysAddr) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_base = base;
-        self
-    }
-
-    pub fn rsdp(&mut self, rsdp: u64) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.rsdp = PhysAddr::new(rsdp);
-        self
-    }
-
-    pub fn runtime_service(&mut self, runtime_service_ptr: u64) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.runtime_service_ptr = PhysAddr::new(runtime_service_ptr);
-        self
-    }
-
-    /// Build the boot bridge and const return a pointer to it
-    /// Failed if the boot bridge is not initialized
-    pub fn build(self) -> Option<*mut RawBootBridge> {
-        self.boot_bridge
-            .get()
-            .copied()
-            .map(|e| e as *mut RawBootBridge)
-    }
-}
-
-impl RawData {
-    pub fn start(&self) -> PhysAddr {
-        self.start
-    }
-    pub fn size(&self) -> usize {
-        self.size
-    }
-    pub fn end(&self) -> PhysAddr {
-        self.start + self.size - 1
     }
 }
 

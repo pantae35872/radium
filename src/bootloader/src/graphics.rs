@@ -1,4 +1,5 @@
-use bootbridge::{BootBridgeBuilder, PixelBitmask, PixelFormat};
+use bootbridge::{GraphicsInfo, PixelBitmask, PixelFormat, RawData};
+use pager::address::PhysAddr;
 use uefi::{
     proto::console::{
         gop::{self, GraphicsOutput},
@@ -9,8 +10,9 @@ use uefi::{
         Boot, SystemTable,
     },
 };
+use uefi_services::system_table;
 
-use crate::config::BootConfig;
+use crate::context::{InitializationContext, Stage3, Stage4};
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     if let Some(mode) = system_table.stdout().modes().max_by(|l, r| l.cmp(r)) {
@@ -31,10 +33,10 @@ pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
 }
 
 pub fn initialize_graphics_kernel(
-    system_table: &mut SystemTable<Boot>,
-    boot_bridge: &mut BootBridgeBuilder<impl Fn(usize) -> *mut u8>,
-    config: &BootConfig,
-) {
+    ctx: InitializationContext<Stage3>,
+) -> InitializationContext<Stage4> {
+    let system_table = system_table();
+    let config = ctx.config();
     let handle = system_table
         .boot_services()
         .get_handle_for_protocol::<GraphicsOutput>();
@@ -75,27 +77,27 @@ pub fn initialize_graphics_kernel(
         let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
 
         let gop_info = mode.info();
-        boot_bridge.framebuffer_data(
-            framebuffer,
-            (framebuffer_len * size_of::<u32>() + 4095) & !4095,
-        );
-        boot_bridge.graphics_info(
-            gop_info.resolution(),
-            gop_info.stride(),
-            match gop_info.pixel_format() {
-                gop::PixelFormat::Rgb => PixelFormat::Rgb,
-                gop::PixelFormat::Bgr => PixelFormat::Bgr,
-                gop::PixelFormat::Bitmask => PixelFormat::Bitmask({
-                    let bitmask = gop_info.pixel_bitmask().unwrap();
-                    PixelBitmask {
-                        red: bitmask.red,
-                        green: bitmask.green,
-                        blue: bitmask.blue,
-                    }
-                }),
-                gop::PixelFormat::BltOnly => PixelFormat::BltOnly,
-            },
-        );
+        let framebuffer = unsafe {
+            RawData::new(
+                PhysAddr::new(framebuffer),
+                (framebuffer_len * size_of::<u32>() + 4095) & !4095,
+            )
+        };
+        let my_format = match gop_info.pixel_format() {
+            gop::PixelFormat::Rgb => PixelFormat::Rgb,
+            gop::PixelFormat::Bgr => PixelFormat::Bgr,
+            gop::PixelFormat::Bitmask => PixelFormat::Bitmask({
+                let bitmask = gop_info.pixel_bitmask().unwrap();
+                PixelBitmask {
+                    red: bitmask.red,
+                    green: bitmask.green,
+                    blue: bitmask.blue,
+                }
+            }),
+            gop::PixelFormat::BltOnly => PixelFormat::BltOnly,
+        };
+        let graphics_info = GraphicsInfo::new(gop_info.resolution(), gop_info.stride(), my_format);
+        ctx.next((framebuffer, graphics_info))
     } else {
         panic!("Could not set to the target resolution");
     }

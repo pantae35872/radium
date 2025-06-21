@@ -14,18 +14,13 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::driver::pit::PIT;
-use radium::driver::uefi_runtime::{uefi_runtime, EfiStatus, ResetType};
-use radium::interrupt::io_apic::RedirectionTableEntry;
-use radium::interrupt::{self, InterruptIndex};
+use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
-use radium::scheduler::{
-    self, interrupt_wait, pin, pinned, sleep, unpin, vsys_reg, VsysThread,
-    DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ,
-};
+use radium::scheduler::{self, sleep, vsys_reg, VsysThread};
 use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
+use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
 use sentinel::log;
 
 static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -49,15 +44,6 @@ fn kmain_thread() {
                 thread1.global_id(),
                 thread1.state.rcx
             );
-
-            //pinned(|| {
-            //    cpu_local().ctx().lock().redirect_legacy_irqs(
-            //        0,
-            //        RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().core_id()),
-            //    );
-            //    PIT.get().unwrap().lock().dumb_wait_10ms_test();
-            //    interrupt_wait(InterruptIndex::PITVector);
-            //});
 
             thread1.state.rsi = thread1.state.rcx + 1;
         }

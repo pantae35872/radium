@@ -17,6 +17,11 @@ use conquer_once::spin::OnceCell;
 use derivative::Derivative;
 use hashbrown::HashMap;
 use pager::address::VirtAddr;
+use rstd::drivcall::{
+    DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_EXIT, DRIVCALL_FUTEX_WAIT, DRIVCALL_FUTEX_WAKE,
+    DRIVCALL_INT_WAIT, DRIVCALL_PIN, DRIVCALL_SLEEP, DRIVCALL_SPAWN, DRIVCALL_THREAD_WAIT_EXIT,
+    DRIVCALL_UNPIN, DRIVCALL_VSYS_REG, DRIVCALL_VSYS_REQ, DRIVCALL_VSYS_RET, DRIVCALL_VSYS_WAIT,
+};
 use sentinel::log;
 use thread::{global_id_to_local_id, Thread, ThreadHandle, ThreadPool};
 
@@ -31,23 +36,6 @@ mod thread;
 
 pub const MAX_VSYSCALL: usize = 64;
 pub const VSYSCALL_REQUEST_RETRIES: usize = 32;
-
-pub const DRIVCALL_ERR_VSYSCALL_FULL: u64 = 1 << 10;
-
-pub const DRIVCALL_SPAWN: u64 = 1;
-pub const DRIVCALL_SLEEP: u64 = 2;
-pub const DRIVCALL_EXIT: u64 = 3;
-pub const DRIVCALL_FUTEX_WAIT: u64 = 4;
-pub const DRIVCALL_FUTEX_WAKE: u64 = 5;
-pub const DRIVCALL_VSYS_REG: u64 = 6;
-pub const DRIVCALL_VSYS_WAIT: u64 = 7;
-pub const DRIVCALL_VSYS_REQ: u64 = 8;
-pub const DRIVCALL_VSYS_RET: u64 = 9;
-pub const DRIVCALL_INT_WAIT: u64 = 10;
-pub const DRIVCALL_PIN: u64 = 11;
-pub const DRIVCALL_UNPIN: u64 = 12;
-pub const DRIVCALL_ISPIN: u64 = 13;
-pub const DRIVCALL_THREAD_WAIT_EXIT: u64 = 14;
 
 const MIGRATION_THRESHOLD: usize = 2;
 
