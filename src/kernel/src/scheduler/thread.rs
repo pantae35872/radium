@@ -2,16 +2,13 @@ use core::{error::Error, fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
-use sentinel::log;
-use spin::{Mutex, RwLock};
+use spin::RwLock;
 
 use crate::{
     const_assert, hlt_loop,
     initialization_context::{End, InitializationContext},
-    interrupt::{FullInterruptStackFrame, InterruptIndex},
+    interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
-    port::Port8Bit,
-    serial_println,
     smp::{cpu_local, CoreId, MAX_CPU},
     utils::spin_mpsc::SpinMPSC,
 };

@@ -2,7 +2,7 @@ use core::fmt::Display;
 
 use alloc::{fmt, vec::Vec};
 use aml::{AmlContext, AmlHandle};
-use fadt::{Fadt, GenericAddressStructure};
+use fadt::Fadt;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},

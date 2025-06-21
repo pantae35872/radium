@@ -1,6 +1,5 @@
 use core::{fmt::Display, num::NonZeroUsize, usize};
 
-use bit_field::BitField;
 use ipi::{IcrBuilder, IpiDeliveryMode, IpiDestination, IpiDestinationShorthand, IpiTriggerMode};
 use pager::{
     address::{PhysAddr, VirtAddr},
@@ -17,7 +16,7 @@ use crate::{
 };
 use sentinel::log;
 
-use super::{io_apic::TriggerMode, InterruptIndex};
+use super::InterruptIndex;
 
 mod ipi;
 mod registers;

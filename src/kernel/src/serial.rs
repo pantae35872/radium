@@ -2,7 +2,6 @@ use crate::utils::mutex::Mutex;
 use lazy_static::lazy_static;
 use uart_16550::SerialPort;
 
-use crate::interrupt;
 
 lazy_static! {
     pub static ref SERIAL1: Mutex<SerialPort> = {

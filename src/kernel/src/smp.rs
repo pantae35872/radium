@@ -34,9 +34,7 @@ use crate::{
     },
     log,
     memory::{self},
-    println,
     scheduler::{pinned, sleep, LocalScheduler},
-    serial_println,
 };
 
 pub const MAX_CPU: usize = 64;

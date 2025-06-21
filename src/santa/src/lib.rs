@@ -3,15 +3,10 @@
 
 extern crate alloc;
 
-use bitflags::bitflags;
-use c_enum::c_enum;
 use core::fmt::Debug;
 use core::iter::Iterator;
-use core::option::Option;
-use core::{ffi::CStr, fmt::Display};
 use pager::{
-    address::{Frame, Page, PhysAddr, VirtAddr},
-    DataBuffer, EntryFlags, IdentityMappable, VirtuallyMappable, VirtuallyReplaceable, PAGE_SIZE,
+    address::{Frame, Page, PhysAddr, VirtAddr}, EntryFlags, IdentityMappable, VirtuallyMappable, VirtuallyReplaceable, PAGE_SIZE,
 };
 use reader::{ElfBits, ElfHeader, ElfReader, ProgramType};
 

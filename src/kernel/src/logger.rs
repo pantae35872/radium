@@ -8,7 +8,7 @@ use static_log::StaticLog;
 
 use crate::{
     initialization_context::{InitializationContext, Stage0},
-    initialize_guard, inline_if, print, serial_print,
+    initialize_guard, print, serial_print,
     smp::{cpu_local, cpu_local_avaiable},
 };
 
