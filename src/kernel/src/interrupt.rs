@@ -79,6 +79,7 @@ fn disable_pic(ctx: &mut InitializationContext<Stage3>) {
         ctx.alloc_port(0xA1).expect("PIC Port is already taken");
     unsafe {
         pic_1_data.write(0xff);
+        pic_2_data.write(0xff);
     }
 }
 
