@@ -12,6 +12,7 @@ pub struct BootConfig<'a> {
     kernel_file: &'a str,
     font_file: &'a str,
     dwarf_file: &'a str,
+    packed_file: &'a str,
     screen_resolution: (usize, usize),
     any_key_boot: bool,
     font_size: usize,
@@ -43,9 +44,14 @@ impl<'a> BootConfig<'a> {
             .expect("Font file is not a string value in file info");
         let dwarf_file: &str = toml
             .get("dwarf_file")
-            .expect("No font file found in the info file")
+            .expect("No dwarf file found in the info file")
             .as_string()
-            .expect("Font file is not a string value in file info");
+            .expect("Dwarf file is not a string value in file info");
+        let packed_file: &str = toml
+            .get("packed_file")
+            .expect("No packed file found in the info file")
+            .as_string()
+            .expect("Packed file is not a string value in file info");
         let resolution = toml
             .get("screen_resolution")
             .expect("screen_resolution not found in the config file");
@@ -80,6 +86,7 @@ impl<'a> BootConfig<'a> {
             kernel_file,
             font_file,
             dwarf_file,
+            packed_file,
             screen_resolution: (width, height),
             any_key_boot,
             font_size,
@@ -101,6 +108,14 @@ impl<'a> BootConfig<'a> {
             "{root}\\{file}",
             root = self.file_root,
             file = self.font_file
+        ))
+    }
+
+    pub fn packed_file(&self) -> LoaderFile {
+        LoaderFile::new(&format!(
+            "{root}\\{file}",
+            root = self.file_root,
+            file = self.packed_file
         ))
     }
 

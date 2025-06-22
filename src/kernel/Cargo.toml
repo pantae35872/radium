@@ -28,6 +28,7 @@ kernel_proc = { path = "../kernel_proc" }
 pager = { path = "../pager" }
 sentinel = { path = "../sentinel" }
 rstd = { path = "../rstd" }
+packery = { path = "../packery" }
 
 [dependencies.thiserror]
 version = "2.0.12"

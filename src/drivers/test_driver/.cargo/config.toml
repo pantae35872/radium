@@ -4,7 +4,7 @@ build-std = ["core", "alloc", "compiler_builtins"]
 panic-abort-tests = true
 
 [build]
-target = "../x86_64_kmodule.json"
+target = "../x86_64_kdriver.json"
 
 [target.x86_64]
 rustflags = ["-C", "relocation-model=pic"]

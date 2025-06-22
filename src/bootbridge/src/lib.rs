@@ -8,6 +8,7 @@ use core::{
 use bakery::DwarfBaker;
 use bitflags::bitflags;
 use c_enum::c_enum;
+use packery::Packed;
 use pager::{
     address::{Frame, PhysAddr, VirtAddr},
     allocator::linear_allocator::LinearAllocator,
@@ -183,6 +184,7 @@ pub struct RawBootBridge {
     framebuffer_data: RawData,
     font_data: RawData,
     dwarf_data: Option<DwarfBaker<'static>>,
+    packed: Packed<'static>,
     kernel_elf: Elf<'static>,
     kernel_config: KernelConfig,
     memory_map: MemoryMap<'static>,
@@ -223,6 +225,12 @@ impl BootBridgeBuilder {
 
     fn inner_bridge(&mut self) -> &'static mut RawBootBridge {
         unsafe { &mut *self.boot_bridge }
+    }
+
+    pub fn packed(&mut self, packed: Packed<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.packed = packed;
+        self
     }
 
     pub fn framebuffer_data(&mut self, data: RawData) -> &mut Self {
@@ -353,6 +361,10 @@ impl BootBridge {
         &self.deref().kernel_elf
     }
 
+    pub fn packed_drivers(&self) -> &Packed<'static> {
+        &self.deref().packed
+    }
+
     pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
         self.deref_mut().dwarf_data.take().unwrap()
     }
@@ -381,6 +393,7 @@ impl VirtuallyReplaceable for BootBridge {
         if let Some(dwarf) = self.deref_mut().dwarf_data.as_mut() {
             dwarf.replace(mapper);
         }
+        self.deref_mut().packed.replace(mapper);
         *self = Self::new(new.as_mut_ptr())
     }
 }

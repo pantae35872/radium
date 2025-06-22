@@ -1,4 +1,5 @@
 use bakery::DwarfBaker;
+use packery::Packed;
 use pager::address::PhysAddr;
 use santa::Elf;
 use uefi::table::{
@@ -60,8 +61,17 @@ pub fn load_kernel_infos(ctx: InitializationContext<Stage0>) -> InitializationCo
     let kernel_font = config.font_file().raw_data_permanent();
     let kernel_file = config.kernel_file().permanent();
     let dwarf_file = config.dwarf_file().permanent();
+    let packed_file = config.packed_file().permanent();
     let rsdp = PhysAddr::new(find_rsdp(system_table.config_table()).expect("Failed to find RSDP"));
     let dwarf_file = DwarfBaker::new(dwarf_file);
+    let packed_file = Packed::new(packed_file).expect("Packed file not valid");
     let kernel_config = config.kernel_config();
-    ctx.next((kernel_font, dwarf_file, rsdp, kernel_config, kernel_file))
+    ctx.next((
+        kernel_font,
+        dwarf_file,
+        packed_file,
+        rsdp,
+        kernel_config,
+        kernel_file,
+    ))
 }

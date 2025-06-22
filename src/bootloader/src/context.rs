@@ -125,6 +125,7 @@ macro_rules! select_context {
 use bootbridge::{
     BootBridgeBuilder, GraphicsInfo, KernelConfig, MemoryMap, RawBootBridge, RawData,
 };
+use packery::Packed;
 use pager::{
     address::PhysAddr,
     allocator::linear_allocator::LinearAllocator,
@@ -145,6 +146,7 @@ create_initialization_chain! {
     } => Stage1 {
         font_data: RawData,
         dwarf_data: DwarfBaker<'static>,
+        packed: Packed<'static>,
         rsdp: PhysAddr,
         kernel_config: KernelConfig,
         kernel_file: &'static [u8],
@@ -215,6 +217,7 @@ impl InitializationContext<Stage6> {
             elf,
             dwarf_data,
             mut allocator,
+            packed,
             memory_map,
             font_data,
             graphics_info,
@@ -240,6 +243,7 @@ impl InitializationContext<Stage6> {
             .runtime_service(runtime_service)
             .rsdp(rsdp)
             .dwarf_data(dwarf_data)
+            .packed(packed)
             .kernel_elf(elf);
 
         builder.build()

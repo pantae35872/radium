@@ -8,6 +8,7 @@ c_enum = { path = "../c_enum" }
 santa = { path = "../santa"}
 pager = { path = "../pager"}
 bitflags = "2.4.1"
+packery = { path = "../packery" }
 
 [dependencies.bakery]
 path = "../bakery"

@@ -31,6 +31,22 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 }
 
 fn kmain_thread() {
+    for driver in cpu_local()
+        .ctx()
+        .lock()
+        .context()
+        .boot_bridge()
+        .packed_drivers()
+        .iter()
+    {
+        log!(
+            Info,
+            "Found driver {}, data length {}",
+            driver.name,
+            driver.data.len()
+        );
+    }
+
     println!("Hello, world!!!, from kmain thread");
 
     scheduler::spawn(|| {
