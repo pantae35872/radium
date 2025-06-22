@@ -1,6 +1,3 @@
-ENTRY(boot_start)
-
-
 PHDRS
 {
     null         PT_NULL    FLAGS(0) ;                   /* Null segment */
