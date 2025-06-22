@@ -146,7 +146,8 @@ impl<'a> Elf<'a> {
                 match rela.typ() {
                     RelaType::X86_64_RELATIVE => {
                         unsafe {
-                            *(base + offset).as_mut_ptr::<u64>() = base.as_u64() + rela.addend
+                            *(base + offset).as_mut_ptr::<u64>() =
+                                base.as_u64() + rela.addend - self.mem_min.as_u64();
                         };
                     }
                     RelaType::X86_64_64 => {

@@ -20,9 +20,9 @@ use radium::logger::LOGGER;
 use radium::scheduler::{self, sleep, vsys_reg, VsysThread};
 use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
-use radium::{hlt_loop, print, println, serial_print, serial_println};
+use radium::{hlt_loop, print, println, serial_print, serial_println, DriverReslover};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
-use santa::{Elf, SymbolResolver};
+use santa::Elf;
 use sentinel::log;
 
 static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -30,20 +30,6 @@ static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge, kmain_thread);
-}
-
-struct DriverReslover;
-
-impl SymbolResolver for DriverReslover {
-    fn resolve(&self, symbol: &str) -> Option<u64> {
-        fn my_func() {
-            log!(Info, "Hello from kernel called from driverr");
-        }
-        match symbol {
-            "external_func" => Some(my_func as u64),
-            _ => None,
-        }
-    }
 }
 
 fn kmain_thread() {

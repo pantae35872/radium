@@ -44,16 +44,17 @@ pub fn change(a: u64) {
     }
 }
 
-unsafe extern "C" {
+use core::panic::PanicInfo;
+
+unsafe extern "Rust" {
+    fn kpanic(info: &PanicInfo) -> !;
+}
+
+unsafe extern "Rust" {
     fn external_func();
 }
 
-#[cfg(not(test))]
-mod panic_handler {
-    use core::panic::PanicInfo;
-
-    #[panic_handler]
-    fn panic(_info: &PanicInfo) -> ! {
-        loop {}
-    }
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    unsafe { kpanic(info) }
 }

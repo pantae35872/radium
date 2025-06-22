@@ -55,6 +55,7 @@ use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Stage0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
+use santa::SymbolResolver;
 use scheduler::sleep;
 use sentinel::log;
 use smp::{cpu_local, cpu_local_avaiable, ALL_AP_INITIALIZED};
@@ -63,6 +64,21 @@ use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
+
+pub struct DriverReslover;
+
+impl SymbolResolver for DriverReslover {
+    fn resolve(&self, symbol: &str) -> Option<u64> {
+        fn my_func() {
+            log!(Info, "Hello from kernel called from driverr");
+        }
+        match symbol {
+            "kpanic" => Some(panic as u64),
+            "external_func" => Some(my_func as u64),
+            _ => None,
+        }
+    }
+}
 
 pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
 where
