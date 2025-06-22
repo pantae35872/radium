@@ -15,6 +15,7 @@
 #![recursion_limit = "512"]
 #![allow(internal_features)]
 #![allow(dead_code)]
+#![allow(unused_macros)]
 
 #[macro_use]
 extern crate bitflags;

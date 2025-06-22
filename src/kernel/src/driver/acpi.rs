@@ -59,7 +59,7 @@ pub struct Acpi {
 struct AcpiHandle;
 
 impl AmlHandle for AcpiHandle {
-    fn write_debug(&self, value: &str) {
+    fn write_debug(&self, _value: &str) {
         todo!()
     }
 }
