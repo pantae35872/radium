@@ -14,6 +14,7 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
+use pager::EntryFlags;
 use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
 use radium::scheduler::{self, sleep, vsys_reg, VsysThread};
@@ -21,6 +22,7 @@ use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
 use radium::{hlt_loop, print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
+use santa::{Elf, SymbolResolver};
 use sentinel::log;
 
 static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -30,21 +32,73 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
     radium::init(boot_bridge, kmain_thread);
 }
 
+struct DriverReslover;
+
+impl SymbolResolver for DriverReslover {
+    fn resolve(&self, symbol: &str) -> Option<u64> {
+        fn my_func() {
+            log!(Info, "Hello from kernel called from driverr");
+        }
+        match symbol {
+            "external_func" => Some(my_func as u64),
+            _ => None,
+        }
+    }
+}
+
 fn kmain_thread() {
-    for driver in cpu_local()
+    let packed = cpu_local()
         .ctx()
         .lock()
-        .context()
-        .boot_bridge()
-        .packed_drivers()
-        .iter()
-    {
-        log!(
-            Info,
-            "Found driver {}, data length {}",
-            driver.name,
-            driver.data.len()
+        .context_mut()
+        .boot_bridge
+        .packed_drivers();
+    for driver in packed.iter() {
+        let driver_elf = Elf::new(driver.data).expect("Driver elf not valid");
+        let start = cpu_local().ctx().lock().map(
+            driver_elf.max_memory_needed(),
+            EntryFlags::WRITABLE | EntryFlags::NEEDS_REMAP,
         );
+
+        let phys_start = cpu_local()
+            .ctx()
+            .lock()
+            .context_mut()
+            .active_table()
+            .translate_page(start)
+            .unwrap();
+        log!(
+            Trace,
+            "driver loaded physical addr {:x}, virtual addr {:x}",
+            phys_start.start_address(),
+            start.start_address(),
+        );
+        unsafe { driver_elf.load(start.start_address().as_mut_ptr()) };
+        driver_elf
+            .apply_relocations(start.start_address(), &DriverReslover)
+            .expect("");
+
+        cpu_local().ctx().lock().virtually_map(
+            &driver_elf,
+            start.start_address(),
+            phys_start.start_address(),
+        );
+
+        let start_fn = driver_elf
+            .lookup_symbol("start", start.start_address())
+            .expect("Start fn not found in driver");
+        let change_fn = driver_elf
+            .lookup_symbol("change", start.start_address())
+            .expect("Start fn not found in driver");
+        let start_fn: extern "C" fn(a: u64, b: u64) -> u64 =
+            unsafe { core::mem::transmute(start_fn.as_u64()) };
+        let change_fn: extern "C" fn(a: u64) = unsafe { core::mem::transmute(change_fn) };
+
+        log!(Info, "Called start, result: {}", start_fn(1, 2));
+        change_fn(1);
+        log!(Info, "Called start, result: {}", start_fn(1, 2));
+        change_fn(1);
+        log!(Info, "Called start, result: {}", start_fn(1, 2));
     }
 
     println!("Hello, world!!!, from kmain thread");

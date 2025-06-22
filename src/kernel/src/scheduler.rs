@@ -487,30 +487,26 @@ impl Drop for VsysThread {
 
 #[unsafe(naked)]
 extern "C" fn vsys_ret(thread: &Thread) {
-    unsafe {
-        naked_asm!(
-            "mov rsi, rdi", // RDI - the first argument : Since rdi is being use for driver call number we use rcx instead
-            "mov rdi, {drivcall}",
-            "int 0x90",
-            "ret",
-            drivcall = const DRIVCALL_VSYS_RET,
-        );
-    }
+    naked_asm!(
+        "mov rsi, rdi", // RDI - the first argument : Since rdi is being use for driver call number we use rcx instead
+        "mov rdi, {drivcall}",
+        "int 0x90",
+        "ret",
+        drivcall = const DRIVCALL_VSYS_RET,
+    );
 }
 
 /// Register the current thraed to a vsyscall
 #[unsafe(naked)]
 extern "C" fn vsys_wait(number: usize) -> Thread {
-    unsafe {
-        naked_asm!(
-            "mov rcx, rdi", // RDI - return value : Since rdi is being use for driver call number we use rcx instead
-            "mov rax, rsi", // RSI - first argument
-            "mov rdi, {drivcall}",
-            "int 0x90",
-            "ret",
-            drivcall = const DRIVCALL_VSYS_WAIT,
-        );
-    }
+    naked_asm!(
+        "mov rcx, rdi", // RDI - return value : Since rdi is being use for driver call number we use rcx instead
+        "mov rax, rsi", // RSI - first argument
+        "mov rdi, {drivcall}",
+        "int 0x90",
+        "ret",
+        drivcall = const DRIVCALL_VSYS_WAIT,
+    );
 }
 
 /// Request a vsys call

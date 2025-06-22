@@ -1,7 +1,4 @@
-use core::{
-    ffi::CStr,
-    fmt::{Debug, Display},
-};
+use core::fmt::{Debug, Display};
 
 use bitflags::bitflags;
 use c_enum::c_enum;
@@ -34,6 +31,28 @@ impl<'a> ElfReader<'a> {
                 .unwrap(),
             )
         }
+    }
+
+    pub fn section_name(&'a self, section: &SectionHeader) -> Result<&'a str, ElfError<'a>> {
+        self.string_table_offset(section.name as usize)
+    }
+
+    pub fn section_by_name(&self, name: &str) -> Option<SectionHeader> {
+        self.section_header_iter()
+            .find(|e| self.section_name(e).is_ok_and(|e| e == name) && e.typ != SectionType::NULL)
+    }
+
+    pub fn section_buffer(&self, section: &SectionHeader) -> Option<&[u8]> {
+        Some(&self.buffer[section.offset as usize..][..section.size as usize])
+    }
+
+    pub fn section_buffer_by_name(&self, name: &str) -> Option<&[u8]> {
+        let section = self.section_by_name(name)?;
+        Some(&self.buffer[section.offset as usize..][..section.size as usize])
+    }
+
+    pub fn section_link(&self, section: &SectionHeader) -> Option<SectionHeader> {
+        self.section_entry(section.link as usize)
     }
 
     pub fn section_entry(&self, index: usize) -> Option<SectionHeader> {
@@ -86,21 +105,50 @@ impl<'a> ElfReader<'a> {
             })
     }
 
-    pub fn string_table_index(&self, _index: usize) -> Result<&CStr, ElfError> {
+    pub fn string_table_offset(&'a self, offset: usize) -> Result<&'a str, ElfError<'a>> {
         let header = self.header();
         let string_table = self
             .section_entry(header.string_table_index as usize)
             .ok_or(ElfError::InvalidStringTableIndex(
                 header.string_table_index as usize,
             ))?;
-        let _string_table = self
+        let string_table = self
             .buffer
             .get(
                 string_table.offset as usize
                     ..string_table.offset as usize + string_table.size as usize,
             )
             .ok_or(ElfError::InvalidStringTable)?;
-        todo!("Use somesort of buffer because we don't want to iterate through a cstring, it's ineffecient")
+        let null_terminated = &string_table[offset..];
+        let end = null_terminated
+            .iter()
+            .position(|&b| b == 0)
+            .ok_or(ElfError::InvalidStringTable)?;
+        str::from_utf8(&null_terminated[..end]).map_err(|_| ElfError::InvalidStringTable)
+    }
+
+    pub fn symbol_index<T>(&self, section: &SectionHeader, index: usize) -> Option<T> {
+        assert!(
+            section.entry_size() != 0,
+            "Section header dons't have entry size, cann't look up symbol"
+        );
+        assert!(
+            section.entry_size() as usize >= size_of::<T>(),
+            "Symbol must be less than or equal to entrysize"
+        );
+
+        let entry_count = section.size() / section.entry_size();
+        if index >= entry_count as usize {
+            return None;
+        }
+
+        unsafe {
+            let ptr = self.section_buffer(section)?[index * section.entry_size() as usize..]
+                [..section.entry_size() as usize][..size_of::<T>()]
+                .as_ptr();
+            let t = ptr.cast::<T>().read_unaligned();
+            Some(t)
+        }
     }
 
     pub fn program_entries_len(&self) -> usize {
@@ -291,6 +339,7 @@ impl ProgramHeader {
     }
 }
 
+#[derive(Debug)]
 #[repr(C)]
 pub struct SectionHeader {
     // Offset to the section name in the section header string table.
@@ -319,6 +368,18 @@ impl SectionHeader {
         self.vaddr
     }
 
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    pub fn typ(&self) -> SectionType {
+        self.typ
+    }
+
+    pub fn entry_size(&self) -> u64 {
+        self.entry_size
+    }
+
     pub fn size(&self) -> u64 {
         self.size
     }
@@ -329,12 +390,6 @@ impl SectionHeader {
 
     pub fn alignment(&self) -> u64 {
         self.addralign
-    }
-}
-
-impl Debug for SectionHeader {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "SectionHeader: {{ name: }}")
     }
 }
 
@@ -388,6 +443,8 @@ c_enum! {
         STRTAB = 3
         RELA = 4
         NOBITS = 8
+        DYNSYM = 0xb
+        DYNAMIC = 0x6
     }
 }
 

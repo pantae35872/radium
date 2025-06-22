@@ -184,7 +184,7 @@ pub struct RawBootBridge {
     framebuffer_data: RawData,
     font_data: RawData,
     dwarf_data: Option<DwarfBaker<'static>>,
-    packed: Packed<'static>,
+    packed: Option<Packed<'static>>,
     kernel_elf: Elf<'static>,
     kernel_config: KernelConfig,
     memory_map: MemoryMap<'static>,
@@ -229,7 +229,7 @@ impl BootBridgeBuilder {
 
     pub fn packed(&mut self, packed: Packed<'static>) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.packed = packed;
+        boot_bridge.packed = Some(packed);
         self
     }
 
@@ -361,8 +361,8 @@ impl BootBridge {
         &self.deref().kernel_elf
     }
 
-    pub fn packed_drivers(&self) -> &Packed<'static> {
-        &self.deref().packed
+    pub fn packed_drivers(&mut self) -> Packed<'static> {
+        self.deref_mut().packed.take().unwrap()
     }
 
     pub fn dwarf_baker(&mut self) -> DwarfBaker<'static> {
@@ -393,7 +393,9 @@ impl VirtuallyReplaceable for BootBridge {
         if let Some(dwarf) = self.deref_mut().dwarf_data.as_mut() {
             dwarf.replace(mapper);
         }
-        self.deref_mut().packed.replace(mapper);
+        if let Some(packed) = self.deref_mut().packed.as_mut() {
+            packed.replace(mapper);
+        }
         *self = Self::new(new.as_mut_ptr())
     }
 }

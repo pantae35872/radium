@@ -585,6 +585,8 @@ dependencies = [
  "bitflags 2.9.0",
  "c_enum",
  "pager",
+ "sentinel",
+ "thiserror",
 ]
 
 [[package]]
@@ -659,6 +661,9 @@ dependencies = [
 [[package]]
 name = "test_driver"
 version = "0.1.0"
+dependencies = [
+ "spin",
+]
 
 [[package]]
 name = "thiserror"

@@ -16,13 +16,12 @@ use pager::{
         ActivePageTable,
     },
     registers::SegmentSelector,
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
     registers::{Cr3, GsBase, KernelGsBase},
 };
-use spin::Mutex;
 
 use crate::{
     hlt_loop,
@@ -36,6 +35,7 @@ use crate::{
     memory::{self},
     scheduler::{pinned, sleep, LocalScheduler},
 };
+use spin::Mutex;
 
 pub const MAX_CPU: usize = 64;
 
@@ -98,6 +98,7 @@ impl ApInitializer {
 
         bootstrap_table.virtually_map_object(
             ctx.context().boot_bridge().kernel_elf(),
+            KERNEL_START,
             ctx.context().boot_bridge().kernel_base(),
             &mut boot_alloc,
         );

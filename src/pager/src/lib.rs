@@ -77,9 +77,26 @@ pub trait Mapper {
         entry_flags: EntryFlags,
     );
 
+    unsafe fn map_to_range(
+        &mut self,
+        start_page: Page,
+        end_page: Page,
+        start_frame: Frame,
+        end_frame: Frame,
+        flags: EntryFlags,
+    );
+
     fn map_range(&mut self, start_page: Page, end_page: Page, flags: EntryFlags);
 
     unsafe fn identity_map(&mut self, frame: Frame, flags: EntryFlags);
+
+    fn map_range_by_size(&mut self, start_page: Page, size: usize, flags: EntryFlags) {
+        self.map_range(
+            start_page,
+            Page::containing_address(start_page.start_address() + size - 1),
+            flags,
+        )
+    }
 
     unsafe fn identity_map_by_size(&mut self, start_frame: Frame, size: usize, flags: EntryFlags) {
         unsafe {
@@ -109,15 +126,6 @@ pub trait Mapper {
         };
     }
 
-    unsafe fn map_to_range(
-        &mut self,
-        start_page: Page,
-        end_page: Page,
-        start_frame: Frame,
-        end_frame: Frame,
-        flags: EntryFlags,
-    );
-
     unsafe fn unmap_addr(&mut self, page: Page) -> Frame;
 
     unsafe fn unmap_addr_by_size(&mut self, page: Page, size: usize);
@@ -142,6 +150,8 @@ bitflags! {
         const DIRTY =           1 << 6;
         const HUGE_PAGE =       1 << 7;
         const GLOBAL =          1 << 8;
+        const NEEDS_REMAP =     1 << 11; // Custom flags. This flags mean when this is mapped again the
+                                         // entry flags will change not the physical address
         const OVERWRITEABLE =   1 << 10; // Custom flags. This flags mean the mapped address can be
                                          // overwrite when mapping
         const NO_EXECUTE =      1 << 63;
@@ -157,7 +167,7 @@ pub trait VirtuallyReplaceable {
 }
 
 pub trait VirtuallyMappable {
-    fn virt_map(&self, mapper: &mut impl Mapper, phys_start: PhysAddr);
+    fn virt_map(&self, mapper: &mut impl Mapper, virt_base: VirtAddr, phys_base: PhysAddr);
 }
 
 impl Display for EntryFlags {

@@ -466,6 +466,14 @@ impl Add<u64> for VirtAddr {
     }
 }
 
+impl Add<VirtAddr> for VirtAddr {
+    type Output = VirtAddr;
+
+    fn add(self, rhs: VirtAddr) -> Self::Output {
+        Self::new(self.0 + rhs.0 as u64)
+    }
+}
+
 impl Add<usize> for VirtAddr {
     type Output = VirtAddr;
 

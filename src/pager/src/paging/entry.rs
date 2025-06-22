@@ -12,6 +12,10 @@ impl Entry {
         self.0 == 0
     }
 
+    pub fn needs_remap(&self) -> bool {
+        self.flags().contains(EntryFlags::NEEDS_REMAP)
+    }
+
     pub fn overwriteable(&self) -> bool {
         self.flags().contains(EntryFlags::OVERWRITEABLE)
     }

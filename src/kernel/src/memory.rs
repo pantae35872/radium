@@ -5,7 +5,7 @@ use pager::{
     allocator::{virt_allocator::VirtualAllocator, FrameAllocator},
     paging::{mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable},
     registers::{Cr0, Cr0Flags, Cr4, Cr4Flags, Efer, EferFlags, Xcr0, Xcr0Flags},
-    EntryFlags, KERNEL_GENERAL_USE, PAGE_SIZE,
+    EntryFlags, VirtuallyMappable, KERNEL_GENERAL_USE, PAGE_SIZE,
 };
 use raw_cpuid::CpuId;
 use stack_allocator::StackAllocator;
@@ -276,7 +276,7 @@ select_context! {
             Some(T::new(buf, args))
         }
     }
-    (Stage1, Stage2, End) => {
+    (Stage1, Stage2, Stage3, End) => {
         pub fn stack_allocator(&mut self) -> WithTable<'_, StackAllocator, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
@@ -286,6 +286,25 @@ select_context! {
             let ctx = self.context_mut();
             ctx.active_table
                 .mapper_with_allocator(&mut ctx.buddy_allocator)
+        }
+
+        pub fn map<'a>(&'a mut self, size: usize, flags: EntryFlags) -> Page {
+            let ctx = self.context_mut();
+            let start_page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
+            ctx.active_table.map_range(
+                start_page,
+                Page::containing_address(start_page.start_address() + size - 1),
+                flags,
+                &mut ctx.buddy_allocator,
+            );
+
+            start_page
+        }
+
+        pub fn virtually_map(&mut self, obj: &impl VirtuallyMappable, virt_base: VirtAddr, phys_base: PhysAddr) {
+            let ctx = self.context_mut();
+            ctx.active_table
+                .virtually_map_object(obj, virt_base, phys_base, &mut ctx.buddy_allocator);
         }
     }
 }

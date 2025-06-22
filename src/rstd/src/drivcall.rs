@@ -1,6 +1,3 @@
-use core::arch::asm;
-use pager::address::VirtAddr;
-
 pub const DRIVCALL_ERR_VSYSCALL_FULL: u64 = 1 << 10;
 
 pub const DRIVCALL_SPAWN: u64 = 1;

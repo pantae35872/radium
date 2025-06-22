@@ -9,7 +9,7 @@ use pager::{
         table::{DirectLevel4, Table},
         ActivePageTable, Entry,
     },
-    EntryFlags, Mapper, PageLevel, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+    EntryFlags, Mapper, PageLevel, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use uefi::{
     proto::loaded_image::LoadedImage,
@@ -125,6 +125,7 @@ pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> Initialization
 
     kernel_table.virtually_map_object(
         ctx.context().elf(),
+        KERNEL_START,
         ctx.context().kernel_base,
         &mut kernel_page_allocator,
     );

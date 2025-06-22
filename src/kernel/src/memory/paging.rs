@@ -3,7 +3,7 @@ use pager::{
     address::VirtAddr,
     allocator::FrameAllocator,
     paging::{create_mappings, table::RecurseLevel4, ActivePageTable},
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 
 use crate::initialization_context::{InitializationContext, Stage0};
@@ -21,6 +21,7 @@ where
         |mapper, allocator| {
             mapper.virtually_map_object(
                 ctx.context().boot_bridge().kernel_elf(),
+                KERNEL_START,
                 ctx.context().boot_bridge().kernel_base(),
                 allocator,
             );

@@ -37,7 +37,7 @@ macro_rules! c_enum {
                         $(
                             $name(a) if *a == $expr => stringify!($element_name),
                         )*
-                        _ => unreachable!()
+                        value => return write!(f, "{name}(Unknown {value})", name = stringify!($name), value = value.0),
                     };
                     write!(f, "{name}({value})", name = stringify!($name))
                 }
