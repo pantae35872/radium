@@ -42,13 +42,15 @@ macro_rules! handler_fn_impl {
     ($($handler:ident => $default_name: ident (
             $($name:ident : $type:ty),*
     ) $(-> $ret:ty)? $default: block)*) => {$(
+        #[allow(improper_ctypes_definitions)]
         pub type $handler = extern "x86-interrupt" fn($($name: $type),*) $(-> $ret)?;
 
+        #[allow(improper_ctypes_definitions)]
         extern "x86-interrupt" fn $default_name($($name: $type),*) $(-> $ret)? $default
 
         impl InterruptHandler for $handler {
             fn to_virt_addr(self) -> VirtAddr {
-                VirtAddr::new(self as u64)
+                VirtAddr::new(self as usize as u64)
             }
         }
 
@@ -78,12 +80,14 @@ handler_fn_impl! {
         log!(Critical, "{:#?}", stack_frame);
         panic!("Unhandled Exceptions");
     }
-    NoReturnHandler => missing_gate_no_return(stack_frame: InterruptStackFrame) -> ! {
+    // FIXME: Workarounds for not able to have ! return type, waiting for https://github.com/rust-lang/rust/pull/143075
+    NoReturnHandler => missing_gate_no_return(stack_frame: InterruptStackFrame, _no_return: ()) {
         log!(Critical, "UNHANDLED CPU EXCEPTIONS");
         log!(Critical, "{:#?}", stack_frame);
         panic!("UNHANDLED CPU EXCEPTIONS");
     }
-    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
+    // FIXME: Workarounds for not able to have ! return type, waiting for https://github.com/rust-lang/rust/pull/143075 
+    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(stack_frame: InterruptStackFrame, error_code: u64, _no_return: ()) {
         log!(Critical, "UNHANDLED CPU EXCEPTIONS");
         log!(Critical, "Error Code: {:?}", error_code);
         log!(Critical, "{:#?}", stack_frame);
