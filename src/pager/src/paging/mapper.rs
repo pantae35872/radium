@@ -1,26 +1,26 @@
 use sentinel::log;
 
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
-use crate::allocator::virt_allocator::VirtualAllocator;
 use crate::allocator::FrameAllocator;
+use crate::allocator::virt_allocator::VirtualAllocator;
 use crate::registers::tlb;
 use crate::{
-    IdentityMappable, MapperWithVirtualAllocator, VirtuallyMappable, VirtuallyReplaceable,
-    PAGE_SIZE,
+    IdentityMappable, MapperWithVirtualAllocator, PAGE_SIZE, VirtuallyMappable,
+    VirtuallyReplaceable,
 };
 
 use super::table::{
     DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
     TableLevel4,
 };
-use super::{EntryFlags, ENTRY_COUNT};
+use super::{ENTRY_COUNT, EntryFlags};
 use core::ptr::Unique;
 
 pub struct Mapper<P4: TableLevel4> {
     p4: Unique<Table<P4>>,
 }
 
-pub struct MapperWithAllocator<'a, P4: TableLevel4, A: FrameAllocator> {
+pub struct MapperWithAllocator<'a, P4: TopLevelP4, A: FrameAllocator> {
     mapper: &'a mut Mapper<P4>,
     allocator: &'a mut A,
 }
@@ -62,16 +62,31 @@ where
     }
 }
 
+pub trait TopLevelP4:
+    HierarchicalLevel<
+        NextLevel: HierarchicalLevel<
+            NextLevel: HierarchicalLevel<Marker: NextTableAddress>,
+            Marker: NextTableAddress,
+        >,
+        Marker: NextTableAddress,
+    > + TableLevel4<Marker: NextTableAddress>
+{
+}
+
 // Zero-cost ahhh abstraction
+impl<T: HierarchicalLevel + TableLevel4> TopLevelP4 for T
+where
+    T::Marker: NextTableAddress,
+    T::NextLevel: HierarchicalLevel,
+    <<Self as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
+    <<Self as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
+    <<<Self as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress
+{
+}
+
 impl<P4> Mapper<P4>
 where
-    P4: HierarchicalLevel + TableLevel4,
-    P4::Marker: NextTableAddress,
-    P4::NextLevel: HierarchicalLevel,
-    <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-    <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-    <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-        NextTableAddress,
+    P4: TopLevelP4,
 {
     pub fn p4(&self) -> &Table<P4> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
@@ -90,9 +105,8 @@ where
     /// If the virtual address is not mapped, will return none
     pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
         let offset = virtual_address.as_u64() % PAGE_SIZE;
-        return self
-            .translate_page(Page::containing_address(virtual_address))
-            .map(|frame| PhysAddr::new(frame.start_address().as_u64() + offset));
+        self.translate_page(Page::containing_address(virtual_address))
+            .map(|frame| PhysAddr::new(frame.start_address().as_u64() + offset))
     }
 
     /// Translate the provided page into the mapped frame
@@ -104,25 +118,31 @@ where
         let huge_page = || {
             p3.and_then(|p3| {
                 let p3_entry = &p3[page.p3_index() as usize];
-                // 1GiB page?
-                if let Some(start_frame) = p3_entry.pointed_frame() {
-                    if p3_entry.flags().contains(EntryFlags::HUGE_PAGE) {
-                        // address must be 1GiB aligned
-                        assert!(start_frame.number() % (ENTRY_COUNT * ENTRY_COUNT) == 0);
-                        return Some(
-                            start_frame
-                                .add_by_page(page.p2_index() * ENTRY_COUNT)
-                                .add_by_page(page.p1_index()),
-                        );
-                    }
+                if let Some(start_frame) = p3_entry.pointed_frame()
+                    && p3_entry.flags().contains(EntryFlags::HUGE_PAGE)
+                {
+                    assert!(
+                        start_frame
+                            .number()
+                            .is_multiple_of(ENTRY_COUNT * ENTRY_COUNT),
+                        "1GiB huge page address must be 1GiB aligned"
+                    );
+                    return Some(
+                        start_frame
+                            .add_by_page(page.p2_index() * ENTRY_COUNT)
+                            .add_by_page(page.p1_index()),
+                    );
                 }
                 if let Some(p2) = p3.next_table(page.p3_index()) {
                     let p2_entry = &p2[page.p2_index() as usize];
-                    if let Some(start_frame) = p2_entry.pointed_frame() {
-                        if p2_entry.flags().contains(EntryFlags::HUGE_PAGE) {
-                            assert!(start_frame.number() % ENTRY_COUNT == 0);
-                            return Some(start_frame.add_by_page(page.p1_index()));
-                        }
+                    if let Some(start_frame) = p2_entry.pointed_frame()
+                        && p2_entry.flags().contains(EntryFlags::HUGE_PAGE)
+                    {
+                        assert!(
+                            start_frame.number().is_multiple_of(ENTRY_COUNT),
+                            "2MiB huge page address must be 2MiB aligned"
+                        );
+                        return Some(start_frame.add_by_page(page.p1_index()));
                     }
                 }
                 None
@@ -206,11 +226,9 @@ where
     /// Allocate a frames and map the ranges to the allocated frame
     ///
     /// # Note
-    ///
     /// The range is inclusive
     ///
     /// # Panics
-    ///
     /// panics if the range is already mapped and not marked OVERWRITEABLE
     pub fn map_range<A>(
         &mut self,
@@ -322,12 +340,10 @@ where
     /// Identity map the inclusive ranges
     ///
     /// # Safety
-    ///
     /// The caller must ensure that the provided frame when map does not cause any unsafe side
     /// effects
     ///
     /// # Panics
-    ///
     /// panics if the range is already mapped and not marked OVERWRITEABLE
     pub unsafe fn identity_map_range<A>(
         &mut self,
@@ -345,12 +361,12 @@ where
 
     /// Unmap the ranges from the page table
     ///
-    /// The start_page -> end_page (inclusive) must be contigous
-    /// end_page >= start_page
-    ///
     /// # Safety
-    ///
     /// The caller must ensure that the provided page was mapped by [`Self::map_to_range`] or [`Self::identity_map_range`]
+    ///
+    /// # Panics
+    /// The start_page -> end_page (inclusive) must be contigous
+    /// end_page >= start_page, otherwise panic
     pub unsafe fn unmap_addr_ranges(&mut self, start_page: Page, end_page: Page) -> FrameIter {
         assert!(start_page <= end_page);
         let mut iter = Page::range_inclusive(start_page, end_page)
@@ -412,16 +428,7 @@ where
     }
 }
 
-impl<'a, P4, A: FrameAllocator> crate::Mapper for MapperWithAllocator<'a, P4, A>
-where
-    P4: HierarchicalLevel + TableLevel4,
-    P4::Marker: NextTableAddress,
-    P4::NextLevel: HierarchicalLevel,
-    <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-    <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-    <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-        NextTableAddress,
-{
+impl<'a, P4: TopLevelP4, A: FrameAllocator> crate::Mapper for MapperWithAllocator<'a, P4, A> {
     unsafe fn identity_map_range(
         &mut self,
         start_frame: Frame,

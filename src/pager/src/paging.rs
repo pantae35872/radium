@@ -1,5 +1,6 @@
 use crate::address::{Frame, Page};
 use crate::allocator::FrameAllocator;
+use crate::paging::mapper::TopLevelP4;
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
 
@@ -11,10 +12,7 @@ use bit_field::BitField;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use sentinel::log;
-use table::{
-    AnyLevel, DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseLevel4, RecurseP4Create,
-    TableLevel, TableLevel4,
-};
+use table::{AnyLevel, DirectP4Create, RecurseP4Create, TableLevel4};
 
 mod entry;
 pub mod mapper;
@@ -91,16 +89,7 @@ where
     }
 }
 
-impl<P4> ActivePageTable<P4>
-where
-    P4: HierarchicalLevel + TableLevel4,
-    P4::Marker: NextTableAddress,
-    P4::NextLevel: HierarchicalLevel,
-    <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-    <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-    <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-        NextTableAddress,
-{
+impl<P4: TopLevelP4> ActivePageTable<P4> {
     fn p4_mut(&mut self) -> &mut Table<P4> {
         unsafe { self.p4.as_mut() }
     }
@@ -114,11 +103,11 @@ where
         F: FnOnce(&mut Mapper<P4>),
     {
         let (level_4_table_frame, _) = Cr3::read();
-        let backup = level_4_table_frame.clone();
+        let backup = level_4_table_frame;
 
         // SAFETY: We know that the frame is valid because we're reading it from the cr3
         // which if it's is indeed invalid, this code shoulnt be even executing
-        let p4_table = unsafe { temporary_page.map_table_frame(backup.clone(), self) };
+        let p4_table = unsafe { temporary_page.map_table_frame(backup, self) };
 
         self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         Cr3::reload();
@@ -232,26 +221,17 @@ pub struct InactivePageTable {
 
 impl InactivePageTable {
     /// Create a new InactivePage
-    pub fn new<P4, A: FrameAllocator>(
+    pub fn new<P4: TopLevelP4, A: FrameAllocator>(
         allocator: &mut A,
         active_table: &mut ActivePageTable<P4>,
         temporary_page: &mut TemporaryPage,
-    ) -> InactivePageTable
-    where
-        P4: HierarchicalLevel + TableLevel4,
-        P4::Marker: NextTableAddress,
-        P4::NextLevel: HierarchicalLevel,
-        <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-        <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-        <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-            NextTableAddress,
-    {
+    ) -> InactivePageTable {
         let frame = allocator.allocate_frame().expect("no more frames");
         {
             // SAFETY: We know that the frame is valid because it's is being allocated above
-            let table = unsafe { temporary_page.map_table_frame(frame.clone(), active_table) };
+            let table = unsafe { temporary_page.map_table_frame(frame, active_table) };
             table.zero();
-            table[511].set(frame.clone(), EntryFlags::PRESENT | EntryFlags::WRITABLE);
+            table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
         temporary_page.unmap(active_table);
 
@@ -263,15 +243,18 @@ impl InactivePageTable {
     }
 }
 
-pub fn create_mappings<F, A>(f: F, allocator: &mut A) -> InactivePageTable
+pub fn create_mappings<F, A, P: TopLevelP4>(
+    f: F,
+    allocator: &mut A,
+    active_table: &mut ActivePageTable<P>,
+) -> InactivePageTable
 where
-    F: FnOnce(&mut Mapper<RecurseLevel4>, &mut A),
+    F: FnOnce(&mut Mapper<P>, &mut A),
     A: FrameAllocator,
 {
     let mut temporary_page = TemporaryPage::new(Page::deadbeef(), allocator);
-    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
 
-    let mut new_table = InactivePageTable::new(allocator, &mut active_table, &mut temporary_page);
+    let mut new_table = InactivePageTable::new(allocator, active_table, &mut temporary_page);
 
     active_table.with(&mut new_table, &mut temporary_page, |mapper| {
         f(mapper, allocator);

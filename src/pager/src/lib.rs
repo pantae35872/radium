@@ -56,6 +56,11 @@ impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
         Self { mapper, allocator }
     }
 
+    /// Allocate and map a virtual address, to physical address then return the allocated virtual address
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided physical address is valid and does not overlap
+    /// with other allocations or points to an unsafe range of memory
     pub unsafe fn map(&mut self, phys_addr: PhysAddr, size: usize, flags: EntryFlags) -> VirtAddr {
         let page = self
             .allocator
@@ -70,6 +75,14 @@ impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
 }
 
 pub trait Mapper {
+    /// Identity map a range of memory
+    ///
+    /// # Safety
+    /// Identity mapping a range of memory is unsafe and can causes side effects
+    ///
+    /// # Panics
+    /// The implementaions may panic if end_frame < start_frame.
+    /// the implementation must panic if the range is already mapped and not marked OVERWRITEABLE
     unsafe fn identity_map_range(
         &mut self,
         start_frame: Frame,

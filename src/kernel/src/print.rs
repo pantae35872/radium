@@ -50,9 +50,9 @@ impl Print {
         foreground: Color,
         background: Color,
     ) -> Self {
-        return Self {
+        Self {
             renderer: TtfRenderer::new(ctx, foreground, background),
-        };
+        }
     }
 
     pub fn set_color(&mut self, foreground: Color) {

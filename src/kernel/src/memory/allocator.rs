@@ -7,8 +7,8 @@ use crate::{
 };
 use alloc::alloc::*;
 use pager::{
-    address::{Page, VirtAddr},
     EntryFlags, Mapper, PAGE_SIZE,
+    address::{Page, VirtAddr},
 };
 
 pub mod area_allocator;
@@ -71,7 +71,7 @@ static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAll
 
 /// Initialize the kernel heap
 ///
-/// SAFETY:
+/// # Safety
 /// The caller must ensure that this is called on kernel initializaton only
 /// And must be called after the memory controller is initialize
 pub unsafe fn init(ctx: &mut InitializationContext<Stage1>) {

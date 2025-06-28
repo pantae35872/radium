@@ -49,7 +49,10 @@ impl MainLogger {
         }
     }
 
-    /// SAFETY: the caller must ensure that this is only being called on kernel initialization
+    /// Set the log level unatomically 
+    ///
+    /// # Safety
+    /// the caller must ensure that this is only being called on kernel initialization
     pub unsafe fn set_level(&self, level: u64) {
         unsafe {
             *self.level.get() = LogLevel::from(level);
@@ -93,6 +96,12 @@ impl MainLogger {
         } else {
             &[|s| serial_print!("{s}"), |s| print!("{s}")]
         });
+    }
+}
+
+impl Default for MainLogger {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

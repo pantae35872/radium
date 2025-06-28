@@ -1,6 +1,6 @@
 use linear_allocator::LinearAllocator;
 
-use crate::{address::Frame, PAGE_SIZE};
+use crate::{PAGE_SIZE, address::Frame};
 
 pub mod linear_allocator;
 pub mod virt_allocator;
@@ -11,17 +11,14 @@ pub trait FrameAllocator {
         let mut counter = size_in_frames;
         let mut start_frame = Frame::null();
         loop {
-            let frame = match self.allocate_frame() {
-                Some(frame) => frame,
-                None => return None,
-            };
+            let frame = self.allocate_frame()?;
             if start_frame.start_address().as_u64() == 0 {
-                start_frame = frame.clone();
+                start_frame = frame;
             }
             // If the memory is not contiguous, reset the counter
             if last_address + PAGE_SIZE != frame.start_address().as_u64() && last_address != 0 {
                 counter = size_in_frames;
-                start_frame = frame.clone();
+                start_frame = frame;
             }
             last_address = frame.start_address().as_u64();
             counter -= 1;

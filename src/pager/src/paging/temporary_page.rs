@@ -1,11 +1,10 @@
+use crate::EntryFlags;
 use crate::address::{Frame, Page, VirtAddr};
 use crate::allocator::FrameAllocator;
-use crate::EntryFlags;
+use crate::paging::mapper::TopLevelP4;
 
-use super::table::{
-    HierarchicalLevel, NextTableAddress, RecurseLevel1, Table, TableLevel, TableLevel4,
-};
 use super::ActivePageTable;
+use super::table::{RecurseLevel1, Table};
 
 pub struct TemporaryPage {
     mapped: bool,
@@ -29,15 +28,13 @@ impl TemporaryPage {
     ///
     /// The caller must ensure that the provided frame is valid and does not causes any side
     /// effects
-    pub unsafe fn map<P4>(&mut self, frame: Frame, active_table: &mut ActivePageTable<P4>) -> VirtAddr
+    pub unsafe fn map<P4>(
+        &mut self,
+        frame: Frame,
+        active_table: &mut ActivePageTable<P4>,
+    ) -> VirtAddr
     where
-        P4: HierarchicalLevel + TableLevel4,
-        P4::Marker: NextTableAddress,
-        P4::NextLevel: HierarchicalLevel,
-        <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-        <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-        <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-            NextTableAddress
+        P4: TopLevelP4,
     {
         assert!(
             active_table.translate_page(self.page).is_none(),
@@ -48,7 +45,7 @@ impl TemporaryPage {
         unsafe { active_table.map_to(self.page, frame, EntryFlags::WRITABLE, &mut self.allocator) };
 
         self.mapped = true;
-        return self.page.start_address();
+        self.page.start_address()
     }
 
     /// Unmap the page from the active_table
@@ -57,13 +54,7 @@ impl TemporaryPage {
     /// if the page is not mapped this will panic
     pub fn unmap<P4>(&mut self, active_table: &mut ActivePageTable<P4>)
     where
-        P4: HierarchicalLevel + TableLevel4,
-        P4::Marker: NextTableAddress,
-        P4::NextLevel: HierarchicalLevel,
-        <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-        <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-        <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-            NextTableAddress
+        P4: TopLevelP4,
     {
         assert!(self.mapped);
         // SAFETY: We know that the frame is valid because [`self.mapped`]
@@ -81,13 +72,7 @@ impl TemporaryPage {
         active_table: &mut ActivePageTable<P4>,
     ) -> &mut Table<RecurseLevel1>
     where
-       P4: HierarchicalLevel + TableLevel4,
-       P4::Marker: NextTableAddress,
-       P4::NextLevel: HierarchicalLevel,
-       <<P4 as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-       <<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-       <<<P4 as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker:
-           NextTableAddress
+        P4: TopLevelP4,
     {
         unsafe {
             &mut *(self

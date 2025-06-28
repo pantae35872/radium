@@ -2,21 +2,20 @@ use core::{
     fmt::Display,
     num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
-    u64,
 };
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
 use pager::{
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     gdt::Gdt,
     paging::{
-        table::{DirectLevel4, Table},
         ActivePageTable,
+        table::{DirectLevel4, Table},
     },
     registers::SegmentSelector,
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
@@ -25,15 +24,15 @@ use pager::{
 
 use crate::{
     hlt_loop,
-    initialization_context::{select_context, End, InitializationContext, Stage2, Stage3},
+    initialization_context::{End, InitializationContext, Stage2, Stage3, select_context},
     interrupt::{
         self,
-        apic::{apic_id, ApicId, LocalApic},
+        apic::{ApicId, LocalApic, apic_id},
         idt::Idt,
     },
     log,
     memory::{self},
-    scheduler::{pinned, sleep, LocalScheduler},
+    scheduler::{LocalScheduler, pinned, sleep},
 };
 use spin::Mutex;
 
@@ -182,8 +181,12 @@ impl ApInitializer {
 
 static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
+/// The rust entry point for ap cores 
+///
+/// # Safety
+/// This should only be called from ap bootstrap trampoline
 #[unsafe(no_mangle)]
-pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> ! {
+pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> ! {
     // SAFETY: This is safe if not we'll explode
     unsafe { memory::prepare_flags() };
     // SAFETY: This is safe because we called into_raw in the ap startup code and pass through rdi
@@ -198,12 +201,15 @@ pub extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> !
     hlt_loop();
 }
 
+type LocalInitialize =
+    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync;
+type AfterInitializer = dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync;
+type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<End>) + Send + Sync;
+
 pub struct LocalInitializer {
-    local_initializers: Vec<
-        Box<dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync>,
-    >,
-    after_initializers: Vec<Box<dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync>>,
-    after_bsps: Vec<Box<dyn FnOnce(&mut InitializationContext<End>) + Send + Sync>>,
+    local_initializers: Vec<Box<LocalInitialize>>,
+    after_initializers: Vec<Box<AfterInitializer>>,
+    after_bsps: Vec<Box<AfterBspInitializers>>,
 }
 
 impl LocalInitializer {
@@ -232,9 +238,9 @@ impl LocalInitializer {
     pub fn register(
         &mut self,
         initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
-            + Send
-            + Sync
-            + 'static,
+        + Send
+        + Sync
+        + 'static,
     ) {
         self.local_initializers.push(Box::new(initializer));
     }
@@ -261,6 +267,12 @@ impl LocalInitializer {
         }
 
         self.after_initializers.iter().for_each(|e| e(ctx, id));
+    }
+}
+
+impl Default for LocalInitializer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -316,6 +328,9 @@ impl CpuLocal {
         self.code_seg
     }
 
+    /// Setting the current global thread id
+    ///
+    /// # Safety
     /// Setting the tid is unsafe, and can cause undefined behaviour
     pub unsafe fn set_tid(&mut self, id: usize) {
         self.thread_id = id;
@@ -411,6 +426,12 @@ impl CpuLocalBuilder {
     }
 }
 
+impl Default for CpuLocalBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
     let cpu_local = match builder.build() {
         Some(e) => e,
@@ -439,14 +460,10 @@ pub struct CoreId(usize);
 
 impl CoreId {
     pub fn new(id: usize) -> Option<Self> {
-        if CPU_ID_TO_APIC_ID
+        CPU_ID_TO_APIC_ID
             .get()
             .expect("CPU ID to APIC ID mapping must be initialized core initialization")
-            .get(id)
-            .is_none()
-        {
-            return None;
-        }
+            .get(id)?;
         Some(Self(id))
     }
 
@@ -474,7 +491,7 @@ pub fn core_id_to_apic_id(core_id: usize) -> usize {
         .expect("CPU ID to APIC ID mapping must be initialized core initialization")
         .get(core_id)
         .expect("cpu id out of range")
-        .expect("cpu id is not mapped in the mapping") as usize
+        .expect("cpu id is not mapped in the mapping")
 }
 
 pub fn apic_id_to_core_id(apic_id: usize) -> usize {
@@ -483,7 +500,7 @@ pub fn apic_id_to_core_id(apic_id: usize) -> usize {
         .expect("APIC ID to cpu ID mapping must be initialized core initialization")
         .get(apic_id)
         .expect("apic id out of range")
-        .expect("apic id is not mapped in the mapping") as usize
+        .expect("apic id is not mapped in the mapping")
 }
 
 /// Check if the cpu local is initialized or not

@@ -1,4 +1,4 @@
-use core::{error::Error, fmt::Display, mem::zeroed};
+use core::{fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
 use pager::{address::VirtAddr, registers::RFlagsFlags};
@@ -9,11 +9,11 @@ use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::FullInterruptStackFrame,
     memory::stack_allocator::Stack,
-    smp::{cpu_local, CoreId, MAX_CPU},
+    smp::{CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
 };
 
-use super::{driv_exit, thread_wait_exit, SchedulerError};
+use super::{SchedulerError, driv_exit, thread_wait_exit};
 
 static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
 static THREAD_HANDLE_POOL: RwLock<ThreadHandlePool> = RwLock::new(ThreadHandlePool::new());
@@ -59,10 +59,10 @@ impl ThreadHandlePool {
             expired: false,
             global_id,
         });
-        return ThreadHandle {
+        ThreadHandle {
             handle_id: id,
             global_id,
-        };
+        }
     }
 
     fn free(&mut self, handle: usize) {
@@ -84,7 +84,7 @@ pub struct ThreadHandle {
 }
 
 impl ThreadHandle {
-    pub fn into_raw(&self) -> (usize, usize) {
+    pub fn into_raw(self) -> (usize, usize) {
         (self.handle_id, self.global_id)
     }
 
@@ -174,7 +174,7 @@ impl GlobalThreadIdPool {
         THREAD_HANDLE_POOL
             .write()
             .free(self.pool[global_id].handle_id);
-        return self.pool[global_id].local_id;
+        self.pool[global_id].local_id
     }
 }
 
@@ -452,31 +452,6 @@ impl Display for LocalThreadId {
     }
 }
 
-#[derive(Debug)]
-pub enum ThreadMigrationError {
-    ThreadQueueFull,
-    ThreadQueueLocked,
-    SchedulerError(SchedulerError),
-}
-
-impl Display for ThreadMigrationError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::ThreadQueueFull => write!(f, "Thread queue full"),
-            Self::ThreadQueueLocked => write!(f, "Thread queue locked"),
-            Self::SchedulerError(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl From<SchedulerError> for ThreadMigrationError {
-    fn from(value: SchedulerError) -> Self {
-        Self::SchedulerError(value)
-    }
-}
-
-impl Error for ThreadMigrationError {}
-
 impl ThreadPool {
     /// Create new thread pool, fails if failed to allocate the context for the hlt thread
     pub fn new() -> Self {
@@ -500,7 +475,6 @@ impl ThreadPool {
         })
     }
 
-    #[must_use]
     pub fn alloc<F>(&mut self, f: F) -> Result<(Thread, ThreadHandle), SchedulerError>
     where
         F: FnOnce() + Send + 'static,

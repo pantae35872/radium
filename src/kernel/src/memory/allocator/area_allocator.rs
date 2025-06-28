@@ -2,9 +2,9 @@ use core::marker::PhantomData;
 
 use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use pager::{
-    address::{Frame, PhysAddr},
-    allocator::{linear_allocator::LinearAllocator, FrameAllocator},
     PAGE_SIZE,
+    address::{Frame, PhysAddr},
+    allocator::{FrameAllocator, linear_allocator::LinearAllocator},
 };
 
 use sentinel::log;
@@ -39,15 +39,13 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
         let mut area = match self.areas.next() {
             Some(area) => area,
             None => return,
-        }
-        .clone();
+        };
         // Reserved the first entry if null
         if area.phys_start.is_null() {
             area = match self.areas.next() {
                 Some(area) => area,
                 None => return,
             }
-            .clone();
         }
         // SAFETY: This is safe because the memory map is valid, and is gurenntee by uefi and the bootloader
         self.current_area = Some(unsafe {
@@ -60,10 +58,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
             self.next_area();
         }
 
-        let current_area = match self.current_area.as_mut() {
-            Some(area) => area,
-            None => return None,
-        };
+        let current_area = self.current_area.as_mut()?;
 
         let result = (
             current_area.current(),
@@ -82,10 +77,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAlloca
             self.next_area();
         }
 
-        let current_area = match self.current_area.as_mut() {
-            Some(area) => area,
-            None => return None,
-        };
+        let current_area = self.current_area.as_mut()?;
 
         current_area.allocate_frame().or_else(|| {
             self.current_area = None;

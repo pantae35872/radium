@@ -19,9 +19,15 @@ pub trait PortSize: Debug + PartialEq + Eq {
 
     fn size_in_bytes() -> usize;
 
-    /// Reading to an unallocated port is unsafe considered using the [`PORT_ALLOCATOR`]
+    /// Read from a port with the provided address
+    ///
+    /// # Safety
+    /// Reading from an unallocated port is unsafe considered using the [`PORT_ALLOCATOR`]
     unsafe fn read(address: u16) -> Self::Type;
 
+    /// Write to a port with the provided address, and value
+    ///
+    /// # Safety
     /// Writing to an unallocated port is unsafe considered using the [`PORT_ALLOCATOR`]
     unsafe fn write(address: u16, value: Self::Type);
 }
@@ -116,6 +122,12 @@ impl PortAllocator {
     }
 }
 
+impl Default for PortAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<S: PortSize, P: PortPermission> Port<S, P> {
     fn new(port_address: u16) -> Self {
         Self {
@@ -126,6 +138,10 @@ impl<S: PortSize, P: PortPermission> Port<S, P> {
 }
 
 impl<S: PortSize> Port<S, PortWrite> {
+    /// Write to a port with the provided value
+    /// 
+    /// # Safety
+    /// Writing to a system port can cause unsafe side effects
     pub unsafe fn write(&mut self, value: S::Type)
     where
         S::Type: LowerHex,
@@ -135,16 +151,28 @@ impl<S: PortSize> Port<S, PortWrite> {
 }
 
 impl<S: PortSize> Port<S, PortRead> {
+    /// Read from a port
+    /// 
+    /// # Safety
+    /// Reading from a system port can cause unsafe side effects
     pub unsafe fn read(&self) -> S::Type {
         unsafe { S::read(self.port_address) }
     }
 }
 
 impl<S: PortSize> Port<S, PortReadWrite> {
+    /// Write to a port with the provided value
+    /// 
+    /// # Safety
+    /// Writing to a system port can cause unsafe side effects
     pub unsafe fn read(&self) -> S::Type {
         unsafe { S::read(self.port_address) }
     }
 
+    /// Read from a port
+    /// 
+    /// # Safety
+    /// Reading from a system port can cause unsafe side effects
     pub unsafe fn write(&mut self, value: S::Type)
     where
         S::Type: LowerHex,

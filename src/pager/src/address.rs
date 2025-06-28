@@ -15,7 +15,7 @@ pub struct PhysAddr(u64);
 
 /// A structure that is gurentee to contain a valid ([`canonical`]) virtual address
 ///
-/// [`canonical`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct VirtAddr(u64);
@@ -26,14 +26,14 @@ pub struct InvalidPhysAddress(pub u64);
 
 /// A structure that contains non [`canonical`] virtual address
 ///
-/// [`canonical`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
 #[repr(transparent)]
 pub struct NonCanonicalVirtAddress(pub u64);
 
 /// A frame is an respresentation of an [`physical address`] that can be directly mapped in the
 /// page tables, and is aligned on 4KB boundries
 ///
-/// [`physical address`] https://en.wikipedia.org/wiki/X86-64#Physical_address_space_details
+/// [`physical address`]: <https://en.wikipedia.org/wiki/X86-64#Physical_address_space_details>
 #[derive(PartialEq, PartialOrd, Clone, Copy)]
 pub struct Frame {
     number: u64,
@@ -41,7 +41,7 @@ pub struct Frame {
 
 /// A page is an respresentation of an [`virtual address`] that is aligned on 4KB boundries
 ///
-/// [`virtual address`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+/// [`virtual address`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Page {
     number: u64,
@@ -78,7 +78,7 @@ impl Iterator for FrameIter {
 
     fn next(&mut self) -> Option<Frame> {
         if self.start <= self.end {
-            let frame = self.start.clone();
+            let frame = self.start;
             self.start.number += 1;
             Some(frame)
         } else {
@@ -163,30 +163,30 @@ impl Page {
 
     /// Get the page 4 index of the containing page (use in [`paging`])
     ///
-    /// [`paging`] https://wiki.osdev.org/Paging
+    /// [`paging`]: <https://wiki.osdev.org/Paging>
     pub fn p4_index(&self) -> u64 {
         (self.number >> 27) & 0o777
     }
 
     /// Get the page 3 index of the containing page (use in [`paging`])
     ///
-    /// [`paging`] https://wiki.osdev.org/Paging
+    /// [`paging`]: <https://wiki.osdev.org/Paging>
     pub fn p3_index(&self) -> u64 {
         (self.number >> 18) & 0o777
     }
 
     /// Get the page 2 index of the containing page (use in [`paging`])
     ///
-    /// [`paging`] https://wiki.osdev.org/Paging
+    /// [`paging`]: <https://wiki.osdev.org/Paging>
     pub fn p2_index(&self) -> u64 {
         (self.number >> 9) & 0o777
     }
 
     /// Get the page 1 index of the containing page (use in [`paging`])
     ///
-    /// [`paging`] https://wiki.osdev.org/Paging
+    /// [`paging`]: <https://wiki.osdev.org/Paging>
     pub fn p1_index(&self) -> u64 {
-        (self.number >> 0) & 0o777
+        self.number & 0o777
     }
 
     /// Create a iterator of page start-end (inclusive)
@@ -268,9 +268,9 @@ impl TryFrom<u64> for PhysAddr {
     }
 }
 
-impl Into<u64> for PhysAddr {
-    fn into(self) -> u64 {
-        self.0
+impl From<PhysAddr> for u64 {
+    fn from(value: PhysAddr) -> Self {
+        value.0
     }
 }
 
@@ -281,7 +281,7 @@ impl VirtAddr {
     ///
     /// If the address is not [`canonical`], this will panic
     ///
-    /// [`canonical`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+    /// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
     #[inline(always)]
     pub const fn new(address: u64) -> Self {
         if Self::is_canonical(address) {
@@ -338,7 +338,7 @@ impl VirtAddr {
     ///
     /// The caller must ensure that the address is [`canonical`]
     ///
-    /// [`canonical`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+    /// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
     #[inline(always)]
     pub const unsafe fn new_unchecked(address: u64) -> Self {
         Self(address)
@@ -346,17 +346,17 @@ impl VirtAddr {
 
     /// Check if the provide address is [`canonical`]
     ///
-    /// [`canonical`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+    /// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
     #[inline(always)]
     const fn is_canonical(addr: u64) -> bool {
-        return ((addr >> 47) == 0) || ((addr >> 47) == 0x1FFFF);
+        ((addr >> 47) == 0) || ((addr >> 47) == 0x1FFFF)
     }
 
     /// Get the inner value as u64
     ///
     /// The value is gurentee to be [`canonical address`] unset if this was constructed safely
     ///
-    /// [`canonical address`] https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details
+    /// [`canonical address`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
     #[inline(always)]
     pub const fn as_u64(&self) -> u64 {
         self.0
@@ -406,7 +406,7 @@ impl Add<u64> for PhysAddr {
     type Output = PhysAddr;
 
     fn add(self, rhs: u64) -> Self::Output {
-        Self::new(self.0 + rhs as u64)
+        Self::new(self.0 + rhs)
     }
 }
 
@@ -462,7 +462,7 @@ impl Add<u64> for VirtAddr {
     type Output = VirtAddr;
 
     fn add(self, rhs: u64) -> Self::Output {
-        Self::new(self.0 + rhs as u64)
+        Self::new(self.0 + rhs)
     }
 }
 
@@ -470,7 +470,7 @@ impl Add<VirtAddr> for VirtAddr {
     type Output = VirtAddr;
 
     fn add(self, rhs: VirtAddr) -> Self::Output {
-        Self::new(self.0 + rhs.0 as u64)
+        Self::new(self.0 + rhs.0)
     }
 }
 

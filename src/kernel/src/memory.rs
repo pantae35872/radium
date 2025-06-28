@@ -253,9 +253,9 @@ select_context! {
             depends: Option<MMIOBufferInfo>,
         ) -> Option<T> {
             let info = T::boot_bridge(&self.context().boot_bridge)
-                .or_else(|| T::acpi(self.context().acpi()))
-                .or_else(|| T::other())
-                .or_else(|| depends)?;
+                .or(T::acpi(self.context().acpi()))
+                .or(T::other())
+                .or(depends)?;
             let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
             let ctx = self.context_mut();
             // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
@@ -288,7 +288,7 @@ select_context! {
                 .mapper_with_allocator(&mut ctx.buddy_allocator)
         }
 
-        pub fn map<'a>(&'a mut self, size: usize, flags: EntryFlags) -> Page {
+        pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page {
             let ctx = self.context_mut();
             let start_page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
             ctx.active_table.map_range(

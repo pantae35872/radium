@@ -156,6 +156,15 @@ fn kmain_thread() {
     }
 
     log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
+    {
+        let ctx = cpu_local().ctx().lock();
+        let allocator = ctx.context().buddy_allocator();
+        log!(
+            Info,
+            "Usable memory left: {:.2} GB",
+            (allocator.max_mem() - allocator.allocated())  as f32 / (1 << 30) as f32 // TO GB
+        );
+    }
     log!(Debug, "This should be the last log");
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 

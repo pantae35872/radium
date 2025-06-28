@@ -2,9 +2,9 @@ use bit_field::BitField;
 use bitflags::bitflags;
 
 use crate::{
-    address::VirtAddr,
-    registers::{lgdt, DescriptorTablePointer, SegmentSelector},
     PrivilegeLevel,
+    address::VirtAddr,
+    registers::{DescriptorTablePointer, SegmentSelector, lgdt},
 };
 
 pub struct Gdt {
@@ -59,6 +59,12 @@ impl Gdt {
     }
 }
 
+impl Default for Gdt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C, packed(4))]
 pub struct TaskStateSegment {
@@ -82,6 +88,12 @@ impl TaskStateSegment {
             _reserved_3: 0,
             _reserved_4: 0,
         }
+    }
+}
+
+impl Default for TaskStateSegment {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

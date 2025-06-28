@@ -1,9 +1,9 @@
 use bootbridge::MemoryType;
 use pager::{
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::VirtAddr,
     allocator::FrameAllocator,
-    paging::{create_mappings, table::RecurseLevel4, ActivePageTable},
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
+    paging::{ActivePageTable, create_mappings, table::RecurseLevel4},
 };
 
 use crate::initialization_context::{InitializationContext, Stage0};
@@ -17,6 +17,8 @@ pub unsafe fn remap_the_kernel<A>(
 where
     A: FrameAllocator,
 {
+    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+
     let new_table = create_mappings(
         |mapper, allocator| {
             mapper.virtually_map_object(
@@ -56,9 +58,9 @@ where
             );
         },
         allocator,
+        &mut active_table,
     );
 
-    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
     unsafe { active_table.switch(new_table) };
 
     active_table

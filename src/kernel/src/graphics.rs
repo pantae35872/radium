@@ -7,15 +7,15 @@ use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
 use pager::{
+    EntryFlags, Mapper, PAGE_SIZE,
     address::Page,
     registers::{Xcr0, Xcr0Flags},
-    EntryFlags, Mapper, PAGE_SIZE,
 };
 
 use crate::{
     initialization_context::{InitializationContext, Stage2},
     interrupt,
-    memory::{virt_addr_alloc, MMIOBuffer, MMIOBufferInfo, MMIODevice},
+    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice, virt_addr_alloc},
 };
 use sentinel::log;
 
@@ -34,6 +34,7 @@ struct GlyphData {
 
 #[derive(Clone, Copy)]
 enum MemMoveSelected {
+    #[allow(clippy::upper_case_acronyms)]
     MMX,
     AVX256,
     AVX512,
@@ -336,31 +337,28 @@ impl Graphic {
     }
 
     fn plot_bitmask(&mut self, color: Color, y: usize, x: usize) {
-        match self.mode.pixel_format() {
-            PixelFormat::Bitmask(bitmask) => {
-                self.frame_buffer[y * self.mode.stride() + x] =
-                    color.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue);
-            }
-            _ => {}
+        if let PixelFormat::Bitmask(bitmask) = self.mode.pixel_format() {
+            self.frame_buffer[y * self.mode.stride() + x] =
+                color.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue);
         }
     }
 
     fn get_pixel_rgb(&self, y: usize, x: usize) -> Color {
         let color = self.frame_buffer[y * self.mode.stride() + x];
-        return Color::new(
+        Color::new(
             color.get_bits(24..32) as u8,
             color.get_bits(16..24) as u8,
             color.get_bits(8..16) as u8,
-        );
+        )
     }
 
     fn get_pixel_bgr(&self, y: usize, x: usize) -> Color {
         let color = self.frame_buffer[y * self.mode.stride() + x];
-        return Color::new(
+        Color::new(
             color.get_bits(16..24) as u8,
             color.get_bits(8..16) as u8,
             color.get_bits(0..8) as u8,
-        );
+        )
     }
 
     fn get_pixel_bitmask(&self, y: usize, x: usize) -> Color {
@@ -379,14 +377,14 @@ impl Graphic {
                     (bitmask.blue.trailing_zeros() - 8) as usize
                         ..bitmask.blue.trailing_zeros() as usize,
                 );
-                return Color::new(red as u8, green as u8, blue as u8);
+                Color::new(red as u8, green as u8, blue as u8)
             }
             _ => Color::new(0, 0, 0),
         }
     }
 
     pub fn get_res(&self) -> (usize, usize) {
-        return self.mode.resolution();
+        self.mode.resolution()
     }
 }
 
@@ -407,13 +405,13 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
             PixelFormat::Rgb => Self::plot_rgb,
             PixelFormat::Bgr => Self::plot_bgr,
             PixelFormat::Bitmask(_) => Self::plot_bitmask,
-            PixelFormat::BltOnly => unimplemented!("Not support"),
+            PixelFormat::BltOnly => unimplemented!("Blt only is not support"),
         };
         let get_pixel_fn = match mode.pixel_format() {
             PixelFormat::Rgb => Self::get_pixel_rgb,
             PixelFormat::Bgr => Self::get_pixel_bgr,
             PixelFormat::Bitmask(_) => Self::get_pixel_bitmask,
-            PixelFormat::BltOnly => unimplemented!("Not support"),
+            PixelFormat::BltOnly => unimplemented!("Blt only is not support"),
         };
         let memmove = match Xcr0::read() {
             flags if flags.contains(Xcr0Flags::ZMM_HIGH256) => MemMoveSelected::AVX512,

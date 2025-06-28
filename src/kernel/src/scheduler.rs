@@ -130,7 +130,7 @@ impl LocalScheduler {
             .enumerate()
             .filter(|(c, _)| *c != cpu_local().core_id().id() && *c < cpu_local().core_count())
         {
-            while let Err(_) = queue.push(global_id) {
+            while queue.push(global_id).is_err() {
                 core::hint::spin_loop();
             }
         }
@@ -318,7 +318,7 @@ impl LocalScheduler {
             && self
                 .wake_marker
                 .get(&addr)
-                .is_some_and(|e| matches!(e.checked_sub(1), Some(_)))
+                .is_some_and(|e| e.checked_sub(1).is_some())
         {
             self.wake_marker.entry(addr).and_modify(|e| *e -= 1);
             self.rr_queue.push_front(thread);
@@ -384,7 +384,7 @@ impl LocalScheduler {
         }
         self.migrate_if_required();
         while let Some(sleep_thread) = self.sleep_queue.peek() {
-            if self.timer_count >= sleep_thread.0.wakeup_time as usize {
+            if self.timer_count >= sleep_thread.0.wakeup_time {
                 self.rr_queue
                     .push_front(self.sleep_queue.pop().unwrap().0.thread);
             } else {
@@ -481,7 +481,7 @@ impl Deref for VsysThread {
 
 impl Drop for VsysThread {
     fn drop(&mut self) {
-        vsys_ret(&self);
+        vsys_ret(self);
     }
 }
 

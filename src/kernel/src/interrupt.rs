@@ -1,6 +1,7 @@
 use core::arch::asm;
 use core::sync::atomic::Ordering;
 
+use crate::PANIC_COUNT;
 use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
@@ -9,9 +10,8 @@ use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::FnBox;
-use crate::smp::cpu_local;
 use crate::smp::CpuLocalBuilder;
-use crate::PANIC_COUNT;
+use crate::smp::cpu_local;
 use alloc::boxed::Box;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -304,15 +304,14 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
                     .local_scheduler()
                     .vsys_return_thread(current_thread);
             }
-            DRIVCALL_INT_WAIT => match TryInto::<u8>::try_into(stack_frame.rax) {
-                Ok(idx) => {
+            DRIVCALL_INT_WAIT => {
+                if let Ok(idx) = TryInto::<u8>::try_into(stack_frame.rax) {
                     cpu_local()
                         .local_scheduler()
                         .interrupt_wait(idx, current_thread);
                     is_scheduleable_interrupt = true;
                 }
-                Err(_) => {}
-            },
+            }
             DRIVCALL_PIN => {
                 cpu_local().local_scheduler().pin(&current_thread);
             }
@@ -339,10 +338,10 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
 
     cpu_local().local_scheduler().interrupt_wake(idx);
 
-    if is_scheduleable_interrupt {
-        if let Some(sched_thread) = cpu_local().local_scheduler().schedule() {
-            Dispatcher::dispatch(stack_frame, sched_thread);
-        }
+    if is_scheduleable_interrupt
+        && let Some(sched_thread) = cpu_local().local_scheduler().schedule()
+    {
+        Dispatcher::dispatch(stack_frame, sched_thread);
     }
 
     eoi(idx);
@@ -375,7 +374,7 @@ extern "x86-interrupt" fn general_protection_fault_handler(
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
-    _no_return: ()
+    _no_return: (),
 ) {
     panic!(
         "EXCEPTION: DOUBLE FAULT\n{:#?}, ERROR_CODE: {}",

@@ -1,8 +1,8 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::{
-    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
     PAGE_SIZE,
+    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
 };
 
 /// Same as linear allocator but allocate virtual address instead
@@ -60,6 +60,6 @@ impl VirtualAllocator {
             return None;
         }
 
-        return Some(Page::containing_address(VirtAddr::new(current)));
+        Some(Page::containing_address(VirtAddr::new(current)))
     }
 }

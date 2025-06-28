@@ -1,6 +1,6 @@
 use crate::{
-    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
     EntryFlags, IdentityMappable, Mapper, PAGE_SIZE,
+    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
 };
 
 use super::FrameAllocator;
@@ -68,7 +68,10 @@ impl LinearAllocator {
         self.current
     }
 
-    /// You must be sure that all the allocation are no longer use
+    /// Reset the linear allocation to it's original start
+    ///
+    /// # Safety
+    /// The caller must ensure that all the allocation are no longer use
     pub unsafe fn reset(&mut self) {
         self.current = self.orginal_start;
     }
@@ -95,12 +98,8 @@ impl FrameAllocator for LinearAllocator {
         }
         let addr = self.current;
         self.current += PAGE_SIZE;
-        //FIXME: FIX THIS
-        // TODO: Find a better way to handle reserve areas
-        //if self.current >= TRAMPOLINE_START && self.current <= TRAMPOLINE_END {
-        //    self.current = TRAMPOLINE_END.min(PhysAddr::new(self.size as u64)) + PAGE_SIZE;
-        //}
-        return Some(Frame::containing_address(addr));
+
+        Some(Frame::containing_address(addr))
     }
     fn deallocate_frame(&mut self, _frame: Frame) {}
 }

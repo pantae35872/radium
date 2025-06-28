@@ -6,19 +6,19 @@ use core::arch::{
 use bitflags::bitflags;
 
 use crate::{
-    address::{Frame, PhysAddr, VirtAddr},
     PrivilegeLevel,
+    address::{Frame, PhysAddr, VirtAddr},
 };
 
 /// Respresent a [`Cr3`] register in a processor
 ///
-/// [`Cr3`] https://wiki.osdev.org/CPU_Registers_x86#CR3
+/// [`Cr3`]: <https://wiki.osdev.org/CPU_Registers_x86#CR3>
 pub struct Cr3;
 
 bitflags! {
     /// Contains the [`cr3 flags`] (bits 3-4)
     ///
-    /// [`cr3 flags`] https://wiki.osdev.org/CPU_Registers_x86#CR3
+    /// [`cr3 flags`]: <https://wiki.osdev.org/CPU_Registers_x86#CR3>
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct Cr3Flags: u64 {
         /// Use a writethrough cache policy for the table (otherwise a writeback policy is used).
@@ -29,7 +29,7 @@ bitflags! {
 
     /// Contains the [`cr0 flags`] (bits 3-4)
     ///
-    /// [`cr0 flags`] https://wiki.osdev.org/CPU_Registers_x86#CR0
+    /// [`cr0 flags`]: <https://wiki.osdev.org/CPU_Registers_x86#CR0>
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct Cr0Flags: u64 {
         // TODO: Document this
@@ -48,8 +48,8 @@ bitflags! {
 
     /// Contains the [`efer flags`] (bits 3-4)
     ///
-    /// [`efer flags`] http://wiki.osdev.org/CPU_Registers_x86-64#IA32_EFER
-    /// [`efer flags`] https://en.wikipedia.org/wiki/Control_register#EFER
+    /// [`efer flags`]: <https://wiki.osdev.org/CPU_Registers_x86-64#IA32_EFER>
+    /// [`efer flags`]: <https://en.wikipedia.org/wiki/Control_register#EFER>
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct EferFlags: u64 {
         const SystemCallExtensions = 1 << 0;
@@ -391,7 +391,7 @@ impl Msr {
 }
 
 impl Efer {
-    const IA32_EFER_MSR: Msr = Msr::new(0xC0000080);
+    pub const IA32_EFER_MSR: Msr = Msr::new(0xC0000080);
 
     /// Read from the [`Efer::IA32_EFER_MSR`] truncate the reserved bits
     pub fn read() -> EferFlags {
@@ -400,7 +400,7 @@ impl Efer {
 
     /// Read the efer msr and then perform bitwise or with the provided flags, and write that value back
     /// if you somehow create an invalid [`EferFlags`] that contains reserved bits, and crash that
-    /// on you ¯\_(ツ)_/¯
+    /// on you ¯\_(ツ)_/¯ (happens to me once)
     ///
     /// # Safety
     ///

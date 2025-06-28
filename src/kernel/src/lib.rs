@@ -16,6 +16,7 @@
 #![allow(internal_features)]
 #![allow(dead_code)]
 #![allow(unused_macros)]
+#![allow(clippy::fn_to_numeric_cast)]
 
 #[macro_use]
 extern crate bitflags;
@@ -50,17 +51,17 @@ use driver::{
     acpi::{self},
     pit,
 };
-use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
+use graphics::color::Color;
 use initialization_context::{InitializationContext, Stage0};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use santa::SymbolResolver;
 use scheduler::sleep;
-use sentinel::{get_logger, log, LoggerBackend};
-use smp::{cpu_local, cpu_local_avaiable, ALL_AP_INITIALIZED};
+use sentinel::{LoggerBackend, get_logger, log};
+use smp::{ALL_AP_INITIALIZED, cpu_local, cpu_local_avaiable};
 use spin::Mutex;
-use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
+use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
@@ -76,7 +77,8 @@ impl SymbolResolver for DriverReslover {
             "kpanic" => Some(panic as usize),
             "get_klogger" => Some(get_klogger as usize),
             _ => None,
-        }.map(|a| a as u64)
+        }
+        .map(|a| a as u64)
     }
 }
 
