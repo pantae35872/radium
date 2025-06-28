@@ -60,6 +60,10 @@ pub fn set_logger(backend: &'static dyn LoggerBackend) {
     LOGGER_BACKEND.init_once(|| backend);
 }
 
+pub fn get_logger() -> Option<&'static dyn LoggerBackend> {
+    LOGGER_BACKEND.get().copied()
+}
+
 pub fn log_message(module_path: &'static str, level: LogLevel, formatter: Arguments) {
     if let Some(logger) = LOGGER_BACKEND.get() {
         logger.log(module_path, level, formatter);

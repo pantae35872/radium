@@ -57,7 +57,7 @@ use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use santa::SymbolResolver;
 use scheduler::sleep;
-use sentinel::log;
+use sentinel::{get_logger, log, LoggerBackend};
 use smp::{cpu_local, cpu_local_avaiable, ALL_AP_INITIALIZED};
 use spin::Mutex;
 use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
@@ -69,14 +69,14 @@ pub struct DriverReslover;
 
 impl SymbolResolver for DriverReslover {
     fn resolve(&self, symbol: &str) -> Option<u64> {
-        fn my_func() {
-            log!(Info, "Hello from kernel called from driverr");
+        fn get_klogger() -> &'static dyn LoggerBackend {
+            get_logger().expect("Logger is not inialized")
         }
         match symbol {
-            "kpanic" => Some(panic as u64),
-            "external_func" => Some(my_func as u64),
+            "kpanic" => Some(panic as usize),
+            "get_klogger" => Some(get_klogger as usize),
             _ => None,
-        }
+        }.map(|a| a as u64)
     }
 }
 

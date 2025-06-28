@@ -7,4 +7,4 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-spin = "0.9.8"
+sentinel = { path = "../../sentinel" }

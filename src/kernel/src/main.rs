@@ -70,21 +70,12 @@ fn kmain_thread() {
             phys_start.start_address(),
         );
 
-        let start_fn = driver_elf
-            .lookup_symbol("start", start.start_address())
-            .expect("Start fn not found in driver");
-        let change_fn = driver_elf
-            .lookup_symbol("change", start.start_address())
-            .expect("Start fn not found in driver");
-        let start_fn: extern "C" fn(a: u64, b: u64) -> u64 =
-            unsafe { core::mem::transmute(start_fn.as_u64()) };
-        let change_fn: extern "C" fn(a: u64) = unsafe { core::mem::transmute(change_fn) };
-
-        log!(Info, "Called start, result: {}", start_fn(1, 2));
-        change_fn(1);
-        log!(Info, "Called start, result: {}", start_fn(1, 2));
-        change_fn(1);
-        log!(Info, "Called start, result: {}", start_fn(1, 2));
+        let init_fn = driver_elf
+            .lookup_symbol("init", start.start_address())
+            .expect("init fn not found in driver");
+        let init_fn: extern "C" fn() =
+            unsafe { core::mem::transmute(init_fn.as_u64()) };
+        init_fn();
     }
 
     println!("Hello, world!!!, from kmain thread");
