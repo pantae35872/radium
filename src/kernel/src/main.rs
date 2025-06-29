@@ -14,15 +14,13 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use pager::EntryFlags;
 use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
-use radium::scheduler::{self, sleep, vsys_reg, VsysThread};
+use radium::scheduler::{self, VsysThread, sleep, vsys_reg};
 use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
-use radium::{hlt_loop, print, println, serial_print, serial_println, DriverReslover};
+use radium::{hlt_loop, print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
-use santa::Elf;
 use sentinel::log;
 
 static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
@@ -33,51 +31,6 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 }
 
 fn kmain_thread() {
-    let packed = cpu_local()
-        .ctx()
-        .lock()
-        .context_mut()
-        .boot_bridge
-        .packed_drivers();
-    for driver in packed.iter() {
-        let driver_elf = Elf::new(driver.data).expect("Driver elf not valid");
-        let start = cpu_local().ctx().lock().map(
-            driver_elf.max_memory_needed(),
-            EntryFlags::WRITABLE | EntryFlags::NEEDS_REMAP,
-        );
-
-        let phys_start = cpu_local()
-            .ctx()
-            .lock()
-            .context_mut()
-            .active_table()
-            .translate_page(start)
-            .unwrap();
-        log!(
-            Trace,
-            "driver loaded physical addr {:x}, virtual addr {:x}",
-            phys_start.start_address(),
-            start.start_address(),
-        );
-        unsafe { driver_elf.load(start.start_address().as_mut_ptr()) };
-        driver_elf
-            .apply_relocations(start.start_address(), &DriverReslover)
-            .expect("");
-
-        cpu_local().ctx().lock().virtually_map(
-            &driver_elf,
-            start.start_address(),
-            phys_start.start_address(),
-        );
-
-        let init_fn = driver_elf
-            .lookup_symbol("init", start.start_address())
-            .expect("init fn not found in driver");
-        let init_fn: extern "C" fn() =
-            unsafe { core::mem::transmute(init_fn.as_u64()) };
-        init_fn();
-    }
-
     println!("Hello, world!!!, from kmain thread");
 
     scheduler::spawn(|| {
@@ -162,7 +115,7 @@ fn kmain_thread() {
         log!(
             Info,
             "Usable memory left: {:.2} GB",
-            (allocator.max_mem() - allocator.allocated())  as f32 / (1 << 30) as f32 // TO GB
+            (allocator.max_mem() - allocator.allocated()) as f32 / (1 << 30) as f32 // TO GB
         );
     }
     log!(Debug, "This should be the last log");

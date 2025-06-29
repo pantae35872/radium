@@ -16,12 +16,15 @@ pub struct AreaAllocator<'a, I> {
 }
 
 impl<'a> AreaAllocator<'a, ()> {
+    /// Create a new area allocator
+    ///
     /// # Safety
     ///
     /// This is unsafe because we can't gurentee that the memory mapped has already been allocated
     /// to another allocator or not.
     ///
-    /// and the [`FrameAllocator::allocate_frame`] require that the allocated address is valid
+    /// and the [`FrameAllocator`] require that the allocated address is valid, and is the only
+    /// owner ship of the frame
     pub unsafe fn new(
         areas: &'a MemoryMap,
     ) -> AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>> {
@@ -35,7 +38,7 @@ impl<'a> AreaAllocator<'a, ()> {
 }
 
 impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
-    pub fn next_area(&mut self) {
+    fn next_area(&mut self) {
         let mut area = match self.areas.next() {
             Some(area) => area,
             None => return,
@@ -71,7 +74,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
     }
 }
 
-impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAllocator<'a, I> {
+unsafe impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAllocator<'a, I> {
     fn allocate_frame(&mut self) -> Option<Frame> {
         if self.current_area.is_none() {
             self.next_area();

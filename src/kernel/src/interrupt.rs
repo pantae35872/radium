@@ -85,11 +85,17 @@ fn disable_pic(ctx: &mut InitializationContext<Stage3>) {
 
 fn create_idt() -> &'static Idt {
     let idt = Box::leak(Idt::new().into());
-    idt.general_protection
-        .set_handler_fn(general_protection_fault_handler);
-    idt.page_fault.set_handler_fn(page_fault_handler);
-    idt.invalid_opcode.set_handler_fn(invalid_opcode);
+
     unsafe {
+        idt.general_protection
+            .set_handler_fn(general_protection_fault_handler)
+            .set_stack_index(GENERAL_STACK_INDEX);
+        idt.page_fault
+            .set_handler_fn(page_fault_handler)
+            .set_stack_index(GENERAL_STACK_INDEX);
+        idt.invalid_opcode
+            .set_handler_fn(invalid_opcode)
+            .set_stack_index(GENERAL_STACK_INDEX);
         idt.double_fault
             .set_handler_fn(double_fault_handler)
             .set_stack_index(DOUBLE_FAULT_IST_INDEX);

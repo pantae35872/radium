@@ -1,9 +1,9 @@
 use core::{marker::PhantomData, ptr};
 
 use bootbridge::MemoryDescriptor;
+use pager::KERNEL_DIRECT_PHYSICAL_MAP;
 use pager::address::PhysAddr;
 use pager::allocator::FrameAllocator;
-use pager::KERNEL_DIRECT_PHYSICAL_MAP;
 
 use crate::{
     memory::{Frame, MAX_ALIGN, PAGE_SIZE},
@@ -18,7 +18,8 @@ pub struct BuddyAllocator<const ORDER: usize> {
     allocated: usize,
 }
 
-impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
+// SAFETY: this is uphold by the implementation of the buddy allocator to be correct
+unsafe impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
     fn allocate_frame(&mut self) -> Option<Frame> {
         self.allocate(PAGE_SIZE as usize)
             .map(|e| Frame::containing_address(PhysAddr::new(e as u64)))

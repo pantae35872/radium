@@ -2,14 +2,14 @@ use core::ptr::write_bytes;
 
 use alloc::vec;
 use pager::{
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE, PageLevel,
     address::{Frame, PhysAddr, VirtAddr},
-    allocator::{linear_allocator::LinearAllocator, FrameAllocator},
+    allocator::{FrameAllocator, linear_allocator::LinearAllocator},
     page_table_size,
     paging::{
-        table::{DirectLevel4, Table},
         ActivePageTable, Entry,
+        table::{DirectLevel4, Table},
     },
-    EntryFlags, Mapper, PageLevel, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use uefi::{
     proto::loaded_image::LoadedImage,
@@ -123,12 +123,13 @@ pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> Initialization
         &mut kernel_page_allocator,
     );
 
-    kernel_table.virtually_map_object(
-        ctx.context().elf(),
-        KERNEL_START,
-        ctx.context().kernel_base,
-        &mut kernel_page_allocator,
-    );
+    unsafe {
+        ctx.context().elf().map_permission(
+            &mut kernel_table.mapper_with_allocator(&mut kernel_page_allocator),
+            KERNEL_START,
+            ctx.context().kernel_base,
+        )
+    };
 
     let protocol = system_table
         .boot_services()

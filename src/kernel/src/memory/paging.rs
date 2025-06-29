@@ -21,12 +21,13 @@ where
 
     let new_table = create_mappings(
         |mapper, allocator| {
-            mapper.virtually_map_object(
-                ctx.context().boot_bridge().kernel_elf(),
-                KERNEL_START,
-                ctx.context().boot_bridge().kernel_base(),
-                allocator,
-            );
+            unsafe {
+                ctx.context().boot_bridge().kernel_elf().map_permission(
+                    &mut mapper.mapper_with_allocator(allocator),
+                    KERNEL_START,
+                    ctx.context().boot_bridge().kernel_base(),
+                )
+            };
 
             for usable in ctx
                 .context()

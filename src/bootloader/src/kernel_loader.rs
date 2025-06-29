@@ -50,7 +50,7 @@ pub fn load_kernel_elf(ctx: InitializationContext<Stage1>) -> InitializationCont
         }
     };
 
-    let entry = unsafe { elf.load(program_ptr) };
+    let entry = unsafe { elf.load_data(program_ptr) };
 
     ctx.next((entry, PhysAddr::new(program_ptr as u64), elf))
 }

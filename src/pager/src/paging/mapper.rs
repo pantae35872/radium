@@ -4,10 +4,7 @@ use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::allocator::virt_allocator::VirtualAllocator;
 use crate::registers::tlb;
-use crate::{
-    IdentityMappable, MapperWithVirtualAllocator, PAGE_SIZE, VirtuallyMappable,
-    VirtuallyReplaceable,
-};
+use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE};
 
 use super::table::{
     DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
@@ -305,7 +302,7 @@ where
         obj.map(&mut mapper);
     }
 
-    pub fn virtually_replace<O: VirtuallyReplaceable, A: FrameAllocator>(
+    pub fn virtually_replace<O: IdentityReplaceable, A: FrameAllocator>(
         &mut self,
         obj: &mut O,
         allocator: &mut A,
@@ -313,18 +310,7 @@ where
     ) {
         let mut mapper = self.mapper_with_allocator(allocator);
         let mut mapper = MapperWithVirtualAllocator::new(&mut mapper, virtual_allocator);
-        obj.replace(&mut mapper)
-    }
-
-    pub fn virtually_map_object<O: VirtuallyMappable, A: FrameAllocator>(
-        &mut self,
-        obj: &O,
-        virt_base: VirtAddr,
-        phys_base: PhysAddr,
-        allocator: &mut A,
-    ) {
-        let mut mapper = self.mapper_with_allocator(allocator);
-        obj.virt_map(&mut mapper, virt_base, phys_base);
+        obj.identity_replace(&mut mapper)
     }
 
     pub fn mapper_with_allocator<'a, A: FrameAllocator>(
@@ -397,7 +383,10 @@ where
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the provided page was mapped by [`Self::map_to`] or [`Self::identity_map`]
+    /// The caller must ensure that the provided page was mapped by [`Self::map_to`] or [`Self::identity_map`],
+    /// AND NOT [`Self::map`].
+    /// and the caller must ensure that reference or allocation referencing this page no longer
+    /// exists
     pub unsafe fn unmap_addr(&mut self, page: Page) -> Frame {
         assert!(self.translate(page.start_address()).is_some());
 
@@ -481,5 +470,13 @@ impl<'a, P4: TopLevelP4, A: FrameAllocator> crate::Mapper for MapperWithAllocato
                 self.allocator,
             );
         }
+    }
+
+    fn translate_page(&mut self, page: Page) -> Option<Frame> {
+        self.mapper.translate_page(page)
+    }
+
+    fn translate(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
+        self.mapper.translate(addr)
     }
 }

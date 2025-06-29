@@ -91,6 +91,7 @@ where
 
 impl<P4: TopLevelP4> ActivePageTable<P4> {
     fn p4_mut(&mut self) -> &mut Table<P4> {
+        // SAFETY: Taking a reference to the page table is valid and safe, in this module
         unsafe { self.p4.as_mut() }
     }
 
@@ -105,19 +106,22 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         let (level_4_table_frame, _) = Cr3::read();
         let backup = level_4_table_frame;
 
-        // SAFETY: We know that the frame is valid because we're reading it from the cr3
-        // which if it's is indeed invalid, this code shoulnt be even executing
-        let p4_table = unsafe { temporary_page.map_table_frame(backup, self) };
+        {
+            // SAFETY: We know that the frame is valid because we're reading it from the cr3
+            // which if it's is indeed invalid, this code shouldn't be even executing
+            let p4_table = unsafe { temporary_page.map_table_frame(backup, self) };
 
-        self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
-        Cr3::reload();
+            self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+            Cr3::reload();
 
-        f(self);
+            f(self);
 
-        p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
-        Cr3::reload();
+            p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+            Cr3::reload();
+        }
 
-        temporary_page.unmap(self);
+        // SAFETY: The reference to the page is gone in the scope above
+        unsafe { temporary_page.unmap(self) };
     }
 
     /// Switch the page table with the inactive page table
@@ -138,6 +142,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     }
 
     fn p4(&self) -> &Table<P4> {
+        // SAFETY: Taking a reference to the page table is valid and safe, in this module
         unsafe { self.p4.as_ref() }
     }
 
@@ -233,12 +238,9 @@ impl InactivePageTable {
             table.zero();
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
-        temporary_page.unmap(active_table);
+        // SAFETY: The reference to the table is gone in the scope
+        unsafe { temporary_page.unmap(active_table) };
 
-        InactivePageTable { p4_frame: frame }
-    }
-
-    pub unsafe fn from_raw_frame(frame: Frame) -> InactivePageTable {
         InactivePageTable { p4_frame: frame }
     }
 }

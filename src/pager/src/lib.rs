@@ -149,6 +149,10 @@ pub trait Mapper {
     {
         obj.map(self);
     }
+
+    fn translate(&mut self, addr: VirtAddr) -> Option<PhysAddr>;
+
+    fn translate_page(&mut self, page: Page) -> Option<Frame>;
 }
 
 bitflags! {
@@ -171,16 +175,32 @@ bitflags! {
     }
 }
 
-pub trait IdentityMappable {
+/// Indicates that the implemented object can be identity map
+///
+/// # Safety
+/// the implemenation must use mapper properly
+pub unsafe trait IdentityMappable {
     fn map(&self, mapper: &mut impl Mapper);
 }
 
-pub trait VirtuallyReplaceable {
-    fn replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>);
+/// Indicates that the implemented object can be replace with an virtual address from an identity
+/// mappped address
+///
+/// # Safety
+/// the implemenation must use mapper properly
+pub unsafe trait IdentityReplaceable {
+    fn identity_replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>);
 }
 
-pub trait VirtuallyMappable {
-    fn virt_map(&self, mapper: &mut impl Mapper, virt_base: VirtAddr, phys_base: PhysAddr);
+unsafe impl<O> IdentityReplaceable for Option<O>
+where
+    O: IdentityReplaceable,
+{
+    fn identity_replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>) {
+        if let Some(obj) = self.as_mut() {
+            obj.identity_replace(mapper);
+        }
+    }
 }
 
 impl Display for EntryFlags {
@@ -244,7 +264,7 @@ impl<'a> Deref for DataBuffer<'a> {
     }
 }
 
-impl IdentityMappable for DataBuffer<'_> {
+unsafe impl IdentityMappable for DataBuffer<'_> {
     fn map(&self, mapper: &mut impl Mapper) {
         let buf_start = PhysAddr::new(self.buffer as *const [u8] as *const u8 as u64);
         let buf_end = PhysAddr::new(buf_start.as_u64() + self.buffer.len() as u64 - 1);
@@ -255,8 +275,8 @@ impl IdentityMappable for DataBuffer<'_> {
     }
 }
 
-impl VirtuallyReplaceable for DataBuffer<'_> {
-    fn replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>) {
+unsafe impl IdentityReplaceable for DataBuffer<'_> {
+    fn identity_replace<T: Mapper>(&mut self, mapper: &mut MapperWithVirtualAllocator<T>) {
         let len = self.buffer().len();
         let old_phys = PhysAddr::new(self.buffer().as_ptr() as u64);
         let new_addr = unsafe { mapper.map(old_phys, len, EntryFlags::NO_EXECUTE) };

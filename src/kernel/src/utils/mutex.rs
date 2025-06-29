@@ -37,6 +37,8 @@ impl<T> Mutex<T> {
         }
     }
 
+    /// # Safety
+    /// Force unlocking an mutex is unsafe, can causes data corruption and races
     pub unsafe fn force_unlock(&self) {
         self.lock.store(0, Ordering::SeqCst);
     }
@@ -50,7 +52,10 @@ impl<T> Mutex<T> {
                 data: unsafe { &mut *self.data.get() },
             };
         }
-        assert!(!cpu_local().is_in_isr);
+        assert!(
+            !cpu_local().is_in_isr,
+            "Futex Mutex can't be use in interrupt context"
+        );
         let mut c = UNLOCKED;
         if self
             .lock
@@ -94,10 +99,10 @@ impl<T> Mutex<T> {
             }
         }
 
-        return MutexGuard {
+        MutexGuard {
             lock: &self.lock,
             data: unsafe { &mut *self.data.get() },
-        };
+        }
     }
 }
 

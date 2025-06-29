@@ -1,19 +1,20 @@
 use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
 use pager::{
+    EntryFlags, KERNEL_GENERAL_USE, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
-    allocator::{virt_allocator::VirtualAllocator, FrameAllocator},
-    paging::{mapper::MapperWithAllocator, table::RecurseLevel4, ActivePageTable},
+    allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
+    paging::{ActivePageTable, mapper::MapperWithAllocator, table::RecurseLevel4},
     registers::{Cr0, Cr0Flags, Cr4, Cr4Flags, Efer, EferFlags, Xcr0, Xcr0Flags},
-    EntryFlags, VirtuallyMappable, KERNEL_GENERAL_USE, PAGE_SIZE,
 };
 use raw_cpuid::CpuId;
 use stack_allocator::StackAllocator;
 
 use crate::{
+    DWARF_DATA,
     driver::acpi::Acpi,
-    initialization_context::{select_context, InitializationContext, Stage0, Stage1},
-    initialize_guard, log, DWARF_DATA,
+    initialization_context::{InitializationContext, Stage0, Stage1, select_context},
+    initialize_guard, log,
 };
 
 pub use self::paging::remap_the_kernel;
@@ -299,12 +300,6 @@ select_context! {
             );
 
             start_page
-        }
-
-        pub fn virtually_map(&mut self, obj: &impl VirtuallyMappable, virt_base: VirtAddr, phys_base: PhysAddr) {
-            let ctx = self.context_mut();
-            ctx.active_table
-                .virtually_map_object(obj, virt_base, phys_base, &mut ctx.buddy_allocator);
         }
     }
 }

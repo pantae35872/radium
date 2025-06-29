@@ -12,7 +12,7 @@ pub use std::{string::String, vec::Vec};
 #[cfg(all(not(feature = "std"), feature = "alloc"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::{DataBuffer, IdentityMappable, VirtuallyReplaceable};
+use pager::{DataBuffer, IdentityMappable, IdentityReplaceable};
 use thiserror::Error;
 
 const MAGIC: u32 = u32::from_le_bytes(*b"PACK");
@@ -230,14 +230,17 @@ impl<'a> Iterator for DriverIter<'a> {
     }
 }
 
-impl IdentityMappable for Packed<'_> {
+unsafe impl IdentityMappable for Packed<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         self.buffer.map(mapper);
     }
 }
 
-impl VirtuallyReplaceable for Packed<'_> {
-    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.buffer.replace(mapper);
+unsafe impl IdentityReplaceable for Packed<'_> {
+    fn identity_replace<T: pager::Mapper>(
+        &mut self,
+        mapper: &mut pager::MapperWithVirtualAllocator<T>,
+    ) {
+        self.buffer.identity_replace(mapper);
     }
 }

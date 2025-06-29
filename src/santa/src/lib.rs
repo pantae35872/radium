@@ -8,8 +8,8 @@ use c_enum::c_enum;
 use core::fmt::Debug;
 use core::iter::Iterator;
 use pager::{
+    EntryFlags, IdentityMappable, IdentityReplaceable, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
-    EntryFlags, IdentityMappable, VirtuallyMappable, VirtuallyReplaceable, PAGE_SIZE,
 };
 use reader::{ElfBits, ElfHeader, ElfReader, ProgramType, SectionType};
 use sentinel::log;
@@ -37,8 +37,17 @@ pub enum ElfError<'a> {
     UnresolvedSymbol(&'a str),
 }
 
-pub trait SymbolResolver {
-    fn resolve(&self, symbol: &str) -> Option<u64>;
+/// Trait for resloving elf symbol the implementation may provide a address to a function or an
+/// global objects
+///
+/// # Safety
+/// The implementation must provide a valid virtual addr of an symbol, otherwise the
+/// elf will be patched with a wrong symbol virtual address.
+///
+/// The implementation must reslove the type of the symbol correctly, ex. if the symbol is a function
+/// the implementation must return a virtual address of a valid function.
+pub unsafe trait SymbolResolver {
+    fn resolve(&self, symbol: &str) -> Option<VirtAddr>;
 }
 
 // TODO: Add testing
@@ -103,7 +112,13 @@ impl<'a> Elf<'a> {
         })
     }
 
-    pub fn apply_relocations(
+    /// Apply the relocation to an base address, if the they're unresloved symbol this will use the
+    /// provided reslover to reslove the unknown symbol
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided base is valid and marked as writeable and
+    /// overwriteable, with a size of max_memory_needed
+    pub unsafe fn apply_relocations(
         &'a self,
         base: VirtAddr,
         reslover: &impl SymbolResolver,
@@ -183,7 +198,7 @@ impl<'a> Elf<'a> {
                             let sym = reslover
                                 .resolve(sym_name)
                                 .ok_or(ElfError::UnresolvedSymbol(sym_name))?;
-                            unsafe { *(base + offset).as_mut_ptr::<u64>() = sym };
+                            unsafe { *(base + offset).as_mut_ptr::<u64>() = sym.as_u64() };
                             continue;
                         }
                         unsafe {
@@ -252,8 +267,8 @@ impl<'a> Elf<'a> {
     ///
     /// # Safety
     /// The caller must ensure that the provided program_ptr is valid and marked as writeable and
-    /// overwriteable
-    pub unsafe fn load(&self, program_ptr: *mut u8) -> u64 {
+    /// overwriteable, with a size of max_memory_needed
+    pub unsafe fn load_data(&self, program_ptr: *mut u8) -> u64 {
         for header in self.reader.program_header_iter() {
             if header.segment_type() != ProgramType::Load {
                 continue;
@@ -274,37 +289,22 @@ impl<'a> Elf<'a> {
         self.reader.entry_point()
     }
 
-    pub fn max_alignment(&self) -> usize {
-        self.max_alignment
-    }
-
-    pub fn mem_min(&self) -> VirtAddr {
-        self.mem_min
-    }
-
-    pub fn mem_max(&self) -> VirtAddr {
-        self.mem_max
-    }
-
-    pub fn max_memory_needed(&self) -> usize {
-        self.max_memory_needed
-    }
-}
-
-impl VirtuallyReplaceable for Elf<'_> {
-    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.reader.replace(mapper);
-    }
-}
-
-impl VirtuallyMappable for Elf<'_> {
-    fn virt_map(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
+    /// Map the permission releative to the physical base, and virtual base
+    ///
+    /// # Safety
+    /// Physical memory must be loaded with the correct data and have a contagious physical address
+    pub unsafe fn map_permission(
+        &self,
+        mapper: &mut impl pager::Mapper,
+        virt_base: VirtAddr,
+        phys_base: PhysAddr,
+    ) {
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
                 continue;
             }
             assert!(
-                section.vaddr().as_u64() % PAGE_SIZE == 0,
+                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
                 "sections need to be page aligned"
             );
             let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
@@ -330,13 +330,73 @@ impl VirtuallyMappable for Elf<'_> {
             };
         }
     }
+
+    pub fn max_alignment(&self) -> usize {
+        self.max_alignment
+    }
+
+    pub fn mem_min(&self) -> VirtAddr {
+        self.mem_min
+    }
+
+    pub fn mem_max(&self) -> VirtAddr {
+        self.mem_max
+    }
+
+    pub fn max_memory_needed(&self) -> usize {
+        self.max_memory_needed
+    }
 }
 
-impl IdentityMappable for Elf<'_> {
+unsafe impl IdentityReplaceable for Elf<'_> {
+    fn identity_replace<T: pager::Mapper>(
+        &mut self,
+        mapper: &mut pager::MapperWithVirtualAllocator<T>,
+    ) {
+        self.reader.identity_replace(mapper);
+    }
+}
+
+unsafe impl IdentityMappable for Elf<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         self.reader.map(mapper);
     }
 }
+
+//impl VirtuallyMappable for Elf<'_> {
+//    fn virt_map(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
+//        for section in self.reader.program_header_iter() {
+//            if section.segment_type() != ProgramType::Load {
+//                continue;
+//            }
+//            assert!(
+//                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
+//                "sections need to be page aligned"
+//            );
+//            let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
+//            let virt_start = virt_base + relative_offset;
+//            let virt_end = virt_start + section.memsize() - 1;
+//            let phys_start = phys_base + relative_offset;
+//            let phys_end = phys_base + relative_offset + section.memsize() - 1;
+//
+//            log!(
+//                Trace,
+//                "Elf mapping [{virt_start:x}-{virt_end:x}] with {} to [{phys_start:x}-{phys_end:x}]",
+//                EntryFlags::from(section.flags())
+//            );
+//            // SAFETY: We know this is safe because we're parsing the elf correctly
+//            unsafe {
+//                mapper.map_to_range(
+//                    Page::containing_address(virt_start),
+//                    Page::containing_address(virt_end),
+//                    Frame::containing_address(phys_start),
+//                    Frame::containing_address(phys_end),
+//                    EntryFlags::from(section.flags()),
+//                )
+//            };
+//        }
+//    }
+//}
 
 #[derive(Debug)]
 #[repr(C)]

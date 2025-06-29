@@ -95,12 +95,13 @@ impl ApInitializer {
             )
         };
 
-        bootstrap_table.virtually_map_object(
-            ctx.context().boot_bridge().kernel_elf(),
-            KERNEL_START,
-            ctx.context().boot_bridge().kernel_base(),
-            &mut boot_alloc,
-        );
+        unsafe {
+            ctx.context().boot_bridge().kernel_elf().map_permission(
+                &mut bootstrap_table.mapper_with_allocator(&mut boot_alloc),
+                KERNEL_START,
+                ctx.context().boot_bridge().kernel_base(),
+            )
+        };
 
         unsafe {
             bootstrap_table
@@ -181,7 +182,7 @@ impl ApInitializer {
 
 static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-/// The rust entry point for ap cores 
+/// The rust entry point for ap cores
 ///
 /// # Safety
 /// This should only be called from ap bootstrap trampoline

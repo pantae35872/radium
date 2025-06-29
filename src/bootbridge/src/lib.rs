@@ -10,9 +10,9 @@ use bitflags::bitflags;
 use c_enum::c_enum;
 use packery::Packed;
 use pager::{
+    DataBuffer, EntryFlags, IdentityMappable, IdentityReplaceable,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::linear_allocator::LinearAllocator,
-    DataBuffer, EntryFlags, IdentityMappable, VirtuallyReplaceable,
 };
 use santa::Elf;
 
@@ -42,7 +42,7 @@ impl RawData {
     }
 }
 
-impl IdentityMappable for RawData {
+unsafe impl IdentityMappable for RawData {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         unsafe {
             mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE)
@@ -200,7 +200,7 @@ pub struct BootBridgeBuilder {
     pub boot_bridge: *mut RawBootBridge,
 }
 
-impl IdentityMappable for BootBridgeBuilder {
+unsafe impl IdentityMappable for BootBridgeBuilder {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         let boot_bridge = self.boot_bridge;
         unsafe {
@@ -378,8 +378,11 @@ impl BootBridge {
     }
 }
 
-impl VirtuallyReplaceable for BootBridge {
-    fn replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+unsafe impl IdentityReplaceable for BootBridge {
+    fn identity_replace<T: pager::Mapper>(
+        &mut self,
+        mapper: &mut pager::MapperWithVirtualAllocator<T>,
+    ) {
         let current = self.0.load(Ordering::SeqCst);
         let new = unsafe {
             mapper.map(
@@ -388,19 +391,24 @@ impl VirtuallyReplaceable for BootBridge {
                 EntryFlags::WRITABLE,
             )
         };
-        self.deref_mut().memory_map.memory_map.replace(mapper);
-        self.deref_mut().kernel_elf.replace(mapper);
-        if let Some(dwarf) = self.deref_mut().dwarf_data.as_mut() {
-            dwarf.replace(mapper);
-        }
-        if let Some(packed) = self.deref_mut().packed.as_mut() {
-            packed.replace(mapper);
-        }
+        self.deref_mut().memory_map.identity_replace(mapper);
+        self.deref_mut().kernel_elf.identity_replace(mapper);
+        self.deref_mut().dwarf_data.identity_replace(mapper);
+        self.deref_mut().packed.identity_replace(mapper);
         *self = Self::new(new.as_mut_ptr())
     }
 }
 
-impl IdentityMappable for BootBridge {
+unsafe impl IdentityReplaceable for MemoryMap<'_> {
+    fn identity_replace<T: pager::Mapper>(
+        &mut self,
+        mapper: &mut pager::MapperWithVirtualAllocator<T>,
+    ) {
+        self.memory_map.identity_replace(mapper);
+    }
+}
+
+unsafe impl IdentityMappable for BootBridge {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         unsafe {
             mapper.identity_map_by_size(
@@ -414,7 +422,7 @@ impl IdentityMappable for BootBridge {
     }
 }
 
-impl IdentityMappable for MemoryMap<'_> {
+unsafe impl IdentityMappable for MemoryMap<'_> {
     fn map(&self, mapper: &mut impl pager::Mapper) {
         self.memory_map.map(mapper);
     }
