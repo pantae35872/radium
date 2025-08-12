@@ -102,14 +102,10 @@ impl Graphic {
             return;
         }
 
-        let glyph_data = match self.glyph_ids.get(glyph_id) {
-            Some(glyph) => glyph,
-            None => {
-                log!(Error, "Invalid glyph id");
-                return;
-            }
-        }
-        .clone();
+        let Some(glyph_data) = self.glyph_ids.get(glyph_id) else {
+            log!(Error, "Invalid glyph id");
+            return;
+        };
         let glyph = match self
             .glyphs
             .get(glyph_data.start..(glyph_data.start + glyph_data.size))

@@ -3,16 +3,16 @@ use boot_cfg_parser::toml::{parse_toml, parser::TomlValue};
 use bootbridge::RawData;
 use pager::address::PhysAddr;
 use uefi::{
+    CStr16,
     proto::{
         loaded_image::LoadedImage,
         media::{
             file::{File, FileInfo, FileMode, RegularFile},
             fs::SimpleFileSystem,
         },
-        network::{pxe::BaseCode, IpAddress},
+        network::{IpAddress, pxe::BaseCode},
     },
     table::boot::MemoryType,
-    CStr16,
 };
 
 use uefi_raw::protocol::file_system::FileAttribute;
@@ -78,9 +78,8 @@ impl LoaderFile {
             }
         };
 
-        let simple_file_system = match simple_fs_protocol.get_mut() {
-            Some(protocol) => protocol,
-            None => panic!("Could not get protocol from scoped protocol (Simple File System)"),
+        let Some(simple_file_system) = simple_fs_protocol.get_mut() else {
+            panic!("Could not get protocol from scoped protocol (Simple File System)");
         };
 
         let mut root_directory = match simple_file_system.open_volume() {
@@ -90,6 +89,7 @@ impl LoaderFile {
                 error
             ),
         };
+
         let mut buf = [0; 64];
         let filename = match CStr16::from_str_with_buf(path, &mut buf) {
             Ok(filename) => filename,

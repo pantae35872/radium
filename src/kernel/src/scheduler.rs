@@ -23,12 +23,12 @@ use rstd::drivcall::{
     DRIVCALL_UNPIN, DRIVCALL_VSYS_REG, DRIVCALL_VSYS_REQ, DRIVCALL_VSYS_RET, DRIVCALL_VSYS_WAIT,
 };
 use sentinel::log;
-use thread::{global_id_to_local_id, Thread, ThreadHandle, ThreadPool};
+use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 
 use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{FullInterruptStackFrame, InterruptIndex},
-    smp::{cpu_local, CoreId, MAX_CPU},
+    smp::{CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
 };
 
@@ -215,9 +215,8 @@ impl LocalScheduler {
     }
 
     pub fn check_vsys_request(&mut self) {
-        let vsys = match VSYSCALL_REQUEST[cpu_local().core_id().id()].peek() {
-            Some((vsys, _)) => vsys,
-            None => return,
+        let Some((vsys, _)) = VSYSCALL_REQUEST[cpu_local().core_id().id()].peek() else {
+            return;
         };
         if self.vsys_wait_request.contains_key(vsys) {
             let (vsys, requester) = VSYSCALL_REQUEST[cpu_local().core_id().id()]

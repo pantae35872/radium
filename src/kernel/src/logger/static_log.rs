@@ -5,8 +5,8 @@ use core::{
 };
 
 use crc::{
-    crc64::{self},
     Hasher64,
+    crc64::{self},
 };
 
 use crate::utils::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
@@ -277,9 +277,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         let mut have_orphan = false;
 
         let (mut master, data) = loop {
-            let (header, data) = match buffer.read() {
-                Some(e) => e,
-                None => return,
+            let Some((header, data)) = buffer.read() else {
+                return;
             };
 
             if header.length == 0 {
@@ -302,9 +301,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                 break;
             }
 
-            let (header, data) = match buffer.read() {
-                Some(e) => e,
-                None => break,
+            let Some((header, data)) = buffer.read() else {
+                break;
             };
 
             if header.length != 0 {
@@ -402,7 +400,7 @@ mod tests {
 
     use crate::logger::LogLevel;
 
-    use super::{StaticLog, DATA_SIZE_PER_CHUNK};
+    use super::{DATA_SIZE_PER_CHUNK, StaticLog};
 
     struct DummyFormatter<C: Fn(&str, usize)> {
         callback: C,

@@ -22,18 +22,28 @@ pub enum IcrBuilderError {
         "No Shorthand with level trigger mode is invalid, if the delivery mode is SMI, according to the intel specification"
     )]
     NoShorthandWithLevelTriggerAndSystemManagement,
-    #[error("Self Shorthand with anything other than fixed delivery mode is invalid, according to the intel specification")]
+    #[error(
+        "Self Shorthand with anything other than fixed delivery mode is invalid, according to the intel specification"
+    )]
     ToSelfNotFixed,
-    #[error("All including self Shorthand with anything other than fixed delivery mode is invalid, according to the intel specification")]
+    #[error(
+        "All including self Shorthand with anything other than fixed delivery mode is invalid, according to the intel specification"
+    )]
     AllIncludingSelfNotFixed,
-    #[error("Smi and startup with level trigger mode is not valid, according to the intel specification")]
+    #[error(
+        "Smi and startup with level trigger mode is not valid, according to the intel specification"
+    )]
     SMIAndStartUpWithLevel,
 
     #[error("No shorthand selected but no destination is provided")]
     NoDestinationProvidedWithNoShorthand,
-    #[error("Interrupt Vector must not be provided with init delivery mode, according to the intel specification")]
+    #[error(
+        "Interrupt Vector must not be provided with init delivery mode, according to the intel specification"
+    )]
     VectorWithInit,
-    #[error("Interrupt Vector is not provided when using other delivery mode other than init delivery mode")]
+    #[error(
+        "Interrupt Vector is not provided when using other delivery mode other than init delivery mode"
+    )]
     NoVectorProvidedNotInit,
     #[error("Assertion must be true when using delivery mode that is not init")]
     NotInitFalseAssert,
@@ -183,7 +193,7 @@ impl IcrBuilder {
                 let vector = match (vector, delivery_mode) {
                     (None, IpiDeliveryMode::Init) => 0,
                     (Some(_), IpiDeliveryMode::Init) => {
-                        return Err(IcrBuilderError::VectorWithInit)
+                        return Err(IcrBuilderError::VectorWithInit);
                     }
                     (Some(vector), _) => vector,
                     (None, _) => return Err(IcrBuilderError::NoVectorProvidedNotInit),
@@ -204,7 +214,7 @@ impl IcrBuilder {
                         | IpiDestinationShorthand::AllIncludingSelf,
                     ) => (0, false),
                     (None, IpiDestinationShorthand::NoShorthand) => {
-                        return Err(IcrBuilderError::NoDestinationProvidedWithNoShorthand)
+                        return Err(IcrBuilderError::NoDestinationProvidedWithNoShorthand);
                     }
                 };
                 if x2apic {
@@ -220,6 +230,6 @@ impl IcrBuilder {
                 icr.set_bits(18..20, shorthand as u8 as u64);
             }
         }
-        return Ok(icr);
+        Ok(icr)
     }
 }

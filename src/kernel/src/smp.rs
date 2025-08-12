@@ -434,13 +434,10 @@ impl Default for CpuLocalBuilder {
 }
 
 fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
-    let cpu_local = match builder.build() {
-        Some(e) => e,
-        None => {
-            log!(Error, "Failed to initialize Core: {core_id}");
-            interrupt::disable();
-            hlt_loop();
-        }
+    let Some(cpu_local) = builder.build() else {
+        log!(Error, "Failed to initialize Core: {core_id}");
+        interrupt::disable();
+        hlt_loop();
     };
     log!(
         Trace,

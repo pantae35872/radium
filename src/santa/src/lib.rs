@@ -128,9 +128,8 @@ impl<'a> Elf<'a> {
                 continue;
             }
 
-            let target_section = match self.reader.section_link(&section) {
-                Some(section) => section,
-                None => continue,
+            let Some(target_section) = self.reader.section_link(&section) else {
+                continue;
             };
 
             let target_name = self.reader.section_name(&target_section);
@@ -138,10 +137,10 @@ impl<'a> Elf<'a> {
                 continue;
             }
 
-            let rela_data = match self.reader.section_buffer(&section) {
-                Some(section) => section,
-                None => continue,
+            let Some(rela_data) = self.reader.section_buffer(&section) else {
+                continue;
             };
+
             let count = section.size() / section.entry_size();
 
             for i in 0..count {

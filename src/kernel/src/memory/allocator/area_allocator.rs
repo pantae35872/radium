@@ -39,9 +39,8 @@ impl<'a> AreaAllocator<'a, ()> {
 
 impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
     fn next_area(&mut self) {
-        let mut area = match self.areas.next() {
-            Some(area) => area,
-            None => return,
+        let Some(mut area) = self.areas.next() else {
+            return;
         };
         // Reserved the first entry if null
         if area.phys_start.is_null() {

@@ -22,9 +22,8 @@ fn main() {
 
     for symbol in obj_file.symbols().filter(|e| e.kind() == SymbolKind::Text) {
         let addr = symbol.address();
-        let name = match symbol.name() {
-            Ok(n) => n,
-            Err(_) => continue,
+        let Ok(name) = symbol.name() else {
+            continue;
         };
         let mut location_str = "unknown";
         let mut line_num = 0;

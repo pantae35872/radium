@@ -9,13 +9,13 @@ use crate::{
         self,
         madt::{MpsINTIFlags, MpsINTIPolarity, MpsINTITriggerMode},
     },
-    initialization_context::{select_context, InitializationContext, Stage3},
+    initialization_context::{InitializationContext, Stage3, select_context},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     utils::VolatileCell,
 };
 use sentinel::log;
 
-use super::{apic::ApicId, InterruptIndex};
+use super::{InterruptIndex, apic::ApicId};
 
 pub struct IoApicManager {
     io_apics: Vec<IoApic>,
@@ -160,16 +160,13 @@ impl IoApicManager {
     }
 
     pub fn redirect_legacy_irqs(&mut self, legacy_irq: u8, mut entry: RedirectionTableEntry) {
-        let source_override = match &self.sources_override[legacy_irq as usize] {
-            Some(source_override) => source_override,
-            None => {
-                log!(
-                    Error,
-                    "Couldn't redirect legacy irq {legacy_irq}, to vector {:?}",
-                    entry.vector
-                );
-                return;
-            }
+        let Some(source_override) = &self.sources_override[legacy_irq as usize] else {
+            log!(
+                Error,
+                "Couldn't redirect legacy irq {legacy_irq}, to vector {:?}",
+                entry.vector
+            );
+            return;
         };
         log!(
             Debug,
