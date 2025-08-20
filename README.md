@@ -33,6 +33,7 @@ Radium OS is currently in the very early stages of development and is no where n
 This project uses sub modules, YOU DON'T HAVE TO IN THIS BRANCH
 ```bash
 git clone https://github.com/pantae35872/radium
+git checkout reproduce # Make sure to checkout the reproduce branch 
 cd radium
 ```
 ## Build and Run
