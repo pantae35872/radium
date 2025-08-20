@@ -5,7 +5,7 @@
 First you need to build the project using make following the instruction below,
 when you ran the project using make run, it'll boot up a qemu virtual machine.
 
-Then you suppose to see the logs being flushed, and the last log will be the UB panic that causes by assert_unsafe_precondition in the compare bytes function.
+Then you suppose to see the logs being flushed, and the last log will be the UD invalid opcode panic that causes by assert_unsafe_precondition in the compare bytes function.
 
 The code that is causing the problem is in src/kernel/src/main.rs, you'll see the reproduction code there. you can remove the compare_bytes function at the end of the file, to prove to yourself that it is the problem.
 
