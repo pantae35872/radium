@@ -1,4 +1,6 @@
 use core::arch::asm;
+use core::fmt;
+use core::fmt::LowerHex;
 use core::sync::atomic::Ordering;
 
 use crate::PANIC_COUNT;
@@ -94,7 +96,7 @@ fn create_idt() -> &'static Idt {
             .set_handler_fn(page_fault_handler)
             .set_stack_index(GENERAL_STACK_INDEX);
         idt.invalid_opcode
-            .set_handler_fn(invalid_opcode)
+            .set_handler_addr(VirtAddr::new(invalid_opcode as u64))
             .set_stack_index(GENERAL_STACK_INDEX);
         idt.double_fault
             .set_handler_fn(double_fault_handler)
@@ -163,7 +165,6 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
     ctx.next(io_apic_manager)
 }
 
-#[derive(Debug)]
 #[repr(C)]
 pub struct FullInterruptStackFrame {
     pub r15: u64,
@@ -186,6 +187,40 @@ pub struct FullInterruptStackFrame {
     pub cpu_flags: RFlagsFlags,
     pub stack_pointer: VirtAddr,
     pub stack_segment: u64,
+}
+
+impl fmt::Debug for FullInterruptStackFrame {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        struct Hex<T: LowerHex>(T);
+        impl<T: LowerHex> fmt::Debug for Hex<T> {
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{:#x}", self.0)
+            }
+        }
+
+        let mut s = f.debug_struct("InterruptStackFrame");
+        s.field("r15", &Hex(self.r15));
+        s.field("r14", &Hex(self.r14));
+        s.field("r13", &Hex(self.r13));
+        s.field("r12", &Hex(self.r12));
+        s.field("r11", &Hex(self.r11));
+        s.field("r10", &Hex(self.r10));
+        s.field("r9", &Hex(self.r9));
+        s.field("r8", &Hex(self.r8));
+        s.field("rsi", &Hex(self.rsi));
+        s.field("rdi", &Hex(self.rdi));
+        s.field("rbp", &Hex(self.rbp));
+        s.field("rdx", &Hex(self.rdx));
+        s.field("rcx", &Hex(self.rcx));
+        s.field("rbx", &Hex(self.rbx));
+        s.field("rax", &Hex(self.rax));
+        s.field("instruction_pointer", &Hex(self.instruction_pointer));
+        s.field("code_segment", &self.code_segment);
+        s.field("cpu_flags", &Hex(self.cpu_flags));
+        s.field("stack_pointer", &Hex(self.stack_pointer));
+        s.field("stack_segment", &self.stack_segment);
+        s.finish()
+    }
 }
 
 #[inline(always)]
@@ -356,15 +391,69 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFra
 
 generate_interrupt_handlers!();
 
+macro_rules! handler {
+    ($vis:vis fn $fn_name: ident($stack_frame_name: ident : $stack_frame_ty: ty) { $($body:tt)* }) => {
+        paste::paste! {
+            #[unsafe(no_mangle)]
+            #[unsafe(naked)]
+            $vis extern "C" fn $fn_name() {
+                #[unsafe(no_mangle)]
+                fn [<handler_ $fn_name>]($stack_frame_name: $stack_frame_ty) {
+                    $($body)*
+                }
+
+                core::arch::naked_asm!(
+                    "push rax",
+                    "push rbx",
+                    "push rcx",
+                    "push rdx",
+                    "push rbp",
+                    "push rdi",
+                    "push rsi",
+                    "push r8",
+                    "push r9",
+                    "push r10",
+                    "push r11",
+                    "push r12",
+                    "push r13",
+                    "push r14",
+                    "push r15",
+                    "mov rdi, rsp",
+                    concat!("call ", stringify!([<handler_ $fn_name>])),
+                    "pop r15",
+                    "pop r14",
+                    "pop r13",
+                    "pop r12",
+                    "pop r11",
+                    "pop r10",
+                    "pop r9",
+                    "pop r8",
+                    "pop rsi",
+                    "pop rdi",
+                    "pop rbp",
+                    "pop rdx",
+                    "pop rcx",
+                    "pop rbx",
+                    "pop rax",
+                    // Return from interrupt
+                    "iretq",
+                );
+            }
+        }
+    };
+}
+
 fn eoi(idx: u8) {
     if idx != InterruptIndex::DriverCall.as_u8() {
         cpu_local().lapic().eoi();
     }
 }
 
-extern "x86-interrupt" fn invalid_opcode(stack_frame: InterruptStackFrame) {
-    panic!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
-}
+handler!(
+    fn invalid_opcode(stack_frame: FullInterruptStackFrame) {
+        panic!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
+    }
+);
 
 extern "x86-interrupt" fn general_protection_fault_handler(
     stack_frame: InterruptStackFrame,

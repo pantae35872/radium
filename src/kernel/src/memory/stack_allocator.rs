@@ -1,9 +1,10 @@
 use pager::{
+    EntryFlags, PAGE_SIZE,
     address::{Page, PageIter, VirtAddr},
     allocator::FrameAllocator,
-    paging::{table::RecurseLevel4, ActivePageTable},
-    EntryFlags, PAGE_SIZE,
+    paging::{ActivePageTable, table::RecurseLevel4},
 };
+use sentinel::log;
 
 use super::WithTable;
 
@@ -58,6 +59,13 @@ impl StackAllocator {
                 }
 
                 let top_of_stack = end.start_address().as_u64() + PAGE_SIZE;
+                log!(
+                    Trace,
+                    "Allocated stack, size: {size:#x}, top: {top:#x}, bottom: {bottom:#x}",
+                    bottom = start.start_address().as_u64(),
+                    top = top_of_stack,
+                    size = size_in_pages as u64 * PAGE_SIZE,
+                );
                 // SAFETY: We've already mapped the stack above as writeable and non executeable
                 Some(unsafe { Stack::new(VirtAddr::new(top_of_stack), start.start_address()) })
             }

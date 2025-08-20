@@ -17,6 +17,7 @@ const CHUNK_SIZE: usize = 128;
 const DATA_SIZE_PER_CHUNK: usize = CHUNK_SIZE - size_of::<ChunkHeader>();
 const HEADER_MAGIC: u64 = u64::from_le_bytes(*b"LogrMagi");
 
+/// TODO: REWRITE this, wtf was i'm on
 /// One chunk can respresent two possible modes, first is master, second is slave, if the
 /// chunk is a master it'll respresent one "log", if the chunk is a slave, it'll just contain the
 /// string bytes of the master it's owned to
@@ -154,8 +155,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         chunk_bytes[0..size_of::<ChunkHeader>()].copy_from_slice(&unsafe {
             core::mem::transmute_copy::<ChunkHeader, [u8; size_of::<ChunkHeader>()]>(&header)
         });
-        chunk_bytes[size_of::<ChunkHeader>()
-            ..size_of::<ChunkHeader>() + DATA_SIZE_PER_CHUNK.min(data.len())]
+        chunk_bytes[size_of::<ChunkHeader>()..][..DATA_SIZE_PER_CHUNK.min(data.len())]
             .copy_from_slice(data);
         digest.write(&chunk_bytes);
         header.crc64_sum = digest.sum64();
@@ -254,9 +254,10 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
             lost_bytes -= CHUNK_SIZE;
 
             let data = TryInto::<[u8; DATA_SIZE_PER_CHUNK]>::try_into(
-                &buffer[size_of::<ChunkHeader>()..size_of::<ChunkHeader>() + DATA_SIZE_PER_CHUNK],
+                &buffer[size_of::<ChunkHeader>()..][..DATA_SIZE_PER_CHUNK],
             )
             .unwrap();
+
             break (header, data);
         };
 
@@ -291,7 +292,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         let _ = writer.write_fmt(format_args!(
             "[{}] {}",
             master.level,
-            str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)],).unwrap()
+            str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap()
         ));
 
         master.length -= master.length.min(DATA_SIZE_PER_CHUNK as u64);
@@ -326,8 +327,6 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
 
         if have_orphan {
             Self::read_orphan(writer, buffer);
-        } else {
-            return;
         }
     }
 
@@ -355,7 +354,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         let _ = writer.write_fmt(format_args!(
             "[{}] {}",
             master_header.level,
-            str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)],)
+            str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)])
                 .unwrap()
         ));
 
@@ -394,13 +393,16 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
     }
 }
 
+#[repr(align(16))]
+struct AlignedArray<const N: usize>([u8; N]);
+
 #[cfg(test)]
 mod tests {
     use core::fmt::Write;
 
     use crate::logger::LogLevel;
 
-    use super::{DATA_SIZE_PER_CHUNK, StaticLog};
+    use super::*;
 
     struct DummyFormatter<C: Fn(&str, usize)> {
         callback: C,
