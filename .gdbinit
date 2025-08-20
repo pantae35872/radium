@@ -1,7 +1,8 @@
 shell make dbg-run &
 file build/kernel.bin
 target remote :1234
-break start
+break main.rs:48
+skip function external_interrupt_handler
 set disassembly-flavor intel
 shell sleep 0.5
 tu e

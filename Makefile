@@ -58,8 +58,6 @@ BOOT_INFO := bootinfo.toml
 TEST_BOOT_INFO := test_bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
 
-OVMF := OVMF.fd
-
 ifeq ($(BUILD_MODE), $(shell cat $(BUILD_MODE_FILE) 2>/dev/null))
     BUILD_MODE_CHANGED := 0
 else
@@ -72,7 +70,7 @@ endif
 -include $(PACKER_DEPS)
 -include $(DRIVER_DEPS)
 
-QEMU_FLAGS := -m 1G -bios OVMF.fd \
+QEMU_FLAGS := -m 1G -bios /usr/share/OVMF/x64/OVMF.4m.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
 	-device ide-hd,drive=disk,bus=ahci.0 -boot d -machine kernel_irqchip=split \
 	-smp cores=8 -usb -device usb-ehci,id=ehci -device usb-tablet,bus=usb-bus.0 \
@@ -107,18 +105,14 @@ endif
 $(DISK_FILE):
 	qemu-img create -f qcow2 $(DISK_FILE) 1G
 
-$(OVMF):
-	bash -c 'cd vendor/edk2 && source edksetup.sh && make -C BaseTools && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE'
-	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
-
-run: $(DISK_FILE) $(OVMF)
+run: $(DISK_FILE)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso
 
-dbg-run: $(DISK_FILE) $(OVMF)
+dbg-run: $(DISK_FILE)
 	@echo $$$$ > /tmp/dbg_make_pid.txt; \
 	qemu-system-x86_64 $(QEMU_FLAGS) -cpu Skylake-Client -display sdl -cdrom $(BUILD_DIR)/os.iso -S -s
 
-dbg-run-no-dbg: $(DISK_FILE) $(OVMF)
+dbg-run-no-dbg: $(DISK_FILE) 
 	qemu-system-x86_64 $(QEMU_FLAGS) -cpu Skylake-Client -display sdl -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -d int
 
 $(BUILD_MODE_FILE): $(BUILD_DIR) force_rebuild
@@ -182,8 +176,8 @@ $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
-release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
-debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
+release: $(BUILD_MODE_FILE) $(ISO_FILE)
+debug: $(BUILD_MODE_FILE) $(ISO_FILE) 
 tftp-debug: $(BUILD_MODE_FILE) $(FAT_IMG)
 	sudo rm -rf $(TFTP_DIR)/*
 	sudo mcopy -o -i $(FAT_IMG) -s ::* $(TFTP_DIR)
@@ -192,7 +186,7 @@ tftp-release: $(BUILD_MODE_FILE) $(FAT_IMG)
 	sudo mcopy -o -i $(FAT_IMG) -s ::* $(TFTP_DIR)
 
 # Get called by test_run.sh
-test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
+test-run: $(DISK_FILE) $(BUILD_MODE_FILE) $(ISO_FILE) 
 	@echo test > $(BUILD_MODE_FILE)
 	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -cdrom $(BUILD_DIR)/os.iso -device isa-debug-exit,iobase=0xf4,iosize=0x04 -display none ; \
 		status=$$?; \

@@ -3,6 +3,11 @@
 #![feature(custom_test_frameworks)]
 #![test_runner(radium::test_runner)]
 #![reexport_test_harness_main = "test_main"]
+#![feature(core_intrinsics)]
+#![feature(pointer_is_aligned_to)]
+#![recursion_limit = "512"]
+#![allow(internal_features)]
+#![allow(clippy::fn_to_numeric_cast)]
 
 extern crate alloc;
 extern crate core;
@@ -10,119 +15,38 @@ extern crate lazy_static;
 extern crate radium;
 extern crate spin;
 
-use core::arch::asm;
-
-use alloc::vec::Vec;
-use bootbridge::RawBootBridge;
-use radium::driver::uefi_runtime::uefi_runtime;
-use radium::logger::LOGGER;
-use radium::scheduler::{self, VsysThread, sleep, vsys_reg};
-use radium::smp::cpu_local;
-use radium::utils::mutex::Mutex;
-use radium::{hlt_loop, print, println, serial_print, serial_println};
-use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
-use sentinel::log;
-
-static TEST_MUTEX: Mutex<Vec<usize>> = Mutex::new(Vec::new());
+use core::alloc::Layout;
+use core::intrinsics::compare_bytes;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
-    radium::init(boot_bridge, kmain_thread);
+pub extern "C" fn start(boot_bridge: *mut bootbridge::RawBootBridge) -> ! {
+    radium::init(boot_bridge, compare_bytes_bug);
 }
 
-fn kmain_thread() {
-    println!("Hello, world!!!, from kmain thread");
+fn compare_bytes_bug() {
+    const SIZE: usize = 88; // Can be any size
 
-    scheduler::spawn(|| {
-        vsys_reg(1); // VSYS 1
-        loop {
-            log!(Trace, "Waiting for threads...");
-            let mut thread1 = VsysThread::new(1);
-            log!(
-                Trace,
-                "Handling 1: {}, with value sent: {}",
-                thread1.global_id(),
-                thread1.state.rcx
-            );
+    // Allocate 8-byte aligned memory
+    let layout_aligned = Layout::from_size_align(SIZE, 8).unwrap();
+    let aligned_ptr = unsafe { alloc::alloc::alloc(layout_aligned) };
 
-            thread1.state.rsi = thread1.state.rcx + 1;
-        }
-    });
+    // Allocate 1-byte aligned memory (guaranteed unaligned for >1)
+    let layout_unaligned = Layout::from_size_align(SIZE + 7, 1).unwrap(); // +7 to offset
+    let raw_unaligned = unsafe { alloc::alloc::alloc(layout_unaligned) };
+    let offset = raw_unaligned.align_offset(8);
+    let unaligned_ptr = unsafe { raw_unaligned.add((offset + 1) % 8) }; // misalign on purpose
 
-    sleep(1000);
-
-    for _ in 0..16 {
-        scheduler::spawn(|| {
-            for send in 0..10 {
-                log!(
-                    Trace,
-                    "Sending request from id {}...",
-                    cpu_local().current_thread_id()
-                );
-
-                let ret: u64;
-                let res: u64;
-                unsafe {
-                    asm!("int 0x90", in("rdi") DRIVCALL_VSYS_REQ, in("rax") 1, in("rcx") send, out("rsi") ret, lateout("rdi") res);
-                }
-
-                assert!(res != DRIVCALL_ERR_VSYSCALL_FULL);
-                assert_eq!(ret, send + 1);
-                log!(Trace, "Received: {ret}");
-            }
-        });
+    // Fill aligned_ptr with data
+    for i in 0..SIZE {
+        unsafe { *aligned_ptr.add(i) = i as u8 };
     }
 
-    let mut handles = Vec::new();
-    handles.push(scheduler::spawn(|| {
-        for i in 0..64 {
-            serial_println!(
-                "Thread {} [{i}]: popped {:?}",
-                cpu_local().current_thread_id(),
-                TEST_MUTEX.lock().pop()
-            );
-            sleep(100);
-        }
-    }));
-    handles.push(scheduler::spawn(|| {
-        for i in 0..64 {
-            serial_println!(
-                "Thread {} [{i}]: trying to push",
-                cpu_local().current_thread_id()
-            );
-            sleep(100);
-            TEST_MUTEX.lock().push(i * 10);
-            serial_println!("Thread {} [{i}]: pushed", cpu_local().current_thread_id());
-        }
-    }));
-
-    handles.push(scheduler::spawn(|| {
-        log!(
-            Debug,
-            "this should be thread 2, current tid {}",
-            cpu_local().current_thread_id()
-        );
-    }));
-
-    for handle in handles {
-        handle.join();
+    unsafe {
+        core::ptr::copy_nonoverlapping(aligned_ptr, unaligned_ptr, SIZE);
     }
 
-    log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
-    {
-        let ctx = cpu_local().ctx().lock();
-        let allocator = ctx.context().buddy_allocator();
-        log!(
-            Info,
-            "Usable memory left: {:.2} GB",
-            (allocator.max_mem() - allocator.allocated()) as f32 / (1 << 30) as f32 // TO GB
-        );
-    }
-    log!(Debug, "This should be the last log");
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    assert!(unaligned_ptr.is_aligned_to(1) && !unaligned_ptr.is_aligned_to(2));
+    assert!(aligned_ptr.is_aligned_to(8));
 
-    #[cfg(test)]
-    test_main();
-
-    hlt_loop();
+    unsafe { compare_bytes(aligned_ptr, unaligned_ptr, SIZE) };
 }
