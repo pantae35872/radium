@@ -44,7 +44,7 @@ boot_start:
   mov fs, ax
   mov gs, ax
 
-  jmp start ; jump to the rust kernel
+  call start ; call to the rust kernel
   hlt ; should be unreachable
 
 section .bss

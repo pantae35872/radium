@@ -326,7 +326,8 @@ impl ThreadState {
             rcx: 0,
             rbx: 0,
             rax: 0,
-            instruction_pointer: VirtAddr::new(hlt_loop as u64),
+            instruction_pointer: VirtAddr::new(hlt_loop as u64), // HLT thread is unaligned (should
+            // be fine tho)
             code_segment: 8, // FIXME: I'm too lazy i'll just assume it's eight
             cpu_flags: RFlagsFlags::InterruptEnable,
             stack_pointer: stack.top(),
@@ -576,7 +577,20 @@ impl ThreadPool {
     }
 }
 
-extern "C" fn thread_trampoline<F>(f_ptr: *mut F)
+#[unsafe(naked)]
+unsafe extern "C" fn thread_trampoline<F>(f_ptr: *mut F)
+where
+    F: FnOnce(),
+{
+    core::arch::naked_asm!(
+        "
+        call {tramp}
+        ",
+        tramp = sym thread_trampoline_inner::<F>,
+    )
+}
+
+extern "C" fn thread_trampoline_inner<F>(f_ptr: *mut F)
 where
     F: FnOnce(),
 {

@@ -109,6 +109,16 @@ impl Stack {
     /// and marked as **writeable and non executeable**
     pub unsafe fn new(top: VirtAddr, bottom: VirtAddr) -> Stack {
         assert!(top > bottom);
+        assert!(
+            top.as_u64().is_multiple_of(16),
+            "stack top must be 16-byte aligned (got {:#x})",
+            top.as_u64()
+        );
+        assert!(
+            bottom.as_u64().is_multiple_of(16),
+            "stack bottom must be 16-byte aligned (got {:#x})",
+            bottom.as_u64()
+        );
         Stack { top, bottom }
     }
 
