@@ -7,7 +7,7 @@ when you ran the project using make run, it'll boot up a qemu virtual machine.
 
 Then you suppose to see the logs being flushed, and the last log will be the UB panic that causes by assert_unsafe_precondition in the compare bytes function.
 
-The code that is causing the problem is in src/kernel/src/main.rs, uou'll see the reproduction code there. you can remove the compare_bytes function at the end of the file, to prove to yourself that it is the problem.
+The code that is causing the problem is in src/kernel/src/main.rs, you'll see the reproduction code there. you can remove the compare_bytes function at the end of the file, to prove to yourself that it is the problem.
 
 I've setup gdb script for you it's in .gdbinit, add it to your gdb safe path, build the project then run gdb and it'll start a virtual machine for you. wait for a few seconds (depending on the machine). you may hit CTRL-L if the tui is not loading. 
 
