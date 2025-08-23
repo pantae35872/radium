@@ -11,11 +11,9 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
-    radium::init(boot_bridge);
-    test_main();
-    loop {}
+    radium::init(boot_bridge, test_main);
 }
 
 #[test_case]

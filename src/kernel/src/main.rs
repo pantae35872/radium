@@ -31,6 +31,9 @@ pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
 }
 
 fn kmain_thread() {
+    #[cfg(test)]
+    test_main();
+
     println!("Hello, world!!!, from kmain thread");
 
     scheduler::spawn(|| {
@@ -120,9 +123,4 @@ fn kmain_thread() {
     }
     log!(Debug, "This should be the last log");
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
-
-    #[cfg(test)]
-    test_main();
-
-    hlt_loop();
 }

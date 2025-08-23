@@ -283,6 +283,11 @@ select_context! {
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
         }
 
+        pub fn buddy_allocator(&mut self) -> &mut BuddyAllocator<64> {
+            let ctx = self.context_mut();
+            &mut ctx.buddy_allocator
+        }
+
         pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.active_table

@@ -10,13 +10,11 @@ extern crate radium;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::memory::memory_controller;
+use radium::smp::cpu_local;
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
-    radium::init(boot_bridge);
-    test_main();
-    loop {}
+    radium::init(boot_bridge, test_main);
 }
 
 #[test_case]
@@ -26,9 +24,9 @@ fn simple_alloc() {
     let mut allocation_ranges = Vec::new();
 
     for &size in sizes.iter() {
-        let ptr = memory_controller().lock().physical_alloc(size);
+        let ptr = cpu_local().ctx().lock().buddy_allocator().allocate(size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
-        let ptr = ptr.unwrap().as_u64() as *mut u8;
+        let ptr = ptr.unwrap();
         assert!(ptr.is_aligned_to(size));
 
         let start = ptr as usize;
@@ -38,8 +36,12 @@ fn simple_alloc() {
         allocations.push((ptr, size));
     }
 
-    let large_size = memory_controller().lock().max_mem() * 8;
-    let ptr = memory_controller().lock().physical_alloc(large_size);
+    let large_size = cpu_local().ctx().lock().buddy_allocator().max_mem() * 8;
+    let ptr = cpu_local()
+        .ctx()
+        .lock()
+        .buddy_allocator()
+        .allocate(large_size);
     assert!(
         ptr.is_none(),
         "Allocation should fail for size: {}",
@@ -69,17 +71,21 @@ fn alloc_free() {
     let mut allocations = Vec::new();
 
     for &size in sizes.iter() {
-        let ptr = memory_controller().lock().physical_alloc(size);
+        let ptr = cpu_local().ctx().lock().buddy_allocator().allocate(size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
         allocations.push((ptr.unwrap(), size));
     }
 
     for &(ptr, size) in &allocations {
-        memory_controller().lock().physical_dealloc(ptr, size);
+        cpu_local()
+            .ctx()
+            .lock()
+            .buddy_allocator()
+            .dealloc(ptr, size);
     }
 
     for (i, &size) in sizes.iter().enumerate() {
-        let ptr = memory_controller().lock().physical_alloc(size);
+        let ptr = cpu_local().ctx().lock().buddy_allocator().allocate(size);
         assert!(ptr.is_some(), "Reallocation failed for size: {}", size);
         assert_eq!(
             ptr.unwrap(),
