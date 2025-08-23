@@ -19,7 +19,7 @@ use radium::logger::LOGGER;
 use radium::scheduler::{self, VsysThread, sleep, vsys_reg};
 use radium::smp::cpu_local;
 use radium::utils::mutex::Mutex;
-use radium::{hlt_loop, print, println, serial_print, serial_println};
+use radium::{print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
 use sentinel::log;
 
