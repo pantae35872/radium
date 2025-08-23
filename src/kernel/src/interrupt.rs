@@ -465,12 +465,10 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     );
 }
 
-#[allow(improper_ctypes_definitions)]
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
-    _no_return: (),
-) {
+) -> ! {
     panic!(
         "EXCEPTION: DOUBLE FAULT\n{:#?}, ERROR_CODE: {}",
         stack_frame, error_code

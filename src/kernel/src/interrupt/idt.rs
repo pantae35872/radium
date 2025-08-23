@@ -7,7 +7,7 @@ use core::{
 use bit_field::BitField;
 use pager::{
     address::VirtAddr,
-    registers::{lidt, Cr2, DescriptorTablePointer, SegmentSelector, CS},
+    registers::{CS, Cr2, DescriptorTablePointer, SegmentSelector, lidt},
 };
 
 use sentinel::log;
@@ -80,14 +80,12 @@ handler_fn_impl! {
         log!(Critical, "{:#?}", stack_frame);
         panic!("Unhandled Exceptions");
     }
-    // FIXME: Workarounds for not able to have ! return type, waiting for https://github.com/rust-lang/rust/pull/143075
-    NoReturnHandler => missing_gate_no_return(stack_frame: InterruptStackFrame, _no_return: ()) {
+    NoReturnHandler => missing_gate_no_return(stack_frame: InterruptStackFrame) -> ! {
         log!(Critical, "UNHANDLED CPU EXCEPTIONS");
         log!(Critical, "{:#?}", stack_frame);
         panic!("UNHANDLED CPU EXCEPTIONS");
     }
-    // FIXME: Workarounds for not able to have ! return type, waiting for https://github.com/rust-lang/rust/pull/143075 
-    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(stack_frame: InterruptStackFrame, error_code: u64, _no_return: ()) {
+    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
         log!(Critical, "UNHANDLED CPU EXCEPTIONS");
         log!(Critical, "Error Code: {:?}", error_code);
         log!(Critical, "{:#?}", stack_frame);
