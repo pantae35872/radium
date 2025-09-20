@@ -4,7 +4,7 @@ use core::ptr::Unique;
 
 use crate::allocator::FrameAllocator;
 
-use super::{Entry, EntryFlags, ENTRY_COUNT};
+use super::{ENTRY_COUNT, Entry, EntryFlags};
 
 macro_rules! impl_level_recurse {
     // Base case: nothing more to implement

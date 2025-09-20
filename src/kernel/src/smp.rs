@@ -277,6 +277,7 @@ impl Default for LocalInitializer {
     }
 }
 
+// TODO: This is the trash bin for all components, refactor this to have less coupling
 pub struct CpuLocal {
     core_id: CoreId,
     apic_id: ApicId,

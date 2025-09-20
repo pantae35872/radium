@@ -37,6 +37,7 @@ pub mod print;
 pub mod scheduler;
 pub mod serial;
 pub mod smp;
+pub mod userland;
 pub mod utils;
 
 use core::panic::PanicInfo;
