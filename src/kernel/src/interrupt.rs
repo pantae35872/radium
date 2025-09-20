@@ -28,7 +28,6 @@ use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
-use pager::registers::RFlagsFlags;
 use rstd::drivcall::DRIVCALL_EXIT;
 use rstd::drivcall::DRIVCALL_FUTEX_WAIT;
 use rstd::drivcall::DRIVCALL_FUTEX_WAKE;
@@ -185,7 +184,7 @@ pub struct FullInterruptStackFrame {
     pub rax: u64,
     pub instruction_pointer: VirtAddr,
     pub code_segment: u64,
-    pub cpu_flags: RFlagsFlags,
+    pub cpu_flags: RFlags,
     pub stack_pointer: VirtAddr,
     pub stack_segment: u64,
 }
@@ -241,7 +240,7 @@ pub fn without_interrupts<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let was_enable = RFlags::read().contains(RFlagsFlags::InterruptEnable);
+    let was_enable = RFlags::read().contains(RFlags::InterruptEnable);
     if was_enable {
         disable();
     }

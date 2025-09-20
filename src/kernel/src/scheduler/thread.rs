@@ -1,7 +1,7 @@
 use core::{fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use pager::{address::VirtAddr, registers::RFlagsFlags};
+use pager::{address::VirtAddr, registers::RFlags};
 use spin::RwLock;
 
 use crate::{
@@ -214,7 +214,7 @@ pub struct ThreadState {
     pub rax: u64,
     pub instruction_pointer: VirtAddr,
     pub code_segment: u64,
-    pub cpu_flags: RFlagsFlags,
+    pub cpu_flags: RFlags,
     pub stack_pointer: VirtAddr,
     pub stack_segment: u64,
 }
@@ -302,7 +302,7 @@ impl ThreadState {
             rax: 0,
             instruction_pointer: VirtAddr::new(thread_trampoline::<F> as u64),
             code_segment: cpu_local().code_seg().0.into(),
-            cpu_flags: RFlagsFlags::ID | RFlagsFlags::AlignmentCheck | RFlagsFlags::InterruptEnable,
+            cpu_flags: RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable,
             stack_pointer: context.stack.top(),
             stack_segment: 0,
         }
@@ -329,7 +329,7 @@ impl ThreadState {
             instruction_pointer: VirtAddr::new(hlt_loop as u64), // HLT thread is unaligned (should
             // be fine tho)
             code_segment: 8, // FIXME: I'm too lazy i'll just assume it's eight
-            cpu_flags: RFlagsFlags::InterruptEnable,
+            cpu_flags: RFlags::InterruptEnable,
             stack_pointer: stack.top(),
             stack_segment: 0,
         }

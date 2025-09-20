@@ -23,54 +23,10 @@ bitflags! {
     }
 
 
-    #[repr(transparent)]
-    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct RFlagsFlags: u64 {
-        const Carry = 1 << 0;
-        const ParityFlag = 1 << 2;
-        const AuxiliaryCarry = 1 << 4;
-        const Zero = 1 << 6;
-        const Sign = 1 << 7;
-        const Trap = 1 << 8;
-        const InterruptEnable = 1 << 9;
-        const Direction = 1 << 10;
-        const Overflow = 1 << 11;
-        const NestedTask = 1 << 14;
-        const Resume = 1 << 16;
-        const Virtual8086 = 1 << 17;
-        const AlignmentCheck = 1 << 18;
-        const VirtualInterrupt = 1 << 19;
-        const VirtualInterruptPending = 1 << 20;
-        const ID = 1 << 21;
-    }
-
-    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct Xcr0Flags: u64 {
-        /// x87 FPU/MMX support (must be 1)
-        const X87 = 1 << 0;
-        /// XSAVE support for MXCSR and XMM registers
-        const SEE = 1 << 1;
-        /// AVX enabled and XSAVE support for upper halves of YMM registers
-        const AVX = 1 << 2;
-        /// MPX enabled and XSAVE support for BND0-BND3 registers
-        const BNDREG = 1 << 3;
-        /// MPX enabled and XSAVE support for BNDCFGU and BNDSTATUS registers
-        const BINDCSR = 1 << 4;
-        /// AVX-512 enabled and XSAVE support for opmask registers k0-k7
-        const OPMASK = 1 << 5;
-        /// AVX-512 enabled and XSAVE support for upper halves of lower ZMM registers
-        const ZMM_HIGH256 = 1 << 6;
-        /// AVX-512 enabled and XSAVE support for upper ZMM registers
-        const HI16_ZMM = 1 << 7;
-        const PKRU = 1 << 9;
-    }
-
 }
 
-pub struct RFlags;
 pub struct KernelGsBase;
 pub struct GsBase;
-pub struct Xcr0;
 
 impl KernelGsBase {
     const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
@@ -495,35 +451,77 @@ impl Cr4 {
     }
 }
 
+bitflags! {
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct Xcr0: u64 {
+        /// x87 FPU/MMX support (must be 1)
+        const X87 = 1 << 0;
+        /// XSAVE support for MXCSR and XMM registers
+        const SEE = 1 << 1;
+        /// AVX enabled and XSAVE support for upper halves of YMM registers
+        const AVX = 1 << 2;
+        /// MPX enabled and XSAVE support for BND0-BND3 registers
+        const BNDREG = 1 << 3;
+        /// MPX enabled and XSAVE support for BNDCFGU and BNDSTATUS registers
+        const BINDCSR = 1 << 4;
+        /// AVX-512 enabled and XSAVE support for opmask registers k0-k7
+        const OPMASK = 1 << 5;
+        /// AVX-512 enabled and XSAVE support for upper halves of lower ZMM registers
+        const ZMM_HIGH256 = 1 << 6;
+        /// AVX-512 enabled and XSAVE support for upper ZMM registers
+        const HI16_ZMM = 1 << 7;
+        const PKRU = 1 << 9;
+    }
+}
+
 impl Xcr0 {
     #[inline(always)]
-    pub fn read() -> Xcr0Flags {
-        Xcr0Flags::from_bits_truncate(unsafe { _xgetbv(0) })
+    pub fn read() -> Self {
+        Self::from_bits_truncate(unsafe { _xgetbv(0) })
     }
 
     #[inline(always)]
-    pub unsafe fn write_or(flags: Xcr0Flags) {
-        let flags = Self::read() | flags;
-
-        unsafe {
-            Self::write(flags);
-        }
+    pub unsafe fn write_retained(self) {
+        unsafe { (Self::read() | self).write() }
     }
 
     #[inline(always)]
-    pub unsafe fn write(flags: Xcr0Flags) {
-        unsafe { _xsetbv(0, flags.bits()) };
+    pub unsafe fn write(self) {
+        unsafe { _xsetbv(0, self.bits()) };
+    }
+}
+
+bitflags! {
+    #[repr(transparent)]
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct RFlags: u64 {
+        const Carry = 1 << 0;
+        const ParityFlag = 1 << 2;
+        const AuxiliaryCarry = 1 << 4;
+        const Zero = 1 << 6;
+        const Sign = 1 << 7;
+        const Trap = 1 << 8;
+        const InterruptEnable = 1 << 9;
+        const Direction = 1 << 10;
+        const Overflow = 1 << 11;
+        const NestedTask = 1 << 14;
+        const Resume = 1 << 16;
+        const Virtual8086 = 1 << 17;
+        const AlignmentCheck = 1 << 18;
+        const VirtualInterrupt = 1 << 19;
+        const VirtualInterruptPending = 1 << 20;
+        const ID = 1 << 21;
     }
 }
 
 impl RFlags {
-    pub fn read() -> RFlagsFlags {
+    pub fn read() -> Self {
         let value: u64;
         unsafe {
             asm!("pushfq; pop {:r}", out(reg) value, options(nomem, preserves_flags));
         }
 
-        RFlagsFlags::from_bits_truncate(value)
+        Self::from_bits_truncate(value)
     }
 }
 

@@ -5,7 +5,7 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
     paging::{ActivePageTable, mapper::MapperWithAllocator, table::RecurseLevel4},
-    registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0, Xcr0Flags},
+    registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
 };
 use raw_cpuid::CpuId;
 use stack_allocator::StackAllocator;
@@ -88,20 +88,20 @@ pub unsafe fn prepare_flags() {
         enable_write_protect_bit();
 
         Cr4::write_or(Cr4Flags::OSXSAVE | Cr4Flags::OSFXS);
-        let mut flags = Xcr0Flags::empty();
+        let mut flags = Xcr0::empty();
         if esi.xcr0_supports_sse_128() {
-            flags |= Xcr0Flags::SEE;
+            flags |= Xcr0::SEE;
         }
         if esi.xcr0_supports_avx_256() {
-            flags |= Xcr0Flags::AVX;
+            flags |= Xcr0::AVX;
         }
         if esi.xcr0_supports_avx512_zmm_hi256() {
-            flags |= Xcr0Flags::ZMM_HIGH256;
+            flags |= Xcr0::ZMM_HIGH256;
         }
         if esi.xcr0_supports_avx512_zmm_hi16() {
-            flags |= Xcr0Flags::HI16_ZMM;
+            flags |= Xcr0::HI16_ZMM;
         }
-        Xcr0::write_or(flags);
+        flags.write_retained();
     }
 }
 

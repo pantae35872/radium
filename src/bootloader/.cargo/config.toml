@@ -4,8 +4,3 @@ panic-abort-tests = true
 
 [build]
 target = "x86_64-unknown-uefi"
-rustflags = [
-    "-Zthreads=2",
-]
-
-

@@ -6,11 +6,7 @@ use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
-use pager::{
-    EntryFlags, Mapper, PAGE_SIZE,
-    address::Page,
-    registers::{Xcr0, Xcr0Flags},
-};
+use pager::{EntryFlags, Mapper, PAGE_SIZE, address::Page, registers::Xcr0};
 
 use crate::{
     initialization_context::{InitializationContext, Stage2},
@@ -410,9 +406,9 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
             PixelFormat::BltOnly => unimplemented!("Blt only is not support"),
         };
         let memmove = match Xcr0::read() {
-            flags if flags.contains(Xcr0Flags::ZMM_HIGH256) => MemMoveSelected::AVX512,
-            flags if flags.contains(Xcr0Flags::AVX) => MemMoveSelected::AVX256,
-            flags if flags.contains(Xcr0Flags::SEE) => MemMoveSelected::MMX,
+            flags if flags.contains(Xcr0::ZMM_HIGH256) => MemMoveSelected::AVX512,
+            flags if flags.contains(Xcr0::AVX) => MemMoveSelected::AVX256,
+            flags if flags.contains(Xcr0::SEE) => MemMoveSelected::MMX,
             _ => panic!(
                 "CPU With no vector instruction is not supported, Need any of MMX, AVX256, AVX512"
             ),
