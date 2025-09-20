@@ -98,6 +98,7 @@ fn create_idt() -> &'static Idt {
         idt.invalid_opcode
             .set_handler_addr(VirtAddr::new(invalid_opcode as u64))
             .set_stack_index(GENERAL_STACK_INDEX);
+        idt.break_point.set_handler_fn(break_point);
         idt.double_fault
             .set_handler_fn(double_fault_handler)
             .set_stack_index(DOUBLE_FAULT_IST_INDEX);
@@ -464,6 +465,8 @@ extern "x86-interrupt" fn general_protection_fault_handler(
         stack_frame, error_code
     );
 }
+
+extern "x86-interrupt" fn break_point(_stack_frame: InterruptStackFrame) {}
 
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,

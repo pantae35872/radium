@@ -8,11 +8,14 @@ pub mod spin_mpsc;
 #[macro_export]
 macro_rules! inline_if {
     ($condition:expr, $true_expr:expr, $false_expr:expr) => {
-        if $condition {
-            $true_expr
-        } else {
-            $false_expr
-        }
+        if $condition { $true_expr } else { $false_expr }
+    };
+}
+
+#[macro_export]
+macro_rules! const_assert_eq {
+    ($left:expr, $right:expr $(,)?) => {
+        const _: () = assert!($left == $right);
     };
 }
 

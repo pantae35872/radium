@@ -12,6 +12,8 @@ use pager::{
 
 use sentinel::log;
 
+use crate::const_assert_eq;
+
 #[derive(Clone, Copy)]
 pub struct GateInterrupt;
 
@@ -276,9 +278,10 @@ bitflags! {
     }
 }
 
+const_assert_eq!(size_of::<Idt>(), 4096);
+
 impl Idt {
     pub fn new() -> Idt {
-        debug_assert_eq!(size_of::<Idt>(), 4096);
         Idt {
             divide_error: Gate::default(),
             debug_excepton: Gate::default(),

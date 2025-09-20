@@ -32,6 +32,8 @@ use crate::{
     utils::spin_mpsc::SpinMPSC,
 };
 
+mod dispatcher;
+mod process;
 mod thread;
 
 pub const MAX_VSYSCALL: usize = 64;
