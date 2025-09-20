@@ -5,7 +5,7 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
     paging::{ActivePageTable, mapper::MapperWithAllocator, table::RecurseLevel4},
-    registers::{Cr0, Cr0Flags, Cr4, Cr4Flags, Efer, EferFlags, Xcr0, Xcr0Flags},
+    registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0, Xcr0Flags},
 };
 use raw_cpuid::CpuId;
 use stack_allocator::StackAllocator;
@@ -130,11 +130,11 @@ unsafe fn init_allocator(ctx: &InitializationContext<Stage0>) -> BuddyAllocator<
 }
 
 unsafe fn enable_write_protect_bit() {
-    unsafe { Cr0::write_or(Cr0Flags::WriteProtect) };
+    unsafe { Cr0::WriteProtect.write_retained() };
 }
 
 unsafe fn enable_nxe_bit() {
-    unsafe { Efer::write_or(EferFlags::NoExecuteEnable) };
+    unsafe { Efer::NoExecuteEnable.write_retained() };
 }
 
 static GENERAL_VIRTUAL_ALLOCATOR: VirtualAllocator = VirtualAllocator::new(

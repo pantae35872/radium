@@ -12,12 +12,11 @@ use context::{InitializationContext, Stage0};
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::{load_kernel_elf, load_kernel_infos};
 use kernel_mapper::{finialize_mapping, prepare_kernel_page};
-use pager::registers::{Cr0, Cr0Flags, Efer, EferFlags};
-use sentinel::{set_logger, LogLevel, LoggerBackend};
+use pager::registers::{Cr0, Efer};
+use sentinel::{LogLevel, LoggerBackend, set_logger};
 use uefi::{
-    entry,
-    table::{boot::MemoryType, Boot, SystemTable},
-    Handle, Status,
+    Handle, Status, entry,
+    table::{Boot, SystemTable, boot::MemoryType},
 };
 
 use uefi_services::{print, println};
@@ -108,8 +107,8 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let boot_bridge = stage6.build_bridge(bootbridge_builder);
 
     unsafe {
-        Efer::write_or(EferFlags::NoExecuteEnable);
-        Cr0::write_or(Cr0Flags::WriteProtect);
+        Efer::NoExecuteEnable.write_retained();
+        Cr0::WriteProtect.write_retained();
         asm!(
         r#"
             mov cr3, {}

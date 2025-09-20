@@ -10,11 +10,6 @@ use crate::{
     address::{Frame, PhysAddr, VirtAddr},
 };
 
-/// Respresent a [`Cr3`] register in a processor
-///
-/// [`Cr3`]: <https://wiki.osdev.org/CPU_Registers_x86#CR3>
-pub struct Cr3;
-
 bitflags! {
     /// Contains the [`cr3 flags`] (bits 3-4)
     ///
@@ -27,48 +22,6 @@ bitflags! {
         const PAGE_LEVEL_CACHE_DISABLE = 1 << 4;
     }
 
-    /// Contains the [`cr0 flags`] (bits 3-4)
-    ///
-    /// [`cr0 flags`]: <https://wiki.osdev.org/CPU_Registers_x86#CR0>
-    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct Cr0Flags: u64 {
-        // TODO: Document this
-        const ProtectedModeEnable = 1 << 0;
-        const MonitorCoProcessor = 1 << 1;
-        const Emulation = 1 << 2;
-        const TaskSwitched = 1 << 3;
-        const ExtensionType = 1 << 4;
-        const NumbericError = 1 << 5;
-        const WriteProtect = 1 << 16;
-        const AlignmentMask = 1 << 18;
-        const NotWriteThrough = 1 << 29;
-        const CacheDisable = 1 << 30;
-        const Paging = 1 << 31;
-    }
-
-    /// Contains the [`efer flags`] (bits 3-4)
-    ///
-    /// [`efer flags`]: <https://wiki.osdev.org/CPU_Registers_x86-64#IA32_EFER>
-    /// [`efer flags`]: <https://en.wikipedia.org/wiki/Control_register#EFER>
-    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct EferFlags: u64 {
-        const SystemCallExtensions = 1 << 0;
-        const DPE = 1 << 1; // AMD K6 only
-        const SEWBED = 1 << 2; // AMD K6 only
-        const GEWBED = 1 << 3; // AMD K6 only
-        const L2CacheDisable = 1 << 3; // AMD K6 only
-        const LongModeEnable = 1 << 8;
-        const LongModeActive = 1 << 10;
-        const NoExecuteEnable = 1 << 11;
-        const SecureVirtualMachineEnable = 1 << 12;
-        const LongModeSegmentLimitEnable = 1 << 13;
-        const FastFXSR = 1 << 14;
-        const TranslationCacheExtenstion = 1 << 15;
-        const MCOMMIT = 1 << 17;
-        const INTWB = 1 << 18;
-        const UpperAddressIgnoreEnable = 1 << 20;
-        const AutomaticIBRSEnable = 1 << 21;
-    }
 
     #[repr(transparent)]
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
@@ -112,6 +65,342 @@ bitflags! {
         const PKRU = 1 << 9;
     }
 
+}
+
+pub struct RFlags;
+pub struct KernelGsBase;
+pub struct GsBase;
+pub struct Xcr0;
+
+impl KernelGsBase {
+    const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
+
+    /// Read from the kernel gs base msr as [`VirtAddr`]
+    pub fn read() -> VirtAddr {
+        unsafe { VirtAddr::new(Self::IA32_KERNEL_GS_MSR.read()) }
+    }
+
+    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
+    /// memory and mapped
+    pub unsafe fn write(addr: VirtAddr) {
+        unsafe { Self::IA32_KERNEL_GS_MSR.write(addr.as_u64()) };
+    }
+}
+
+impl GsBase {
+    const IA32_GS_MSR: Msr = Msr::new(0xc0000101);
+
+    /// Read from the kernel gs base msr as [`VirtAddr`]
+    pub fn read() -> VirtAddr {
+        unsafe { VirtAddr::new(Self::IA32_GS_MSR.read()) }
+    }
+
+    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
+    /// memory and mapped
+    pub unsafe fn write(addr: VirtAddr) {
+        unsafe { Self::IA32_GS_MSR.write(addr.as_u64()) };
+    }
+}
+
+/// Respresent a [`Cr3`] register in a processor
+///
+/// [`Cr3`]: <https://wiki.osdev.org/CPU_Registers_x86#CR3>
+pub struct Cr3;
+
+impl Cr3 {
+    /// Read a [`Frame`] and [`Cr3Flags`] from the cr3 register
+    pub fn read() -> (Frame, Cr3Flags) {
+        let result: u64;
+        // SAFETY: We reading the cr3 is safe we're not setting it
+        unsafe {
+            asm!("mov {}, cr3", out(reg) result, options(nostack));
+        }
+
+        let flags = result & 0xFFF;
+        let address = result & !0xFFF; // cut off the first 12 bits (exclusive)
+
+        (
+            Frame::containing_address(PhysAddr::new_truncate(address)),
+            Cr3Flags::from_bits_truncate(flags),
+        )
+    }
+
+    /// Reload the cr3 invalidating all tlb
+    pub fn reload() {
+        let (frame, flags) = Cr3::read();
+        unsafe { Cr3::write(frame, flags) }
+    }
+
+    /// Write into cr3 register containing the provided [`Frame`] and [`Cr3Flags`]
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that changing this does not causes any side effects and the frame is
+    /// valid
+    pub unsafe fn write(frame: Frame, flags: Cr3Flags) {
+        let value = frame.start_address().as_u64() | flags.bits();
+        unsafe {
+            asm!("mov cr3, {0:r}", in(reg) value, options(nostack));
+        }
+    }
+}
+
+/// Contains a value called Page Fault Linear Address (PFLA). When a page fault occurs,
+/// the address the program attempted to access is stored in the [`CR2`] register.
+///
+/// [`CR2`]: <https://wiki.osdev.org/CPU_Registers_x86#CR3>
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct Cr2(VirtAddr);
+
+impl Cr2 {
+    /// Read from the cr2 flags
+    #[inline]
+    pub fn read() -> Self {
+        let result: u64;
+        // SAFETY: We reading the cr2 is safe we're not setting it
+        unsafe {
+            asm!("mov {}, cr2", out(reg) result, options(nostack, preserves_flags));
+        }
+
+        Self(VirtAddr::new(result))
+    }
+
+    #[inline(always)]
+    pub fn addr(&self) -> VirtAddr {
+        self.0
+    }
+}
+
+bitflags! {
+   /// Contains the [`cr0 flags`] (bits 3-4)
+   ///
+   /// [`cr0 flags`]: <https://wiki.osdev.org/CPU_Registers_x86#CR0>
+   #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+   pub struct Cr0: u64 {
+       /// If 1, system is in protected mode, else, system is in real mode
+       const ProtectedModeEnable = 1 << 0;
+       /// Controls interaction of WAIT/FWAIT instructions with TS flag in CR0
+       const MonitorCoProcessor = 1 << 1;
+       /// If set, no x87 floating-point unit present, if clear, x87 FPU present
+       const Emulation = 1 << 2;
+       /// Allows saving x87 task context upon a task switch only after x87 instruction used
+       const TaskSwitched = 1 << 3;
+       /// On the 386, it allowed to specify whether the external math coprocessor was an 80287 or 80387
+       const ExtensionType = 1 << 4;
+       /// On the 486 and later, enable internal x87 floating point error reporting when set, else enable PC-style error reporting from the internal floating-point unit using external logic
+       const NumbericError = 1 << 5;
+       /// When set, the CPU cannot write to read-only pages when privilege level is 0
+       const WriteProtect = 1 << 16;
+       /// Alignment check enabled if AM set, AC flag (in EFLAGS register) set, and privilege level is 3
+       const AlignmentMask = 1 << 18;
+       /// Globally enables/disable write-through caching
+       const NotWriteThrough = 1 << 29;
+       /// Globally enables/disable the memory cache
+       const CacheDisable = 1 << 30;
+       /// If 1, enable paging and use the CR3 register, else disable paging.
+       const Paging = 1 << 31;
+   }
+}
+
+impl Cr0 {
+    /// Read from the cr0 into flags
+    #[inline(always)]
+    pub fn read() -> Self {
+        let result: u64;
+        // SAFETY: We reading the cr0 is safe we're not setting it
+        unsafe {
+            asm!("mov {}, cr0", out(reg) result, options(nostack, preserves_flags));
+        }
+
+        Self::from_bits_truncate(result)
+    }
+
+    /// Write to the register but retain the origial bit if it was set
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects,
+    /// or unset the flags that keep the system running
+    #[inline(always)]
+    pub unsafe fn write_retained(self) {
+        unsafe {
+            asm!("mov cr0, {}", in(reg) (Self::read() | self).bits(), options(nostack, preserves_flags));
+        }
+    }
+
+    /// Write the flags into the cr0 literally
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects,
+    /// or unset the flags that keep the system running
+    #[inline(always)]
+    pub unsafe fn write(self) {
+        unsafe {
+            asm!("mov cr0, {}", in(reg) self.bits(), options(nostack, preserves_flags));
+        }
+    }
+}
+
+pub struct CS;
+
+impl CS {
+    /// Read from the cs segment register
+    #[inline(always)]
+    pub fn read() -> SegmentSelector {
+        let result: u16;
+        // SAFETY: We reading the cs is safe we're not setting it
+        unsafe {
+            asm!("mov {0:x}, cs", out(reg) result, options(nostack, nomem, preserves_flags));
+        }
+
+        SegmentSelector(result)
+    }
+
+    #[inline(always)]
+    pub unsafe fn set(sel: SegmentSelector) {
+        unsafe {
+            asm!(
+                "push {sel}",
+                "lea {tmp}, [55f + rip]",
+                "push {tmp}",
+                "retfq",
+                "55:",
+                sel = in(reg) u64::from(sel.0),
+                tmp = lateout(reg) _,
+                options(preserves_flags),
+            );
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
+pub struct SegmentSelector(pub u16);
+
+impl SegmentSelector {
+    pub fn new(index: u16, rpl: PrivilegeLevel) -> Self {
+        Self(index << 3 | rpl.as_u16())
+    }
+
+    pub fn index(&self) -> u16 {
+        self.0 >> 3
+    }
+
+    pub fn privilege_level(&self) -> PrivilegeLevel {
+        PrivilegeLevel::from_u16_truncate(self.0)
+    }
+}
+
+#[derive(Debug)]
+pub struct Msr(u32);
+
+impl Msr {
+    #[inline(always)]
+    pub const fn new(msr: u32) -> Self {
+        Self(msr)
+    }
+
+    #[inline(always)]
+    pub unsafe fn read(&self) -> u64 {
+        let (high, low): (u32, u32);
+        unsafe {
+            asm!(
+                "rdmsr",
+                in("ecx") self.0,
+                out("eax") low, out("edx") high,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+        ((high as u64) << 32) | (low as u64)
+    }
+
+    #[inline(always)]
+    pub unsafe fn write(&self, value: u64) {
+        let low = value as u32;
+        let high = (value >> 32) as u32;
+
+        unsafe {
+            asm!(
+                "wrmsr",
+                in("ecx") self.0,
+                in("eax") low, in("edx") high,
+                options(nomem, nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+bitflags! {
+    /// Contains the [`efer flags`] (bits 3-4)
+    ///
+    /// [`efer flags`]: <https://wiki.osdev.org/CPU_Registers_x86-64#IA32_EFER>
+    /// [`efer flags`]: <https://en.wikipedia.org/wiki/Control_register#EFER>
+    #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+    pub struct Efer: u64 {
+        const SystemCallExtensions = 1 << 0;
+        const DPE = 1 << 1; // AMD K6 only
+        const SEWBED = 1 << 2; // AMD K6 only
+        const GEWBED = 1 << 3; // AMD K6 only
+        const L2CacheDisable = 1 << 3; // AMD K6 only
+        const LongModeEnable = 1 << 8;
+        const LongModeActive = 1 << 10;
+        const NoExecuteEnable = 1 << 11;
+        const SecureVirtualMachineEnable = 1 << 12;
+        const LongModeSegmentLimitEnable = 1 << 13;
+        const FastFXSR = 1 << 14;
+        const TranslationCacheExtenstion = 1 << 15;
+        const MCOMMIT = 1 << 17;
+        const INTWB = 1 << 18;
+        const UpperAddressIgnoreEnable = 1 << 20;
+        const AutomaticIBRSEnable = 1 << 21;
+    }
+}
+
+impl Efer {
+    pub const IA32_EFER_MSR: Msr = Msr::new(0xC0000080);
+
+    /// Read from the [`Efer::IA32_EFER_MSR`] truncate the reserved bits
+    pub fn read() -> Self {
+        Self::from_bits_truncate(unsafe { Self::IA32_EFER_MSR.read() })
+    }
+
+    /// Read the efer msr and then perform bitwise or with the current value, and write that value back
+    /// if you somehow create an invalid [`EferFlags`] that contains reserved bits, and crash that
+    /// on you ¯\_(ツ)_/¯ (happens to me once)
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects
+    #[inline(always)]
+    pub unsafe fn write_retained(self) {
+        unsafe {
+            (Self::read() | self).write();
+        }
+    }
+    /// Write the current flags into the msr not preserving any values, if you somehow create an invalid [`EferFlags`]
+    /// that contains reserved bits, and crash that on you ¯\_(ツ)_/¯
+    ///
+    /// # Safety
+    ///
+    /// the caller must ensure that the provided flags does not cause any unsafe side effects
+    #[inline(always)]
+    pub unsafe fn write(self) {
+        let msr = Self::IA32_EFER_MSR;
+        unsafe { msr.write(self.bits()) };
+    }
+}
+
+bitflags! {
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
     pub struct Cr4Flags: u64 {
         /// Virtual 8086 Mode Extensions
@@ -163,269 +452,7 @@ bitflags! {
     }
 }
 
-#[derive(Debug)]
-pub struct Msr(u32);
-pub struct Cr0;
-pub struct Cr2;
 pub struct Cr4;
-pub struct RFlags;
-pub struct Efer;
-pub struct KernelGsBase;
-pub struct GsBase;
-pub struct CS;
-pub struct Xcr0;
-
-#[derive(Clone, Copy)]
-#[repr(transparent)]
-pub struct SegmentSelector(pub u16);
-
-impl KernelGsBase {
-    const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
-
-    /// Read from the kernel gs base msr as [`VirtAddr`]
-    pub fn read() -> VirtAddr {
-        unsafe { VirtAddr::new(Self::IA32_KERNEL_GS_MSR.read()) }
-    }
-
-    /// Write to the kernel gs base msr from the [`VirtAddr`]
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
-    /// memory and mapped
-    pub unsafe fn write(addr: VirtAddr) {
-        unsafe { Self::IA32_KERNEL_GS_MSR.write(addr.as_u64()) };
-    }
-}
-
-impl GsBase {
-    const IA32_GS_MSR: Msr = Msr::new(0xc0000101);
-
-    /// Read from the kernel gs base msr as [`VirtAddr`]
-    pub fn read() -> VirtAddr {
-        unsafe { VirtAddr::new(Self::IA32_GS_MSR.read()) }
-    }
-
-    /// Write to the kernel gs base msr from the [`VirtAddr`]
-    ///
-    /// # Safety
-    ///
-    /// Caller must ensure that the provided virtual address is pointed to the correctly allocated
-    /// memory and mapped
-    pub unsafe fn write(addr: VirtAddr) {
-        unsafe { Self::IA32_GS_MSR.write(addr.as_u64()) };
-    }
-}
-
-impl Cr3 {
-    /// Read a [`Frame`] and [`Cr3Flags`] from the cr3 register
-    pub fn read() -> (Frame, Cr3Flags) {
-        let result: u64;
-        // SAFETY: We reading the cr3 is safe we're not setting it
-        unsafe {
-            asm!("mov {}, cr3", out(reg) result, options(nostack));
-        }
-
-        let flags = result & 0xFFF;
-        let address = result & !0xFFF; // cut off the first 12 bits (exclusive)
-
-        (
-            Frame::containing_address(PhysAddr::new_truncate(address)),
-            Cr3Flags::from_bits_truncate(flags),
-        )
-    }
-
-    /// Reload the cr3 invalidating all tlb
-    pub fn reload() {
-        let (frame, flags) = Cr3::read();
-        unsafe { Cr3::write(frame, flags) }
-    }
-
-    /// Write into cr3 register containing the provided [`Frame`] and [`Cr3Flags`]
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that changing this does not causes any side effects and the frame is
-    /// valid
-    pub unsafe fn write(frame: Frame, flags: Cr3Flags) {
-        let value = frame.start_address().as_u64() | flags.bits();
-        unsafe {
-            asm!("mov cr3, {0:r}", in(reg) value, options(nostack));
-        }
-    }
-}
-
-impl Cr2 {
-    /// Read from the cr0 flags
-    #[inline(always)]
-    pub fn read() -> VirtAddr {
-        let result: u64;
-        // SAFETY: We reading the cr0 is safe we're not setting it
-        unsafe {
-            asm!("mov {}, cr2", out(reg) result, options(nostack, preserves_flags));
-        }
-
-        VirtAddr::new(result)
-    }
-}
-
-impl Cr0 {
-    /// Read from the cr0 into flags
-    #[inline(always)]
-    pub fn read() -> Cr0Flags {
-        let result: u64;
-        // SAFETY: We reading the cr0 is safe we're not setting it
-        unsafe {
-            asm!("mov {}, cr0", out(reg) result, options(nostack, preserves_flags));
-        }
-
-        Cr0Flags::from_bits_truncate(result)
-    }
-
-    /// Read the cr0 and then perform bitwise or with the provided flags, and write that value back
-    ///
-    /// # Safety
-    ///
-    /// the caller must ensure that the provided flags does not cause any unsafe side effects
-    #[inline(always)]
-    pub unsafe fn write_or(flags: Cr0Flags) {
-        let flags = Self::read() | flags;
-
-        unsafe {
-            Cr0::write(flags);
-        }
-    }
-
-    /// Write the flags into the cr0 literally
-    ///
-    /// # Safety
-    ///
-    /// the caller must ensure that the provided flags does not cause any unsafe side effects,
-    /// or unset the flags that keep the system running
-    #[inline(always)]
-    pub unsafe fn write(flags: Cr0Flags) {
-        unsafe {
-            asm!("mov cr0, {}", in(reg) flags.bits(), options(nostack, preserves_flags));
-        }
-    }
-}
-
-impl SegmentSelector {
-    pub fn new(index: u16, rpl: PrivilegeLevel) -> Self {
-        Self(index << 3 | rpl.as_u16())
-    }
-
-    pub fn index(&self) -> u16 {
-        self.0 >> 3
-    }
-
-    pub fn privilege_level(&self) -> PrivilegeLevel {
-        PrivilegeLevel::from_u16_truncate(self.0)
-    }
-}
-
-impl CS {
-    /// Read from the cs segment register
-    #[inline(always)]
-    pub fn read() -> SegmentSelector {
-        let result: u16;
-        // SAFETY: We reading the cs is safe we're not setting it
-        unsafe {
-            asm!("mov {0:x}, cs", out(reg) result, options(nostack, nomem, preserves_flags));
-        }
-
-        SegmentSelector(result)
-    }
-
-    #[inline(always)]
-    pub unsafe fn set(sel: SegmentSelector) {
-        unsafe {
-            asm!(
-                "push {sel}",
-                "lea {tmp}, [55f + rip]",
-                "push {tmp}",
-                "retfq",
-                "55:",
-                sel = in(reg) u64::from(sel.0),
-                tmp = lateout(reg) _,
-                options(preserves_flags),
-            );
-        }
-    }
-}
-
-impl Msr {
-    #[inline(always)]
-    pub const fn new(msr: u32) -> Self {
-        Self(msr)
-    }
-
-    #[inline(always)]
-    pub unsafe fn read(&self) -> u64 {
-        let (high, low): (u32, u32);
-        unsafe {
-            asm!(
-                "rdmsr",
-                in("ecx") self.0,
-                out("eax") low, out("edx") high,
-                options(nomem, nostack, preserves_flags),
-            );
-        }
-        ((high as u64) << 32) | (low as u64)
-    }
-
-    #[inline(always)]
-    pub unsafe fn write(&self, value: u64) {
-        let low = value as u32;
-        let high = (value >> 32) as u32;
-
-        unsafe {
-            asm!(
-                "wrmsr",
-                in("ecx") self.0,
-                in("eax") low, in("edx") high,
-                options(nomem, nostack, preserves_flags),
-            );
-        }
-    }
-}
-
-impl Efer {
-    pub const IA32_EFER_MSR: Msr = Msr::new(0xC0000080);
-
-    /// Read from the [`Efer::IA32_EFER_MSR`] truncate the reserved bits
-    pub fn read() -> EferFlags {
-        EferFlags::from_bits_truncate(unsafe { Self::IA32_EFER_MSR.read() })
-    }
-
-    /// Read the efer msr and then perform bitwise or with the provided flags, and write that value back
-    /// if you somehow create an invalid [`EferFlags`] that contains reserved bits, and crash that
-    /// on you ¯\_(ツ)_/¯ (happens to me once)
-    ///
-    /// # Safety
-    ///
-    /// the caller must ensure that the provided flags does not cause any unsafe side effects
-    #[inline(always)]
-    pub unsafe fn write_or(flags: EferFlags) {
-        let flags = Self::read() | flags;
-
-        unsafe {
-            Self::write(flags);
-        }
-    }
-
-    /// Write the flags into the msr not preserving any values, if you somehow create an invalid [`EferFlags`]
-    /// that contains reserved bits, and crash that on you ¯\_(ツ)_/¯
-    ///
-    /// # Safety
-    ///
-    /// the caller must ensure that the provided flags does not cause any unsafe side effects
-    #[inline(always)]
-    pub unsafe fn write(flags: EferFlags) {
-        let msr = Self::IA32_EFER_MSR;
-        unsafe { msr.write(flags.bits()) };
-    }
-}
 
 impl Cr4 {
     /// Read from the cr4 into flags
