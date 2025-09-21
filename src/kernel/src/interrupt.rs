@@ -166,7 +166,8 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
 }
 
 #[repr(C)]
-pub struct FullInterruptStackFrame {
+#[derive(Clone)]
+pub struct ExtendedInterruptStackFrame {
     pub r15: u64,
     pub r14: u64,
     pub r13: u64,
@@ -189,7 +190,7 @@ pub struct FullInterruptStackFrame {
     pub stack_segment: u64,
 }
 
-impl fmt::Debug for FullInterruptStackFrame {
+impl fmt::Debug for ExtendedInterruptStackFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         struct Hex<T: LowerHex>(T);
         impl<T: LowerHex> fmt::Debug for Hex<T> {
@@ -254,7 +255,7 @@ where
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn external_interrupt_handler(stack_frame: &mut FullInterruptStackFrame, idx: u8) {
+extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
     if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
         eoi(idx);
         disable();
@@ -450,7 +451,7 @@ fn eoi(idx: u8) {
 }
 
 handler!(
-    fn invalid_opcode(stack_frame: FullInterruptStackFrame) {
+    fn invalid_opcode(stack_frame: ExtendedInterruptStackFrame) {
         panic!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
     }
 );

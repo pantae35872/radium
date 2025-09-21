@@ -82,6 +82,7 @@ where
     gdt::init_gdt(&mut phase3);
     let mut final_phase = interrupt::init(phase3);
     scheduler::init(&mut final_phase);
+    userland::init(&mut final_phase);
     pit::init(&mut final_phase);
     smp::init_aps(final_phase);
 

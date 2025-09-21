@@ -33,6 +33,7 @@ use crate::{
     log,
     memory::{self},
     scheduler::{LocalScheduler, pinned, sleep},
+    userland::control::ControlPipeline,
 };
 use spin::Mutex;
 
@@ -286,6 +287,7 @@ pub struct CpuLocal {
     thread_id: usize,
     ticks_per_ms: Option<usize>,
     local_scheduler: LocalScheduler,
+    pipeline: ControlPipeline,
     ctx: Arc<Mutex<InitializationContext<End>>>,
     pub last_interrupt_no: u8,
     pub is_in_isr: bool,
@@ -298,6 +300,11 @@ impl CpuLocal {
     #[inline]
     pub fn core_count(&self) -> usize {
         self.core_count
+    }
+
+    #[inline]
+    pub fn pipeline(&mut self) -> &mut ControlPipeline {
+        &mut self.pipeline
     }
 
     #[inline]
@@ -355,6 +362,7 @@ pub struct CpuLocalBuilder {
     core_count: Option<usize>,
     initialization_contex: Option<Arc<Mutex<InitializationContext<End>>>>,
     local_scheduler: Option<LocalScheduler>,
+    pipeline: Option<ControlPipeline>,
 }
 
 impl CpuLocalBuilder {
@@ -367,6 +375,7 @@ impl CpuLocalBuilder {
             initialization_contex: None,
             local_scheduler: None,
             core_count: None,
+            pipeline: None,
         }
     }
 
@@ -405,6 +414,11 @@ impl CpuLocalBuilder {
         self
     }
 
+    pub fn control_pipeline(&mut self, control: ControlPipeline) -> &mut Self {
+        self.pipeline = Some(control);
+        self
+    }
+
     fn build(self) -> Option<&'static CpuLocal> {
         let lapic = self.lapic?;
         Some(Box::<CpuLocal>::leak(
@@ -421,6 +435,7 @@ impl CpuLocalBuilder {
                 is_in_isr: false,
                 core_count: self.core_count?,
                 lapic,
+                pipeline: self.pipeline?,
                 gdt: self.gdt?,
             }
             .into(),

@@ -27,7 +27,7 @@ use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 
 use crate::{
     initialization_context::{End, InitializationContext},
-    interrupt::{FullInterruptStackFrame, InterruptIndex},
+    interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
     smp::{CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
 };
@@ -645,11 +645,11 @@ impl Dispatcher {
         pool.alloc(f)
     }
 
-    pub fn dispatch(interrupt_stack_frame: &mut FullInterruptStackFrame, thread: Thread) {
+    pub fn dispatch(interrupt_stack_frame: &mut ExtendedInterruptStackFrame, thread: Thread) {
         thread.restore(interrupt_stack_frame);
     }
 
-    pub fn save(stack_frame: &FullInterruptStackFrame) -> Thread {
+    pub fn save(stack_frame: &ExtendedInterruptStackFrame) -> Thread {
         Thread::capture(stack_frame)
     }
 }

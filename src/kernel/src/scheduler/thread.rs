@@ -7,7 +7,7 @@ use spin::RwLock;
 use crate::{
     const_assert, hlt_loop,
     initialization_context::{End, InitializationContext},
-    interrupt::FullInterruptStackFrame,
+    interrupt::ExtendedInterruptStackFrame,
     memory::stack_allocator::Stack,
     smp::{CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
@@ -228,7 +228,7 @@ pub struct Thread {
 }
 
 impl ThreadState {
-    pub fn restore(self, stack_frame: &mut FullInterruptStackFrame) {
+    pub fn restore(self, stack_frame: &mut ExtendedInterruptStackFrame) {
         stack_frame.r15 = self.r15;
         stack_frame.r14 = self.r14;
         stack_frame.r13 = self.r13;
@@ -251,7 +251,7 @@ impl ThreadState {
         stack_frame.stack_segment = self.stack_segment;
     }
 
-    pub fn capture(stack_frame: &FullInterruptStackFrame) -> Self {
+    pub fn capture(stack_frame: &ExtendedInterruptStackFrame) -> Self {
         Self {
             r15: stack_frame.r15,
             r14: stack_frame.r14,
@@ -337,13 +337,13 @@ impl ThreadState {
 }
 
 impl Thread {
-    pub fn restore(self, stack_frame: &mut FullInterruptStackFrame) {
+    pub fn restore(self, stack_frame: &mut ExtendedInterruptStackFrame) {
         // SAFETY: This is safe because thread can only be created in this module
         unsafe { cpu_local().set_tid(self.global_id) };
         self.state.restore(stack_frame);
     }
 
-    pub fn capture(stack_frame: &FullInterruptStackFrame) -> Self {
+    pub fn capture(stack_frame: &ExtendedInterruptStackFrame) -> Self {
         let global_id = cpu_local().current_thread_id();
         Thread {
             global_id,
