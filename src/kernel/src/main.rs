@@ -36,6 +36,10 @@ fn kmain_thread() {
 
     println!("Hello, world!!!, from kmain thread");
 
+    //    unsafe {
+    //        asm!("vmcall");
+    //    }
+
     scheduler::spawn(|| {
         vsys_reg(1); // VSYS 1
         loop {

@@ -1,8 +1,8 @@
 use crate::initialization_context::{End, InitializationContext};
 
-pub mod control;
+pub mod pipeline;
 mod syscall;
 
 pub fn init(ctx: &mut InitializationContext<End>) {
-    control::init(ctx);
+    pipeline::init(ctx);
 }

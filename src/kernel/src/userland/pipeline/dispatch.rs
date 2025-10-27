@@ -1,6 +1,6 @@
 use crate::{
     interrupt::ExtendedInterruptStackFrame,
-    userland::control::{ExtendedState, TaskBlock},
+    userland::pipeline::{ExtendedState, PipelineContext},
 };
 
 #[derive(Debug)]
@@ -12,7 +12,7 @@ pub enum DispatchAction {
 }
 
 impl Dispatcher {
-    pub fn new(_task_block: TaskBlock) -> Self {
+    pub fn new(context: PipelineContext) -> Self {
         todo!()
     }
 

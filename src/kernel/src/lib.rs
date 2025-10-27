@@ -77,7 +77,7 @@ where
     let phase1 = memory::init(phase0);
     let mut phase2 = acpi::init(phase1);
     graphics::init(&mut phase2);
-    print::init(&mut phase2, Color::new(209, 213, 219), BACKGROUND_COLOR);
+    print::init(&mut phase2, Color::new(166, 173, 200), BACKGROUND_COLOR);
     let mut phase3 = smp::init(phase2);
     gdt::init_gdt(&mut phase3);
     let mut final_phase = interrupt::init(phase3);

@@ -33,7 +33,7 @@ use crate::{
     log,
     memory::{self},
     scheduler::{LocalScheduler, pinned, sleep},
-    userland::control::ControlPipeline,
+    userland::pipeline::ControlPipeline,
 };
 use spin::Mutex;
 

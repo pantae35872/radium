@@ -50,7 +50,7 @@ pub struct Graphic {
     glyph_ids: Vec<GlyphData>,
 }
 
-pub const BACKGROUND_COLOR: Color = Color::new(33, 33, 33);
+pub const BACKGROUND_COLOR: Color = Color::new(30, 30, 46);
 
 impl Graphic {
     /// Performs a backbuffer swap
