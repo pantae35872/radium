@@ -6,6 +6,7 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
+use kernel_proc::{def_local, local_gen};
 use pager::{
     EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
@@ -555,6 +556,17 @@ impl InitializationContext<End> {
     }
 }
 
+#[macro_export]
+macro_rules! local_init {
+    ($ctx: ident, $local_name: ident, $create: expr $(,)?) => {
+        $ctx.local_initializer(|i| {
+            i.register(|builder, ctx, id| {
+                kernel_proc::__builder!($local_name, $create);
+            })
+        });
+    };
+}
+
 pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
     let processors = ctx.context().processors();
     let mut cpu_id_to_apic_id = [None; MAX_CPU];
@@ -578,6 +590,13 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
     });
     CPU_ID_TO_APIC_ID.init_once(|| cpu_id_to_apic_id);
     ctx.next(Some(LocalInitializer::new()))
+}
+
+def_local!(static CORE_COUNT: usize);
+local_gen!();
+
+pub fn cpu_local2() -> &'static mut CpuLocal2 {
+    todo!()
 }
 
 pub fn init_aps(mut ctx: InitializationContext<End>) {
