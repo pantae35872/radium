@@ -51,7 +51,7 @@ impl PipelineContext {
         task
     }
 
-    fn alloc_process<F>(&mut self, process: &mut ProcessPipeline) -> Process {
+    fn alloc_process(&mut self, process: &mut ProcessPipeline) -> Process {
         let process = process.alloc();
         self.added_processes.push(process);
         process

@@ -40,6 +40,7 @@ pub mod smp;
 pub mod userland;
 pub mod utils;
 
+use core::ops::{Deref, DerefMut};
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
@@ -55,6 +56,7 @@ use driver::{
 use graphics::BACKGROUND_COLOR;
 use graphics::color::Color;
 use initialization_context::{InitializationContext, Stage0};
+use kernel_proc::{def_local, local_gen};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use scheduler::sleep;
@@ -65,6 +67,61 @@ use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReas
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
+
+#[derive(Default)]
+struct CpuLocalTestData {
+    hello: usize,
+}
+
+def_local!(static LOCAL: crate::interrupt::InterruptIndex);
+
+//def_local!(static LOCAL: CpuLocalTestData);
+//
+//struct CpuLocalGen1;
+//struct CpuLocalData {
+//    hello: usize,
+//}
+//
+//impl Deref for CpuLocalGen1 {
+//    type Target = CpuLocalData;
+//
+//    fn deref(&self) -> &Self::Target {
+//        todo!("Call cpu_local().target")
+//    }
+//}
+//
+//impl DerefMut for CpuLocalGen1 {
+//    fn deref_mut(&mut self) -> &mut Self::Target {
+//        todo!("Call cpu_local().target")
+//    }
+//}
+//
+//static LOCAL: CpuLocalGen1 = CpuLocalGen1;
+//
+//struct CpuLocalGenerated {
+//    radium_lib_smth_cpu_local_gen: CpuLocalData,
+//}
+
+macro_rules! local_init {
+    ($ctx: ident, $local_name: ident, $create: expr $(,)?) => {
+        $ctx.local_initializer(|i| {
+            i.register(|builder, ctx, id| {
+                kernel_proc::__builder!($local_name, $create);
+            })
+        });
+    };
+}
+
+fn init_local(ctx: &mut InitializationContext<initialization_context::End>) {
+    local_init!(ctx, LOCAL, CpuLocalTestData::default());
+    //ctx.local_initializer(|i| {
+    //    i.register(|builder, ctx, id| {
+    //        builder.LOCAL(CpuLocalData::new());
+    //    })
+    //});
+}
+
+local_gen!();
 
 pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
 where

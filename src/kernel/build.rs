@@ -1,5 +1,7 @@
 use std::{env, path::Path, process::Command};
 
+use uuid::Uuid;
+
 fn run(cmd: &mut Command, fail_msg: &str) {
     let status = cmd.status().expect(fail_msg);
     if !status.success() {
@@ -8,6 +10,7 @@ fn run(cmd: &mut Command, fail_msg: &str) {
 }
 
 fn main() {
+    println!("cargo:rerun-if-changed=./src");
     nasm_rs::compile_library_args("bootlib", &["src/boot/boot.asm"], &["-felf64"]).unwrap();
     let outdir = env::var_os("OUT_DIR").expect("Out dir must set");
     let path = Path::new(&outdir).join("trampoline.bin");
@@ -35,4 +38,5 @@ fn main() {
     println!("cargo:rustc-link-arg={}", trampoline_o.display());
     println!("cargo:rustc-link-arg=-T");
     println!("cargo:rustc-link-arg=linker.ld");
+    println!("cargo:rustc-env=BUILD_UUID={}", Uuid::new_v4());
 }
