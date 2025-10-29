@@ -658,7 +658,7 @@ def_local!(pub static CURRENT_THREAD_ID: usize);
 
 pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
-        i.register_v2(|builder, ctx, id| {
+        i.register(|builder, ctx, id| {
             local_builder!(
                 builder,
                 LOCAL_SCHEDULER(LocalScheduler::new(ctx, id)),

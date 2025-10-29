@@ -127,7 +127,7 @@ pub fn handle_request(context: CommonRequestContext<'_>) -> Dispatcher {
 
 pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
-        i.register_v2(|builder, _ctx, _id| {
+        i.register(|builder, _ctx, _id| {
             local_builder!(builder, PIPELINE(ControlPipeline::new()));
         })
     });

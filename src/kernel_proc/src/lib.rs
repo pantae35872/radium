@@ -265,7 +265,7 @@ fn write_cpu_local_builder_set(path: &Path, full_name: &Ident, ty: &str) {
         path,
         full_name,
         ty,
-        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder2 { pub fn new() -> Self {Self::default()}\n\n}",
+        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder { pub fn new() -> Self {Self::default()}\n\n}",
         &format!(
             "pub fn {full_name}(&mut self, value: {ty}) {{ self.{full_name} = Some(value); }}"
         ),
@@ -278,9 +278,9 @@ fn write_cpu_local_builder_build(path: &Path, full_name: &Ident, ty: &str) {
         path,
         full_name,
         ty,
-        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder2 {\
-            pub fn build(self) -> Option<CpuLocal2> {\
-                Some(CpuLocal2 {\n\
+        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder {\
+            pub fn build(self) -> Option<CpuLocal> {\
+                Some(CpuLocal {\n\
                 })\
             }\
         }",
@@ -294,7 +294,7 @@ fn write_cpu_local_builder_struct(path: &Path, full_name: &Ident, ty: &str) {
         path,
         full_name,
         ty,
-        "#[allow(non_snake_case)]\n#[derive(Default)]\npub struct CpuLocalBuilder2 {\n}",
+        "#[allow(non_snake_case)]\n#[derive(Default)]\npub struct CpuLocalBuilder {\n}",
         &format!("pub {full_name}: Option<{ty}>,"),
         1,
     );
@@ -305,7 +305,7 @@ fn write_cpu_local(path: &Path, full_name: &Ident, ty: &str) {
         path,
         full_name,
         ty,
-        "#[allow(non_snake_case)]\npub struct CpuLocal2 {\n}",
+        "#[allow(non_snake_case)]\npub struct CpuLocal {\n}",
         &format!("pub {full_name}: {ty},"),
         1,
     );
@@ -347,11 +347,11 @@ pub fn def_local(input: TokenStream) -> TokenStream {
 
         impl #access_type {
             pub fn inner(&self) -> &'static #ty {
-                &crate::smp::cpu_local2().#full_name
+                &crate::smp::cpu_local().#full_name
             }
 
             pub fn inner_mut(&self) -> &'static mut #ty {
-                &mut crate::smp::cpu_local2().#full_name
+                &mut crate::smp::cpu_local().#full_name
             }
         }
 

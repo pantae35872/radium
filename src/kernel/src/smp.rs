@@ -199,13 +199,13 @@ pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>
     hlt_loop();
 }
 
-type LocalInitializeV2 =
-    dyn Fn(&mut CpuLocalBuilder2, &mut InitializationContext<End>, CoreId) + Send + Sync;
+type LocalInitialize =
+    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterInitializer = dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<End>) + Send + Sync;
 
 pub struct LocalInitializer {
-    local_initializers_v2: Vec<Box<LocalInitializeV2>>,
+    local_initializers_v2: Vec<Box<LocalInitialize>>,
     after_initializers: Vec<Box<AfterInitializer>>,
     after_bsps: Vec<Box<AfterBspInitializers>>,
 }
@@ -233,9 +233,9 @@ impl LocalInitializer {
         self.after_initializers.push(Box::new(initializer));
     }
 
-    pub fn register_v2(
+    pub fn register(
         &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder2, &mut InitializationContext<End>, CoreId)
+        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
         + Send
         + Sync
         + 'static,
@@ -244,7 +244,7 @@ impl LocalInitializer {
     }
 
     fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
-        let mut cpu_local_builder = CpuLocalBuilder2::new();
+        let mut cpu_local_builder = CpuLocalBuilder::new();
         let id = CoreId::from(apic_id());
         log!(Debug, "Initializing cpu: {id}");
 
@@ -274,7 +274,7 @@ impl Default for LocalInitializer {
     }
 }
 
-fn init_local(builder: CpuLocalBuilder2, core_id: CoreId) {
+fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
     let Some(cpu_local) = builder.build() else {
         panic!("Failed to initialize Core: {core_id}");
     };
@@ -282,10 +282,10 @@ fn init_local(builder: CpuLocalBuilder2, core_id: CoreId) {
     log!(
         Trace,
         "CORE {core_id} CpuLocal address at: {:#x}",
-        cpu_local as *const CpuLocal2 as u64
+        cpu_local as *const CpuLocal as u64
     );
 
-    let ptr = Box::leak((cpu_local as *const CpuLocal2 as u64).into());
+    let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
     // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
     unsafe {
         KernelGsBase::write(VirtAddr::new(ptr as *const u64 as u64));
@@ -351,8 +351,8 @@ pub fn cpu_local_avaiable() -> bool {
 ///
 /// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
 #[inline(always)]
-pub fn cpu_local2() -> &'static mut CpuLocal2 {
-    let ptr: *mut CpuLocal2;
+pub fn cpu_local() -> &'static mut CpuLocal {
+    let ptr: *mut CpuLocal;
     if KernelGsBase::read().is_null() || GsBase::read().is_null() {
         panic!("Trying to access cpu local while, it's has not been initialized");
     }
@@ -415,7 +415,7 @@ pub fn init_aps(mut ctx: InitializationContext<End>) {
     let ctx_cloned = Arc::clone(&ctx);
 
     ctx.lock().local_initializer(|i| {
-        i.register_v2(move |builder, ctx, _id| {
+        i.register(move |builder, ctx, _id| {
             local_builder!(
                 builder,
                 CORE_COUNT(ctx.context().processors().len()),

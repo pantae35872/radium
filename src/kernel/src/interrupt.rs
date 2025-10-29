@@ -15,7 +15,7 @@ use crate::scheduler::Dispatcher;
 use crate::scheduler::FnBox;
 use crate::scheduler::LOCAL_SCHEDULER;
 use crate::smp::CoreId;
-use crate::smp::CpuLocalBuilder2;
+use crate::smp::CpuLocalBuilder;
 use alloc::boxed::Box;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -131,7 +131,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
         .unwrap();
     disable_pic(&mut ctx);
 
-    let lapic = move |cpu: &mut CpuLocalBuilder2, _ctx: &mut InitializationContext<End>, id| {
+    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<End>, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
         let idt = create_idt();
         idt.load();
@@ -173,7 +173,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
     };
 
     ctx.local_initializer(|initializer| {
-        initializer.register_v2(lapic);
+        initializer.register(lapic);
 
         initializer.after_bsp(|ctx| {
             ctx.context.io_apic_manager.redirect_legacy_irqs(
