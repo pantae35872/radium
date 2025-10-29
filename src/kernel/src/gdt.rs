@@ -1,13 +1,17 @@
 use alloc::boxed::Box;
+use kernel_proc::{def_local, local_builder};
 use pager::gdt::{DOUBLE_FAULT_IST_INDEX, Descriptor, GENERAL_STACK_INDEX, Gdt, TaskStateSegment};
 use pager::registers::{CS, load_tss};
 
 use crate::initialization_context::{End, InitializationContext, Stage3};
-use crate::smp::CpuLocalBuilder;
+use crate::smp::CpuLocalBuilder2;
 use sentinel::log;
 
+def_local!(pub static GDT: &'static pager::gdt::Gdt);
+def_local!(pub static CODE_SEG: pager::registers::SegmentSelector);
+
 pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
-    let gdt_initializer = |cpu: &mut CpuLocalBuilder, ctx: &mut InitializationContext<End>, id| {
+    let gdt_initializer = |cpu: &mut CpuLocalBuilder2, ctx: &mut InitializationContext<End>, id| {
         let double_fault = ctx
             .stack_allocator()
             .alloc_stack(256)
@@ -34,7 +38,7 @@ pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
             CS::set(code_selector);
             load_tss(tss_selector);
         }
-        cpu.gdt(gdt).code_seg(code_selector);
+        local_builder!(cpu, GDT(gdt), CODE_SEG(code_selector));
     };
-    ctx.local_initializer(|initializer| initializer.register(gdt_initializer));
+    ctx.local_initializer(|initializer| initializer.register_v2(gdt_initializer));
 }

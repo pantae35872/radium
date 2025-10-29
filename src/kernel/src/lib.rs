@@ -36,9 +36,10 @@ pub mod port;
 pub mod print;
 pub mod scheduler;
 pub mod serial;
-pub mod smp;
 pub mod userland;
 pub mod utils;
+
+pub mod smp;
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -59,10 +60,12 @@ use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use scheduler::sleep;
 use sentinel::log;
-use smp::{ALL_AP_INITIALIZED, cpu_local, cpu_local_avaiable};
+use smp::{ALL_AP_INITIALIZED, cpu_local_avaiable};
 use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
+use crate::interrupt::CORE_ID;
+use crate::scheduler::{CURRENT_THREAD_ID, LOCAL_SCHEDULER};
 use crate::smp::CTX;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
@@ -88,7 +91,7 @@ where
     pit::init(&mut final_phase);
     smp::init_aps(final_phase);
 
-    cpu_local().local_scheduler().spawn(|| {
+    LOCAL_SCHEDULER.inner_mut().spawn(|| {
         while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
             sleep(1000);
         }
@@ -98,7 +101,7 @@ where
 
         main_thread()
     });
-    cpu_local().local_scheduler().start_scheduling();
+    LOCAL_SCHEDULER.inner_mut().start_scheduling();
 
     hlt_loop();
 }
@@ -162,8 +165,8 @@ fn panic(info: &PanicInfo) -> ! {
         log!(
             Critical,
             "PANIC on core: {}, thread id: {}",
-            cpu_local().core_id(),
-            cpu_local().current_thread_id()
+            *CORE_ID,
+            *CURRENT_THREAD_ID
         );
     }
     log!(Critical, "{}", info);

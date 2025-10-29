@@ -16,6 +16,7 @@ use alloc::{
 use conquer_once::spin::OnceCell;
 use derivative::Derivative;
 use hashbrown::HashMap;
+use kernel_proc::{def_local, local_builder};
 use pager::address::VirtAddr;
 use rstd::drivcall::{
     DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_EXIT, DRIVCALL_FUTEX_WAIT, DRIVCALL_FUTEX_WAKE,
@@ -27,8 +28,8 @@ use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 
 use crate::{
     initialization_context::{End, InitializationContext},
-    interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
-    smp::{CORE_COUNT, CoreId, MAX_CPU, cpu_local},
+    interrupt::{CORE_ID, ExtendedInterruptStackFrame, InterruptIndex, LAPIC, TPMS},
+    smp::{CORE_COUNT, CoreId, MAX_CPU},
     utils::spin_mpsc::SpinMPSC,
 };
 
@@ -128,7 +129,7 @@ impl LocalScheduler {
         for (_, queue) in WAIT_EXIT_NOTICE
             .iter()
             .enumerate()
-            .filter(|(c, _)| *c != cpu_local().core_id().id() && *c < *CORE_COUNT)
+            .filter(|(c, _)| *c != CORE_ID.id() && *c < *CORE_COUNT)
         {
             while queue.push(global_id).is_err() {
                 core::hint::spin_loop();
@@ -157,8 +158,8 @@ impl LocalScheduler {
 
     pub fn prepare_timer(&mut self) {
         self.timer_count += self.scheduled_ms;
-        let tpms = cpu_local().ticks_per_ms();
-        cpu_local().lapic().reset_timer(tpms * 10);
+        let tpms = *TPMS;
+        LAPIC.inner_mut().reset_timer(tpms * 10);
         self.scheduled_ms = 10;
     }
 
@@ -196,14 +197,14 @@ impl LocalScheduler {
     }
 
     pub fn check_return(&mut self) {
-        while let Some(thread) = VSYSCALL_RETURN[cpu_local().core_id().id()].pop() {
+        while let Some(thread) = VSYSCALL_RETURN[CORE_ID.id()].pop() {
             self.rr_queue.push_back(thread);
         }
     }
 
     pub fn vsys_return_thread(&mut self, taker_thread: Thread) {
         let mut return_thread: Thread = unsafe { taker_thread.read_first_arg_rsi() };
-        if return_thread.local_id().core() != cpu_local().core_id() {
+        if return_thread.local_id().core() != *CORE_ID {
             while let Err(thread) =
                 VSYSCALL_RETURN[return_thread.local_id().core().id()].push(return_thread)
             {
@@ -215,11 +216,11 @@ impl LocalScheduler {
     }
 
     pub fn check_vsys_request(&mut self) {
-        let Some((vsys, _)) = VSYSCALL_REQUEST[cpu_local().core_id().id()].peek() else {
+        let Some((vsys, _)) = VSYSCALL_REQUEST[CORE_ID.id()].peek() else {
             return;
         };
         if self.vsys_wait_request.contains_key(vsys) {
-            let (vsys, requester) = VSYSCALL_REQUEST[cpu_local().core_id().id()]
+            let (vsys, requester) = VSYSCALL_REQUEST[CORE_ID.id()]
                 .pop()
                 .expect("This should success because of peek guard above");
 
@@ -249,7 +250,7 @@ impl LocalScheduler {
             let id = global_id_to_local_id(*worker).core();
             let mut timeout = 0;
             while let Err((_, mut t)) = VSYSCALL_REQUEST[id.id()].push((syscall, thread)) {
-                if id == cpu_local().core_id() {
+                if id == *CORE_ID {
                     self.check_vsys_request();
                 }
                 if timeout > VSYSCALL_REQUEST_RETRIES {
@@ -264,7 +265,7 @@ impl LocalScheduler {
     }
 
     fn migrate_if_required(&mut self) {
-        let local_core = cpu_local().core_id().id();
+        let local_core = CORE_ID.id();
         let local_count = self.rr_queue.len();
 
         THREAD_COUNT_EACH_CORE[local_core].store(local_count, Ordering::Relaxed);
@@ -328,7 +329,7 @@ impl LocalScheduler {
     }
 
     pub fn check_futex(&mut self) {
-        while let Some(futex) = FUTEX_CHECK[cpu_local().core_id().id()].pop() {
+        while let Some(futex) = FUTEX_CHECK[CORE_ID.id()].pop() {
             let mut any_woken = false;
             self.futex_map.entry(futex).and_modify(|v| {
                 if let Some(e) = v.pop() {
@@ -359,17 +360,17 @@ impl LocalScheduler {
         FUTEX_CHECK
             .iter()
             .enumerate()
-            .filter(|(core, _)| cpu_local().core_id().id() != *core && *core < *CORE_COUNT)
+            .filter(|(core, _)| CORE_ID.id() != *core && *core < *CORE_COUNT)
             .for_each(|(c, e)| {
                 while e.push(addr).is_err() {
-                    cpu_local()
-                        .lapic()
+                    LAPIC
+                        .inner_mut()
                         .send_fixed_ipi(CoreId::new(c).unwrap(), InterruptIndex::CheckFutex);
                 }
             });
 
-        cpu_local()
-            .lapic()
+        LAPIC
+            .inner_mut()
             .broadcast_fixed_ipi(InterruptIndex::CheckFutex);
 
         *self.wake_marker.entry(addr).or_default() += 1;
@@ -397,7 +398,7 @@ impl LocalScheduler {
     }
 
     pub fn check_thread_exit_notice(&mut self) {
-        while let Some(exited) = WAIT_EXIT_NOTICE[cpu_local().core_id().id()].pop() {
+        while let Some(exited) = WAIT_EXIT_NOTICE[CORE_ID.id()].pop() {
             self.thread_wait_exit.entry(exited).and_modify(|e| {
                 e.drain(..)
                     .for_each(|thread| self.rr_queue.push_back(thread))
@@ -432,7 +433,7 @@ pub enum SchedulerError {
 }
 
 pub fn sleep(in_millis: usize) {
-    if cpu_local().current_thread_id() == 0 {
+    if *CURRENT_THREAD_ID == 0 {
         panic!("Trying to use smart sleep, while in bsp thread");
     }
 
@@ -652,10 +653,17 @@ impl Dispatcher {
     }
 }
 
+def_local!(pub static LOCAL_SCHEDULER: crate::scheduler::LocalScheduler);
+def_local!(pub static CURRENT_THREAD_ID: usize);
+
 pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
-        i.register(|builder, ctx, id| {
-            builder.scheduler(LocalScheduler::new(ctx, id));
+        i.register_v2(|builder, ctx, id| {
+            local_builder!(
+                builder,
+                LOCAL_SCHEDULER(LocalScheduler::new(ctx, id)),
+                CURRENT_THREAD_ID(0)
+            );
         })
     });
 }

@@ -3,13 +3,17 @@ use core::{
     fmt::{Arguments, Write},
 };
 
-use sentinel::{log, set_logger, LogLevel, LoggerBackend};
+use sentinel::{LogLevel, LoggerBackend, log, set_logger};
 use static_log::StaticLog;
 
 use crate::{
     initialization_context::{InitializationContext, Stage0},
-    initialize_guard, print, serial_print,
-    smp::{cpu_local, cpu_local_avaiable},
+    initialize_guard,
+    interrupt::{CORE_ID, IS_IN_ISR},
+    print,
+    scheduler::CURRENT_THREAD_ID,
+    serial_print,
+    smp::cpu_local_avaiable,
 };
 
 mod static_log;
@@ -49,7 +53,7 @@ impl MainLogger {
         }
     }
 
-    /// Set the log level unatomically 
+    /// Set the log level unatomically
     ///
     /// # Safety
     /// the caller must ensure that this is only being called on kernel initialization
@@ -108,12 +112,12 @@ impl Default for MainLogger {
 impl LoggerBackend for MainLogger {
     fn log(&self, module_path: &'static str, level: LogLevel, formatter: Arguments) {
         if cpu_local_avaiable() {
-            if cpu_local().is_in_isr {
+            if *IS_IN_ISR {
                 self.write(
                     level,
                     format_args!(
                         "<- [\x1b[93m{module_path}\x1b[0m] [C {core} : \x1b[94mIN ISR\x1b[0m] : {formatter}",
-                        core = cpu_local().core_id().id(),
+                        core = CORE_ID.id(),
                     ),
                 );
             } else {
@@ -121,8 +125,8 @@ impl LoggerBackend for MainLogger {
                     level,
                     format_args!(
                         "<- [\x1b[93m{module_path}\x1b[0m] [C {core} : T {thread}] : {formatter}",
-                        core = cpu_local().core_id().id(),
-                        thread = cpu_local().current_thread_id(),
+                        core = CORE_ID.id(),
+                        thread = *CURRENT_THREAD_ID,
                     ),
                 );
             }

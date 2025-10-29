@@ -1,10 +1,10 @@
 use alloc::vec::Vec;
+use kernel_proc::{def_local, local_builder};
 use pager::paging::{ActivePageTable, table::RecurseLevel4};
 
 use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
-    smp::cpu_local,
     userland::{
         pipeline::{
             dispatch::Dispatcher,
@@ -115,18 +115,20 @@ pub enum RequestReferer {
     SyscallRequest(SyscallId),
 }
 
+def_local!(pub static PIPELINE: crate::userland::pipeline::ControlPipeline);
+
 pub fn handle_request(context: CommonRequestContext<'_>) -> Dispatcher {
-    let pipeline = cpu_local().pipeline();
+    let pipeline = PIPELINE.inner_mut();
     let mut context = pipeline.create_context(&context);
     pipeline.handle_syscall(&mut context);
     pipeline.schedule(&mut context);
-    return Dispatcher::new(context);
+    Dispatcher::new(context)
 }
 
 pub fn init(ctx: &mut InitializationContext<End>) {
     ctx.local_initializer(|i| {
-        i.register(|builder, ctx, id| {
-            builder.control_pipeline(ControlPipeline::new());
+        i.register_v2(|builder, _ctx, _id| {
+            local_builder!(builder, PIPELINE(ControlPipeline::new()));
         })
     });
 }

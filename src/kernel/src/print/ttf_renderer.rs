@@ -1,5 +1,3 @@
-use core::{isize, usize};
-
 use alloc::{string::String, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
@@ -7,7 +5,6 @@ use pager::{EntryFlags, Mapper, PAGE_SIZE};
 
 use crate::{
     graphics::{color::Color, graphic},
-    hlt_loop,
     initialization_context::{InitializationContext, Stage2},
     memory::virt_addr_alloc,
 };

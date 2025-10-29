@@ -2,7 +2,8 @@ use alloc::vec::Vec;
 
 use crate::{
     memory::stack_allocator::Stack,
-    smp::{CoreId, cpu_local},
+    scheduler::CURRENT_THREAD_ID,
+    smp::CoreId,
     userland::pipeline::{
         CommonRequestContext, TaskBlock, TaskProcesserState,
         process::{Process, ProcessPipeline},
@@ -108,7 +109,7 @@ pub struct Thread {
 
 impl Thread {
     fn capture() -> Self {
-        let global_id = cpu_local().current_thread_id();
+        let global_id = *CURRENT_THREAD_ID;
         let local_id = translate_to_local(global_id);
         Self {
             global_id,

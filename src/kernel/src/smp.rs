@@ -1,6 +1,5 @@
 use core::{
     fmt::Display,
-    num::NonZeroUsize,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -11,12 +10,10 @@ use pager::{
     EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
-    gdt::Gdt,
     paging::{
         ActivePageTable,
         table::{DirectLevel4, Table},
     },
-    registers::SegmentSelector,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
@@ -27,14 +24,12 @@ use crate::{
     hlt_loop,
     initialization_context::{End, InitializationContext, Stage2, Stage3, select_context},
     interrupt::{
-        self,
-        apic::{ApicId, LocalApic, apic_id},
-        idt::Idt,
+        self, APIC_ID, LAPIC,
+        apic::{ApicId, apic_id},
     },
     log,
     memory::{self},
-    scheduler::{LocalScheduler, pinned, sleep},
-    userland::pipeline::ControlPipeline,
+    scheduler::{LOCAL_SCHEDULER, pinned, sleep},
 };
 use spin::Mutex;
 
@@ -166,12 +161,12 @@ impl ApInitializer {
         self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
-        cpu_local().lapic().send_init_ipi(apic_id, true);
+        LAPIC.inner_mut().send_init_ipi(apic_id, true);
         sleep(10);
-        cpu_local().lapic().send_init_ipi(apic_id, false);
+        LAPIC.inner_mut().send_init_ipi(apic_id, false);
 
         for _ in 0..2 {
-            cpu_local().lapic().send_startup_ipi(apic_id);
+            LAPIC.inner_mut().send_startup_ipi(apic_id);
             sleep(1);
         }
 
@@ -199,20 +194,17 @@ pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
-    cpu_local().local_scheduler().start_scheduling();
+    LOCAL_SCHEDULER.inner_mut().start_scheduling();
 
     hlt_loop();
 }
 
-type LocalInitialize =
-    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync;
 type LocalInitializeV2 =
     dyn Fn(&mut CpuLocalBuilder2, &mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterInitializer = dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<End>) + Send + Sync;
 
 pub struct LocalInitializer {
-    local_initializers: Vec<Box<LocalInitialize>>,
     local_initializers_v2: Vec<Box<LocalInitializeV2>>,
     after_initializers: Vec<Box<AfterInitializer>>,
     after_bsps: Vec<Box<AfterBspInitializers>>,
@@ -221,7 +213,6 @@ pub struct LocalInitializer {
 impl LocalInitializer {
     pub const fn new() -> Self {
         Self {
-            local_initializers: Vec::new(),
             local_initializers_v2: Vec::new(),
             after_initializers: Vec::new(),
             after_bsps: Vec::new(),
@@ -252,30 +243,16 @@ impl LocalInitializer {
         self.local_initializers_v2.push(Box::new(initializer));
     }
 
-    pub fn register(
-        &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
-        + Send
-        + Sync
-        + 'static,
-    ) {
-        self.local_initializers.push(Box::new(initializer));
-    }
-
     fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
-        let mut cpu_local_builder = CpuLocalBuilder::new();
-        let mut cpu_local_builder_v2 = CpuLocalBuilder2::new();
+        let mut cpu_local_builder = CpuLocalBuilder2::new();
         let id = CoreId::from(apic_id());
         log!(Debug, "Initializing cpu: {id}");
 
-        for initializer in self.local_initializers.iter() {
+        for initializer in self.local_initializers_v2.iter() {
             initializer(&mut cpu_local_builder, ctx, id);
         }
-        for initializer_v2 in self.local_initializers_v2.iter() {
-            initializer_v2(&mut cpu_local_builder_v2, ctx, id);
-        }
 
-        init_local(cpu_local_builder, cpu_local_builder_v2, id);
+        init_local(cpu_local_builder, id);
 
         // We enable the interrupts after we're sure that the local has been initialized
         interrupt::enable();
@@ -297,181 +274,18 @@ impl Default for LocalInitializer {
     }
 }
 
-// TODO: This is the trash bin for all components, refactor this to have less coupling
-pub struct CpuLocal {
-    core_id: CoreId,
-    apic_id: ApicId,
-    lapic: LocalApic,
-    code_seg: SegmentSelector,
-    thread_id: usize,
-    ticks_per_ms: Option<usize>,
-    local_scheduler: LocalScheduler,
-    pipeline: ControlPipeline,
-    pub last_interrupt_no: u8,
-    pub is_in_isr: bool,
-    idt: &'static Idt,
-    gdt: &'static Gdt,
-}
-
-impl CpuLocal {
-    #[inline]
-    pub fn pipeline(&mut self) -> &mut ControlPipeline {
-        &mut self.pipeline
-    }
-
-    #[inline]
-    pub fn core_id(&self) -> CoreId {
-        self.core_id
-    }
-
-    #[inline]
-    pub fn apic_id(&self) -> ApicId {
-        self.apic_id
-    }
-
-    pub fn set_tpms(&mut self, tpms: NonZeroUsize) {
-        self.ticks_per_ms = Some(tpms.get());
-    }
-
-    pub fn ticks_per_ms(&self) -> usize {
-        self.ticks_per_ms.expect("TPMS is not calibrated")
-    }
-
-    pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
-        &mut self.local_scheduler
-    }
-
-    pub fn code_seg(&self) -> SegmentSelector {
-        self.code_seg
-    }
-
-    /// Setting the current global thread id
-    ///
-    /// # Safety
-    /// Setting the tid is unsafe, and can cause undefined behaviour
-    pub unsafe fn set_tid(&mut self, id: usize) {
-        self.thread_id = id;
-    }
-
-    pub fn current_thread_id(&self) -> usize {
-        self.thread_id
-    }
-
-    pub fn lapic(&mut self) -> &mut LocalApic {
-        &mut self.lapic
-    }
-}
-
-pub struct CpuLocalBuilder {
-    lapic: Option<LocalApic>,
-    gdt: Option<&'static Gdt>,
-    idt: Option<&'static Idt>,
-    code_seg: Option<SegmentSelector>,
-    local_scheduler: Option<LocalScheduler>,
-    pipeline: Option<ControlPipeline>,
-}
-
-impl CpuLocalBuilder {
-    pub const fn new() -> Self {
-        Self {
-            lapic: None,
-            idt: None,
-            gdt: None,
-            code_seg: None,
-            local_scheduler: None,
-            pipeline: None,
-        }
-    }
-
-    pub fn scheduler(&mut self, scheduler: LocalScheduler) -> &mut Self {
-        self.local_scheduler = Some(scheduler);
-        self
-    }
-
-    pub fn code_seg(&mut self, code_seg: SegmentSelector) -> &mut Self {
-        self.code_seg = Some(code_seg);
-        self
-    }
-
-    pub fn lapic(&mut self, apic: LocalApic) -> &mut Self {
-        self.lapic = Some(apic);
-        self
-    }
-
-    pub fn idt(&mut self, idt: &'static Idt) -> &mut Self {
-        self.idt = Some(idt);
-        self
-    }
-
-    pub fn gdt(&mut self, gdt: &'static Gdt) -> &mut Self {
-        self.gdt = Some(gdt);
-        self
-    }
-
-    pub fn control_pipeline(&mut self, control: ControlPipeline) -> &mut Self {
-        self.pipeline = Some(control);
-        self
-    }
-
-    fn build(self) -> Option<CpuLocal> {
-        let lapic = self.lapic?;
-        Some(CpuLocal {
-            core_id: lapic.id().into(),
-            idt: self.idt?,
-            apic_id: lapic.id(),
-            code_seg: self.code_seg?,
-            local_scheduler: self.local_scheduler?,
-            last_interrupt_no: 0,
-            ticks_per_ms: None,
-            thread_id: 0,
-            is_in_isr: false,
-            lapic,
-            pipeline: self.pipeline?,
-            gdt: self.gdt?,
-        })
-    }
-}
-
-impl Default for CpuLocalBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-struct MergedCpuLocal {
-    v1: &'static mut CpuLocal,
-    v2: &'static mut CpuLocal2,
-}
-
-fn init_local(builder_v1: CpuLocalBuilder, builder_v2: CpuLocalBuilder2, core_id: CoreId) {
-    let Some(cpu_local) = builder_v1.build() else {
-        log!(Error, "Failed to initialize Core: {core_id}");
-        interrupt::disable();
-        hlt_loop();
+fn init_local(builder: CpuLocalBuilder2, core_id: CoreId) {
+    let Some(cpu_local) = builder.build() else {
+        panic!("Failed to initialize Core: {core_id}");
     };
     let cpu_local = Box::leak(cpu_local.into());
-    let Some(cpu_local_v2) = builder_v2.build() else {
-        log!(Error, "Failed to initialize Core: {core_id}");
-        interrupt::disable();
-        hlt_loop();
-    };
-    let cpu_local_v2 = Box::leak(cpu_local_v2.into());
     log!(
         Trace,
-        "CORE {core_id} CpuLocal address at: {:#x}, CpuLocal2 address at: {:#x}",
-        cpu_local as *const CpuLocal as u64,
-        cpu_local_v2 as *const CpuLocal2 as u64
+        "CORE {core_id} CpuLocal address at: {:#x}",
+        cpu_local as *const CpuLocal2 as u64
     );
 
-    let merged = Box::leak(
-        MergedCpuLocal {
-            v1: cpu_local,
-            v2: cpu_local_v2,
-        }
-        .into(),
-    );
-
-    let ptr = Box::leak((merged as *const MergedCpuLocal as u64).into());
+    let ptr = Box::leak((cpu_local as *const CpuLocal2 as u64).into());
     // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
     unsafe {
         KernelGsBase::write(VirtAddr::new(ptr as *const u64 as u64));
@@ -533,8 +347,12 @@ pub fn cpu_local_avaiable() -> bool {
     !(KernelGsBase::read().is_null() || GsBase::read().is_null())
 }
 
-fn cpu_local_merged() -> &'static mut MergedCpuLocal {
-    let ptr: *mut MergedCpuLocal;
+/// Get the cpu local
+///
+/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
+#[inline(always)]
+pub fn cpu_local2() -> &'static mut CpuLocal2 {
+    let ptr: *mut CpuLocal2;
     if KernelGsBase::read().is_null() || GsBase::read().is_null() {
         panic!("Trying to access cpu local while, it's has not been initialized");
     }
@@ -542,19 +360,6 @@ fn cpu_local_merged() -> &'static mut MergedCpuLocal {
         core::arch::asm!("mov {}, gs:0", out(reg) ptr);
     }
     unsafe { &mut *ptr }
-}
-
-/// Get the cpu local
-///
-/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
-#[inline(always)]
-pub fn cpu_local() -> &'static mut CpuLocal {
-    cpu_local_merged().v1
-}
-
-#[inline(always)]
-pub fn cpu_local2() -> &'static mut CpuLocal2 {
-    cpu_local_merged().v2
 }
 
 select_context! {
@@ -620,11 +425,11 @@ pub fn init_aps(mut ctx: InitializationContext<End>) {
     });
     ctx.lock().initialize_current();
 
-    cpu_local().local_scheduler().spawn(move || {
+    LOCAL_SCHEDULER.inner_mut().spawn(move || {
         pinned(|| {
             let processors = ctx.lock().context().processors().clone();
             processors.iter().copied().for_each(|apic_id| {
-                if apic_id == cpu_local().apic_id() {
+                if apic_id == *APIC_ID {
                     return;
                 }
                 ap_initializer.boot_ap(apic_id, ctx.clone());

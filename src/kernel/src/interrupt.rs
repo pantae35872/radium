@@ -7,13 +7,15 @@ use crate::PANIC_COUNT;
 use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
+use crate::interrupt::apic::ApicId;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::FnBox;
-use crate::smp::CpuLocalBuilder;
-use crate::smp::cpu_local;
+use crate::scheduler::LOCAL_SCHEDULER;
+use crate::smp::CoreId;
+use crate::smp::CpuLocalBuilder2;
 use alloc::boxed::Box;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -22,6 +24,8 @@ use idt::InterruptStackFrame;
 use idt::PageFaultErrorCode;
 use io_apic::IoApicManager;
 use io_apic::RedirectionTableEntry;
+use kernel_proc::def_local;
+use kernel_proc::local_builder;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
 use pager::address::VirtAddr;
 use pager::gdt::DOUBLE_FAULT_IST_INDEX;
@@ -106,6 +110,14 @@ fn create_idt() -> &'static Idt {
     idt
 }
 
+def_local!(static IDT: &'static crate::interrupt::idt::Idt);
+def_local!(pub static LAPIC: crate::interrupt::apic::LocalApic);
+def_local!(pub static CORE_ID: CoreId);
+def_local!(pub static APIC_ID: ApicId);
+def_local!(pub static LAST_INTERRUPT_NO: u8);
+def_local!(pub static IS_IN_ISR: bool);
+def_local!(pub static TPMS: usize);
+
 pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End> {
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
@@ -119,16 +131,26 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
         .unwrap();
     disable_pic(&mut ctx);
 
-    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<End>, id| {
+    let lapic = move |cpu: &mut CpuLocalBuilder2, _ctx: &mut InitializationContext<End>, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
         let idt = create_idt();
         idt.load();
-        cpu.idt(idt);
         let mut lapic = lapic.clone();
         lapic.enable();
         lapic.disable_timer();
 
-        cpu.lapic(lapic);
+        let apic_id = lapic.id();
+        let core_id = Into::<CoreId>::into(lapic.id());
+        local_builder!(
+            cpu,
+            IDT(idt),
+            LAPIC(lapic),
+            APIC_ID(apic_id),
+            CORE_ID(core_id),
+            LAST_INTERRUPT_NO(0),
+            IS_IN_ISR(false),
+            TPMS(1000),
+        );
     };
 
     let mut io_apic_manager = IoApicManager::new();
@@ -145,18 +167,18 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
         log!(Trace, "Calibrating APIC for cpu: {id}");
         ctx.redirect_legacy_irqs(
             0,
-            RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().apic_id()),
+            RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
         );
-        cpu_local().lapic().calibrate();
+        LAPIC.inner_mut().calibrate();
     };
 
     ctx.local_initializer(|initializer| {
-        initializer.register(lapic);
+        initializer.register_v2(lapic);
 
         initializer.after_bsp(|ctx| {
             ctx.context.io_apic_manager.redirect_legacy_irqs(
                 0,
-                RedirectionTableEntry::new(InterruptIndex::PITVector, cpu_local().apic_id()),
+                RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
             );
         });
 
@@ -262,20 +284,21 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         return;
     }
 
-    cpu_local().last_interrupt_no = idx;
-    cpu_local().is_in_isr = true;
+    *LAST_INTERRUPT_NO.inner_mut() = idx;
+    *IS_IN_ISR.inner_mut() = true;
 
     let current_thread = Dispatcher::save(stack_frame);
     let mut is_scheduleable_interrupt = false;
+    let local_scheduler = LOCAL_SCHEDULER.inner_mut();
 
     match idx {
         idx if idx == InterruptIndex::TimerVector.as_u8() => {
-            cpu_local().local_scheduler().prepare_timer();
-            cpu_local().local_scheduler().check_migrate();
-            cpu_local().local_scheduler().check_return();
-            cpu_local().local_scheduler().check_vsys_request();
-            cpu_local().local_scheduler().check_thread_exit_notice();
-            cpu_local().local_scheduler().push_thread(current_thread);
+            local_scheduler.prepare_timer();
+            local_scheduler.check_migrate();
+            local_scheduler.check_return();
+            local_scheduler.check_vsys_request();
+            local_scheduler.check_thread_exit_notice();
+            local_scheduler.push_thread(current_thread);
             is_scheduleable_interrupt = true;
         }
         idx if idx == InterruptIndex::PITVector.as_u8() => {}
@@ -287,15 +310,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         }
         idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
             DRIVCALL_SLEEP => {
-                cpu_local()
-                    .local_scheduler()
-                    .sleep_thread(current_thread, stack_frame.rax as usize);
+                local_scheduler.sleep_thread(current_thread, stack_frame.rax as usize);
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_SPAWN => {
                 let f = stack_frame.rax;
-                let (handle_id, global_id) = cpu_local()
-                    .local_scheduler()
+                let (handle_id, global_id) = local_scheduler
                     .spawn(move || {
                         let f = unsafe { Box::from_raw(f as *mut *mut dyn FnBox) };
                         let f = unsafe { Box::from_raw(*f) };
@@ -306,7 +326,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
                 stack_frame.rdx = global_id as u64;
             }
             DRIVCALL_FUTEX_WAIT => {
-                cpu_local().local_scheduler().futex_wait(
+                local_scheduler.futex_wait(
                     VirtAddr::new(stack_frame.rax),
                     current_thread,
                     stack_frame.rcx as usize,
@@ -315,79 +335,63 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_FUTEX_WAKE => {
-                cpu_local()
-                    .local_scheduler()
-                    .futex_wake(VirtAddr::new(stack_frame.rax));
+                local_scheduler.futex_wake(VirtAddr::new(stack_frame.rax));
             }
             DRIVCALL_EXIT => {
-                cpu_local().local_scheduler().exit_thread(current_thread);
+                local_scheduler.exit_thread(current_thread);
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_VSYS_REG => {
                 // TODO: Check if the request vsys is out of range
-                cpu_local()
-                    .local_scheduler()
-                    .vsys_reg(stack_frame.rax as usize, current_thread.global_id());
+                local_scheduler.vsys_reg(stack_frame.rax as usize, current_thread.global_id());
             }
             DRIVCALL_VSYS_WAIT => {
-                cpu_local()
-                    .local_scheduler()
-                    .vsys_wait(stack_frame.rax as usize, current_thread);
+                local_scheduler.vsys_wait(stack_frame.rax as usize, current_thread);
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_VSYS_REQ => {
-                cpu_local()
-                    .local_scheduler()
-                    .vsys_req(stack_frame.rax as usize, current_thread);
+                local_scheduler.vsys_req(stack_frame.rax as usize, current_thread);
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_VSYS_RET => {
-                cpu_local()
-                    .local_scheduler()
-                    .vsys_return_thread(current_thread);
+                local_scheduler.vsys_return_thread(current_thread);
             }
             DRIVCALL_INT_WAIT => {
                 if let Ok(idx) = TryInto::<u8>::try_into(stack_frame.rax) {
-                    cpu_local()
-                        .local_scheduler()
-                        .interrupt_wait(idx, current_thread);
+                    local_scheduler.interrupt_wait(idx, current_thread);
                     is_scheduleable_interrupt = true;
                 }
             }
             DRIVCALL_PIN => {
-                cpu_local().local_scheduler().pin(&current_thread);
+                local_scheduler.pin(&current_thread);
             }
             DRIVCALL_UNPIN => {
-                cpu_local().local_scheduler().unpin(&current_thread);
+                local_scheduler.unpin(&current_thread);
             }
             DRIVCALL_ISPIN => {
-                cpu_local().local_scheduler().is_pin(current_thread);
+                local_scheduler.is_pin(current_thread);
                 is_scheduleable_interrupt = true;
             }
             DRIVCALL_THREAD_WAIT_EXIT => {
-                cpu_local()
-                    .local_scheduler()
-                    .thread_wait_exit(current_thread, stack_frame.rax as usize);
+                local_scheduler.thread_wait_exit(current_thread, stack_frame.rax as usize);
                 is_scheduleable_interrupt = true;
             }
             number => log!(Error, "Unknown Driver call called, {number}"),
         },
         idx if idx == InterruptIndex::CheckFutex.as_u8() => {
-            cpu_local().local_scheduler().check_futex();
+            local_scheduler.check_futex();
         }
         _ => {}
     }
 
-    cpu_local().local_scheduler().interrupt_wake(idx);
+    local_scheduler.interrupt_wake(idx);
 
-    if is_scheduleable_interrupt
-        && let Some(sched_thread) = cpu_local().local_scheduler().schedule()
-    {
+    if is_scheduleable_interrupt && let Some(sched_thread) = local_scheduler.schedule() {
         Dispatcher::dispatch(stack_frame, sched_thread);
     }
 
     eoi(idx);
-    cpu_local().is_in_isr = false;
+    *IS_IN_ISR.inner_mut() = false;
 }
 
 generate_interrupt_handlers!();
@@ -446,7 +450,7 @@ macro_rules! handler {
 
 fn eoi(idx: u8) {
     if idx != InterruptIndex::DriverCall.as_u8() {
-        cpu_local().lapic().eoi();
+        LAPIC.inner_mut().eoi();
     }
 }
 

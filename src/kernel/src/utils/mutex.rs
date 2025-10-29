@@ -9,8 +9,9 @@ use core::{
 use pager::address::VirtAddr;
 
 use crate::{
+    interrupt::IS_IN_ISR,
     scheduler::{futex_wait, futex_wake},
-    smp::{cpu_local, cpu_local_avaiable},
+    smp::cpu_local_avaiable,
 };
 
 const UNLOCKED: usize = 0;
@@ -52,10 +53,7 @@ impl<T> Mutex<T> {
                 data: unsafe { &mut *self.data.get() },
             };
         }
-        assert!(
-            !cpu_local().is_in_isr,
-            "Futex Mutex can't be use in interrupt context"
-        );
+        assert!(!*IS_IN_ISR, "Futex Mutex can't be use in interrupt context");
         let mut c = UNLOCKED;
         if self
             .lock
@@ -111,7 +109,7 @@ impl<'a, T> Drop for MutexGuard<'a, T> {
         if !cpu_local_avaiable() {
             return;
         }
-        assert!(!cpu_local().is_in_isr);
+        assert!(!*IS_IN_ISR);
         if self.lock.fetch_sub(1, Ordering::Release) != LOCKED_NO_WAIT {
             self.lock.store(UNLOCKED, Ordering::Release);
             unsafe { futex_wake(VirtAddr::new(self.lock as *const AtomicUsize as u64)) };

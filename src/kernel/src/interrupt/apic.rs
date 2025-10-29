@@ -1,4 +1,4 @@
-use core::{fmt::Display, num::NonZeroUsize, usize};
+use core::{fmt::Display, usize};
 
 use ipi::{IcrBuilder, IpiDeliveryMode, IpiDestination, IpiDestinationShorthand, IpiTriggerMode};
 use pager::{
@@ -11,8 +11,9 @@ use registers::ApicRegisters;
 use crate::{
     driver::pit::PIT,
     inline_if,
+    interrupt::TPMS,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    smp::{core_id_to_apic_id, cpu_local, CoreId, APIC_ID_TO_CPU_ID},
+    smp::{APIC_ID_TO_CPU_ID, CoreId, core_id_to_apic_id},
 };
 use sentinel::log;
 
@@ -142,7 +143,7 @@ impl LocalApic {
             self.current_count()
         );
         let ticks_per_ms = (initial_count - self.current_count()) / 10;
-        cpu_local().set_tpms(NonZeroUsize::new(ticks_per_ms).unwrap());
+        *TPMS.inner_mut() = ticks_per_ms;
         log!(Debug, "Calibrated APIC Timer, TPMS: {ticks_per_ms}");
         self.start_timer(ticks_per_ms, TimerDivide::Div16, TimerMode::OneShot);
     }

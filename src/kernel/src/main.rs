@@ -16,8 +16,8 @@ use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
 use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
-use radium::scheduler::{self, VsysThread, sleep, vsys_reg};
-use radium::smp::{CTX, cpu_local};
+use radium::scheduler::{self, CURRENT_THREAD_ID, VsysThread, sleep, vsys_reg};
+use radium::smp::CTX;
 use radium::utils::mutex::Mutex;
 use radium::{print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
@@ -61,11 +61,7 @@ fn kmain_thread() {
     for _ in 0..16 {
         scheduler::spawn(|| {
             for send in 0..10 {
-                log!(
-                    Trace,
-                    "Sending request from id {}...",
-                    cpu_local().current_thread_id()
-                );
+                log!(Trace, "Sending request from id {}...", *CURRENT_THREAD_ID);
 
                 let ret: u64;
                 let res: u64;
@@ -85,7 +81,7 @@ fn kmain_thread() {
         for i in 0..64 {
             serial_println!(
                 "Thread {} [{i}]: popped {:?}",
-                cpu_local().current_thread_id(),
+                *CURRENT_THREAD_ID,
                 TEST_MUTEX.lock().pop()
             );
             sleep(100);
@@ -93,13 +89,10 @@ fn kmain_thread() {
     }));
     handles.push(scheduler::spawn(|| {
         for i in 0..64 {
-            serial_println!(
-                "Thread {} [{i}]: trying to push",
-                cpu_local().current_thread_id()
-            );
+            serial_println!("Thread {} [{i}]: trying to push", *CURRENT_THREAD_ID);
             sleep(100);
             TEST_MUTEX.lock().push(i * 10);
-            serial_println!("Thread {} [{i}]: pushed", cpu_local().current_thread_id());
+            serial_println!("Thread {} [{i}]: pushed", *CURRENT_THREAD_ID);
         }
     }));
 
@@ -107,7 +100,7 @@ fn kmain_thread() {
         log!(
             Debug,
             "this should be thread 2, current tid {}",
-            cpu_local().current_thread_id()
+            *CURRENT_THREAD_ID
         );
     }));
 

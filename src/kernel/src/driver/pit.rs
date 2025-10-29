@@ -6,9 +6,8 @@ use spin::Mutex;
 use crate::{
     hlt,
     initialization_context::{End, InitializationContext},
-    interrupt::InterruptIndex,
+    interrupt::{InterruptIndex, LAST_INTERRUPT_NO},
     port::{Port, Port8Bit, PortReadWrite, PortWrite},
-    smp::cpu_local,
 };
 
 pub static PIT: OnceCell<Mutex<ProgrammableIntervalTimer>> = OnceCell::uninit();
@@ -94,8 +93,8 @@ impl ProgrammableIntervalTimer {
         unsafe { self.channel0_data.write((pit & 0xFF) as u8) };
         unsafe { self.channel0_data.write(((pit >> 8) & 0xFF) as u8) };
 
-        cpu_local().last_interrupt_no = 0;
-        while cpu_local().last_interrupt_no != InterruptIndex::PITVector as u8 {
+        *LAST_INTERRUPT_NO.inner_mut() = 0;
+        while *LAST_INTERRUPT_NO != InterruptIndex::PITVector as u8 {
             hlt();
         }
     }

@@ -5,11 +5,14 @@ use pager::{address::VirtAddr, registers::RFlags};
 use spin::RwLock;
 
 use crate::{
-    const_assert, hlt_loop,
+    const_assert,
+    gdt::CODE_SEG,
+    hlt_loop,
     initialization_context::{End, InitializationContext},
-    interrupt::ExtendedInterruptStackFrame,
+    interrupt::{CORE_ID, ExtendedInterruptStackFrame},
     memory::stack_allocator::Stack,
-    smp::{CTX, CoreId, MAX_CPU, cpu_local},
+    scheduler::CURRENT_THREAD_ID,
+    smp::{CTX, CoreId, MAX_CPU},
     utils::spin_mpsc::SpinMPSC,
 };
 
@@ -301,7 +304,7 @@ impl ThreadState {
             rbx: 0,
             rax: 0,
             instruction_pointer: VirtAddr::new(thread_trampoline::<F> as u64),
-            code_segment: cpu_local().code_seg().0.into(),
+            code_segment: CODE_SEG.0.into(),
             cpu_flags: RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable,
             stack_pointer: context.stack.top(),
             stack_segment: 0,
@@ -338,13 +341,12 @@ impl ThreadState {
 
 impl Thread {
     pub fn restore(self, stack_frame: &mut ExtendedInterruptStackFrame) {
-        // SAFETY: This is safe because thread can only be created in this module
-        unsafe { cpu_local().set_tid(self.global_id) };
+        *CURRENT_THREAD_ID.inner_mut() = self.global_id;
         self.state.restore(stack_frame);
     }
 
     pub fn capture(stack_frame: &ExtendedInterruptStackFrame) -> Self {
-        let global_id = cpu_local().current_thread_id();
+        let global_id = *CURRENT_THREAD_ID;
         Thread {
             global_id,
             local_id: GLOBAL_THREAD_ID_MAP.read().translate(global_id),
@@ -371,7 +373,7 @@ impl Thread {
 
     pub fn migrate(&mut self, new_local_thread: u32) {
         let new_local = LocalThreadId {
-            core: cpu_local().core_id(),
+            core: *CORE_ID,
             thread: new_local_thread,
         };
         GLOBAL_THREAD_ID_MAP
@@ -425,7 +427,7 @@ pub fn global_id_to_local_id(global_id: usize) -> LocalThreadId {
 impl LocalThreadId {
     pub fn create_local(thread: u32) -> Self {
         Self {
-            core: cpu_local().core_id(),
+            core: *CORE_ID,
             thread,
         }
     }
@@ -509,9 +511,7 @@ impl ThreadPool {
     }
 
     pub fn check_migrate(&mut self, mut callback: impl FnMut(Thread)) {
-        while let Some((mut thread, thread_ctx)) =
-            THREAD_MIGRATE_QUEUE[cpu_local().core_id().id()].pop()
-        {
+        while let Some((mut thread, thread_ctx)) = THREAD_MIGRATE_QUEUE[CORE_ID.id()].pop() {
             if let Some(id) = self.invalid_thread.pop() {
                 thread.migrate(id as u32);
                 assert!(thread_ctx.alive);
@@ -528,19 +528,19 @@ impl ThreadPool {
     }
 
     pub fn pin(&mut self, thread: &Thread) {
-        assert!(thread.local_id().core == cpu_local().core_id());
+        assert!(thread.local_id().core == *CORE_ID);
 
         self.pool[thread.local_id().thread as usize].pinned = true;
     }
 
     pub fn unpin(&mut self, thread: &Thread) {
-        assert!(thread.local_id().core == cpu_local().core_id());
+        assert!(thread.local_id().core == *CORE_ID);
 
         self.pool[thread.local_id().thread as usize].pinned = false;
     }
 
     pub fn is_pinned(&mut self, thread: &Thread) -> bool {
-        assert!(thread.local_id().core == cpu_local().core_id());
+        assert!(thread.local_id().core == *CORE_ID);
 
         self.pool[thread.local_id().thread as usize].pinned
     }
@@ -563,7 +563,7 @@ impl ThreadPool {
 
     pub fn free(&mut self, thread: Thread) {
         assert!(
-            thread.local_id().core == cpu_local().core_id(),
+            thread.local_id().core == *CORE_ID,
             "Thread has been migrated without changing the local id"
         );
         assert!(
