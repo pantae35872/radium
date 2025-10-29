@@ -6,7 +6,7 @@ use core::{
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use conquer_once::spin::OnceCell;
-use kernel_proc::{def_local, local_gen};
+use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
     EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
@@ -206,11 +206,14 @@ pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>
 
 type LocalInitialize =
     dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync;
+type LocalInitializeV2 =
+    dyn Fn(&mut CpuLocalBuilder2, &mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterInitializer = dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync;
 type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<End>) + Send + Sync;
 
 pub struct LocalInitializer {
     local_initializers: Vec<Box<LocalInitialize>>,
+    local_initializers_v2: Vec<Box<LocalInitializeV2>>,
     after_initializers: Vec<Box<AfterInitializer>>,
     after_bsps: Vec<Box<AfterBspInitializers>>,
 }
@@ -219,6 +222,7 @@ impl LocalInitializer {
     pub const fn new() -> Self {
         Self {
             local_initializers: Vec::new(),
+            local_initializers_v2: Vec::new(),
             after_initializers: Vec::new(),
             after_bsps: Vec::new(),
         }
@@ -238,6 +242,16 @@ impl LocalInitializer {
         self.after_initializers.push(Box::new(initializer));
     }
 
+    pub fn register_v2(
+        &mut self,
+        initializer: impl Fn(&mut CpuLocalBuilder2, &mut InitializationContext<End>, CoreId)
+        + Send
+        + Sync
+        + 'static,
+    ) {
+        self.local_initializers_v2.push(Box::new(initializer));
+    }
+
     pub fn register(
         &mut self,
         initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
@@ -250,14 +264,18 @@ impl LocalInitializer {
 
     fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
         let mut cpu_local_builder = CpuLocalBuilder::new();
+        let mut cpu_local_builder_v2 = CpuLocalBuilder2::new();
         let id = CoreId::from(apic_id());
         log!(Debug, "Initializing cpu: {id}");
 
-        self.local_initializers
-            .iter()
-            .for_each(|e| e(&mut cpu_local_builder, ctx, id));
+        for initializer in self.local_initializers.iter() {
+            initializer(&mut cpu_local_builder, ctx, id);
+        }
+        for initializer_v2 in self.local_initializers_v2.iter() {
+            initializer_v2(&mut cpu_local_builder_v2, ctx, id);
+        }
 
-        init_local(cpu_local_builder, id);
+        init_local(cpu_local_builder, cpu_local_builder_v2, id);
 
         // We enable the interrupts after we're sure that the local has been initialized
         interrupt::enable();
@@ -289,20 +307,13 @@ pub struct CpuLocal {
     ticks_per_ms: Option<usize>,
     local_scheduler: LocalScheduler,
     pipeline: ControlPipeline,
-    ctx: Arc<Mutex<InitializationContext<End>>>,
     pub last_interrupt_no: u8,
     pub is_in_isr: bool,
-    core_count: usize,
     idt: &'static Idt,
     gdt: &'static Gdt,
 }
 
 impl CpuLocal {
-    #[inline]
-    pub fn core_count(&self) -> usize {
-        self.core_count
-    }
-
     #[inline]
     pub fn pipeline(&mut self) -> &mut ControlPipeline {
         &mut self.pipeline
@@ -328,10 +339,6 @@ impl CpuLocal {
 
     pub fn local_scheduler(&mut self) -> &mut LocalScheduler {
         &mut self.local_scheduler
-    }
-
-    pub fn ctx(&self) -> &Mutex<InitializationContext<End>> {
-        &self.ctx
     }
 
     pub fn code_seg(&self) -> SegmentSelector {
@@ -360,8 +367,6 @@ pub struct CpuLocalBuilder {
     gdt: Option<&'static Gdt>,
     idt: Option<&'static Idt>,
     code_seg: Option<SegmentSelector>,
-    core_count: Option<usize>,
-    initialization_contex: Option<Arc<Mutex<InitializationContext<End>>>>,
     local_scheduler: Option<LocalScheduler>,
     pipeline: Option<ControlPipeline>,
 }
@@ -373,25 +378,13 @@ impl CpuLocalBuilder {
             idt: None,
             gdt: None,
             code_seg: None,
-            initialization_contex: None,
             local_scheduler: None,
-            core_count: None,
             pipeline: None,
         }
     }
 
-    pub fn ctx(&mut self, ctx: Arc<Mutex<InitializationContext<End>>>) -> &mut Self {
-        self.initialization_contex = Some(ctx);
-        self
-    }
-
     pub fn scheduler(&mut self, scheduler: LocalScheduler) -> &mut Self {
         self.local_scheduler = Some(scheduler);
-        self
-    }
-
-    pub fn core_count(&mut self, core_count: usize) -> &mut Self {
-        self.core_count = Some(core_count);
         self
     }
 
@@ -420,27 +413,22 @@ impl CpuLocalBuilder {
         self
     }
 
-    fn build(self) -> Option<&'static CpuLocal> {
+    fn build(self) -> Option<CpuLocal> {
         let lapic = self.lapic?;
-        Some(Box::<CpuLocal>::leak(
-            CpuLocal {
-                core_id: lapic.id().into(),
-                idt: self.idt?,
-                apic_id: lapic.id(),
-                code_seg: self.code_seg?,
-                ctx: self.initialization_contex?,
-                local_scheduler: self.local_scheduler?,
-                last_interrupt_no: 0,
-                ticks_per_ms: None,
-                thread_id: 0,
-                is_in_isr: false,
-                core_count: self.core_count?,
-                lapic,
-                pipeline: self.pipeline?,
-                gdt: self.gdt?,
-            }
-            .into(),
-        ))
+        Some(CpuLocal {
+            core_id: lapic.id().into(),
+            idt: self.idt?,
+            apic_id: lapic.id(),
+            code_seg: self.code_seg?,
+            local_scheduler: self.local_scheduler?,
+            last_interrupt_no: 0,
+            ticks_per_ms: None,
+            thread_id: 0,
+            is_in_isr: false,
+            lapic,
+            pipeline: self.pipeline?,
+            gdt: self.gdt?,
+        })
     }
 }
 
@@ -450,18 +438,40 @@ impl Default for CpuLocalBuilder {
     }
 }
 
-fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
-    let Some(cpu_local) = builder.build() else {
+struct MergedCpuLocal {
+    v1: &'static mut CpuLocal,
+    v2: &'static mut CpuLocal2,
+}
+
+fn init_local(builder_v1: CpuLocalBuilder, builder_v2: CpuLocalBuilder2, core_id: CoreId) {
+    let Some(cpu_local) = builder_v1.build() else {
         log!(Error, "Failed to initialize Core: {core_id}");
         interrupt::disable();
         hlt_loop();
     };
+    let cpu_local = Box::leak(cpu_local.into());
+    let Some(cpu_local_v2) = builder_v2.build() else {
+        log!(Error, "Failed to initialize Core: {core_id}");
+        interrupt::disable();
+        hlt_loop();
+    };
+    let cpu_local_v2 = Box::leak(cpu_local_v2.into());
     log!(
         Trace,
-        "CORE {core_id} Local address at: {:#x}",
-        cpu_local as *const CpuLocal as u64
+        "CORE {core_id} CpuLocal address at: {:#x}, CpuLocal2 address at: {:#x}",
+        cpu_local as *const CpuLocal as u64,
+        cpu_local_v2 as *const CpuLocal2 as u64
     );
-    let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
+
+    let merged = Box::leak(
+        MergedCpuLocal {
+            v1: cpu_local,
+            v2: cpu_local_v2,
+        }
+        .into(),
+    );
+
+    let ptr = Box::leak((merged as *const MergedCpuLocal as u64).into());
     // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
     unsafe {
         KernelGsBase::write(VirtAddr::new(ptr as *const u64 as u64));
@@ -523,12 +533,8 @@ pub fn cpu_local_avaiable() -> bool {
     !(KernelGsBase::read().is_null() || GsBase::read().is_null())
 }
 
-/// Get the cpu local
-///
-/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
-#[inline(always)]
-pub fn cpu_local() -> &'static mut CpuLocal {
-    let ptr: *mut CpuLocal;
+fn cpu_local_merged() -> &'static mut MergedCpuLocal {
+    let ptr: *mut MergedCpuLocal;
     if KernelGsBase::read().is_null() || GsBase::read().is_null() {
         panic!("Trying to access cpu local while, it's has not been initialized");
     }
@@ -536,6 +542,19 @@ pub fn cpu_local() -> &'static mut CpuLocal {
         core::arch::asm!("mov {}, gs:0", out(reg) ptr);
     }
     unsafe { &mut *ptr }
+}
+
+/// Get the cpu local
+///
+/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
+#[inline(always)]
+pub fn cpu_local() -> &'static mut CpuLocal {
+    cpu_local_merged().v1
+}
+
+#[inline(always)]
+pub fn cpu_local2() -> &'static mut CpuLocal2 {
+    cpu_local_merged().v2
 }
 
 select_context! {
@@ -554,17 +573,6 @@ impl InitializationContext<End> {
         initializer.initialize_current(self);
         self.context_mut().local_initializer = Some(initializer);
     }
-}
-
-#[macro_export]
-macro_rules! local_init {
-    ($ctx: ident, $local_name: ident, $create: expr $(,)?) => {
-        $ctx.local_initializer(|i| {
-            i.register(|builder, ctx, id| {
-                kernel_proc::__builder!($local_name, $create);
-            })
-        });
-    };
 }
 
 pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
@@ -592,23 +600,23 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
     ctx.next(Some(LocalInitializer::new()))
 }
 
-def_local!(static CORE_COUNT: usize);
+def_local!(pub static CORE_COUNT: usize);
+def_local!(pub static CTX: Arc<Mutex<InitializationContext<End>>>);
 local_gen!();
-
-pub fn cpu_local2() -> &'static mut CpuLocal2 {
-    todo!()
-}
 
 pub fn init_aps(mut ctx: InitializationContext<End>) {
     let ap_initializer = ApInitializer::new(&mut ctx);
     let ctx = Arc::new(Mutex::new(ctx));
     let ctx_cloned = Arc::clone(&ctx);
+
     ctx.lock().local_initializer(|i| {
-        i.register(move |builder, ctx, _id| {
-            builder
-                .core_count(ctx.context().processors().len())
-                .ctx(ctx_cloned.clone());
-        })
+        i.register_v2(move |builder, ctx, _id| {
+            local_builder!(
+                builder,
+                CORE_COUNT(ctx.context().processors().len()),
+                CTX(ctx_cloned.clone())
+            );
+        });
     });
     ctx.lock().initialize_current();
 

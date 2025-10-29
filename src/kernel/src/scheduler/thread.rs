@@ -9,7 +9,7 @@ use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::ExtendedInterruptStackFrame,
     memory::stack_allocator::Stack,
-    smp::{CoreId, MAX_CPU, cpu_local},
+    smp::{CTX, CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
 };
 
@@ -495,13 +495,13 @@ impl ThreadPool {
         }
 
         if let Some(id) = self.invalid_thread.pop() {
-            let new_context = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
+            let new_context = ThreadPool::alloc_context(&mut CTX.lock())?;
             let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
             self.pool[id] = new_context;
             return Ok(thread);
         }
 
-        let new_context = ThreadPool::alloc_context(&mut cpu_local().ctx().lock())?;
+        let new_context = ThreadPool::alloc_context(&mut CTX.lock())?;
         let id = self.pool.len();
         let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
         self.pool.push(new_context);

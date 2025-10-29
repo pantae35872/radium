@@ -63,6 +63,8 @@ use smp::{ALL_AP_INITIALIZED, cpu_local, cpu_local_avaiable};
 use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
+use crate::smp::CTX;
+
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
@@ -92,7 +94,7 @@ where
         }
         sleep(1000);
 
-        uefi_runtime::init(&mut cpu_local().ctx().lock());
+        uefi_runtime::init(&mut CTX.lock());
 
         main_thread()
     });

@@ -28,7 +28,7 @@ use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
-    smp::{CoreId, MAX_CPU, cpu_local},
+    smp::{CORE_COUNT, CoreId, MAX_CPU, cpu_local},
     utils::spin_mpsc::SpinMPSC,
 };
 
@@ -128,7 +128,7 @@ impl LocalScheduler {
         for (_, queue) in WAIT_EXIT_NOTICE
             .iter()
             .enumerate()
-            .filter(|(c, _)| *c != cpu_local().core_id().id() && *c < cpu_local().core_count())
+            .filter(|(c, _)| *c != cpu_local().core_id().id() && *c < *CORE_COUNT)
         {
             while queue.push(global_id).is_err() {
                 core::hint::spin_loop();
@@ -359,9 +359,7 @@ impl LocalScheduler {
         FUTEX_CHECK
             .iter()
             .enumerate()
-            .filter(|(core, _)| {
-                cpu_local().core_id().id() != *core && *core < cpu_local().core_count()
-            })
+            .filter(|(core, _)| cpu_local().core_id().id() != *core && *core < *CORE_COUNT)
             .for_each(|(c, e)| {
                 while e.push(addr).is_err() {
                     cpu_local()

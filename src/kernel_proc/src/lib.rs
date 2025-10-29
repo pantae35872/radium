@@ -11,11 +11,13 @@ use std::{
 };
 
 use proc_macro::{Span, TokenStream};
-use quote::{format_ident, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, Ident, Token, Type,
+    Expr, Ident, Token, Type, parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input,
+    punctuated::Punctuated,
+    token::Paren,
 };
 
 #[proc_macro]
@@ -123,30 +125,65 @@ pub fn local_gen(_input: TokenStream) -> TokenStream {
 }
 
 struct Builder {
-    name: Ident,
+    builder: Ident,
     _comma: Token![,],
-    create: Expr,
+    builds: Punctuated<BuilderBuild, Token![,]>,
 }
 
 impl Parse for Builder {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
-            name: input.parse()?,
+            builder: input.parse()?,
             _comma: input.parse()?,
-            create: input.parse()?,
+            builds: input.parse_terminated(BuilderBuild::parse, Token![,])?,
         })
     }
 }
 
+struct BuilderBuild {
+    name: Ident,
+    _paren: Paren,
+    create: Expr,
+}
+
+impl Parse for BuilderBuild {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let create_expr;
+        Ok(Self {
+            name: input.parse()?,
+            _paren: parenthesized!(create_expr in input),
+            create: create_expr.parse()?,
+        })
+    }
+}
+
+impl ToTokens for BuilderBuild {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
+        let name = &self.name;
+        let create = &self.create;
+        quote! {
+            #name(#create)
+        }
+        .to_tokens(tokens);
+    }
+}
+
 #[proc_macro]
-pub fn __builder(input: TokenStream) -> TokenStream {
-    let Builder { name, create, .. } = parse_macro_input!(input as Builder);
+pub fn local_builder(input: TokenStream) -> TokenStream {
+    let Builder {
+        builder,
+        mut builds,
+        ..
+    } = parse_macro_input!(input as Builder);
     let module = Span::call_site().file().replace("/", "_");
     let module = module.trim_suffix(".rs");
-    let full_name = format_ident!("__{module}_{name}");
+    for build in builds.iter_mut() {
+        build.name = format_ident!("__{module}_{}", build.name);
+    }
+    let builds = builds.iter();
 
     quote! {
-        builder.#full_name(#create)
+        #(#builder.#builds);*
     }
     .into()
 }
@@ -276,7 +313,7 @@ fn write_cpu_local(path: &Path, full_name: &Ident, ty: &str) {
 
 #[proc_macro]
 pub fn def_local(input: TokenStream) -> TokenStream {
-    let Def { name, ty, .. } = parse_macro_input!(input as Def);
+    let Def { vis, name, ty, .. } = parse_macro_input!(input as Def);
     let module = Span::call_site().file().replace("/", "_");
     let module = module.trim_suffix(".rs");
     let full_name = format_ident!("__{module}_{name}");
@@ -290,19 +327,7 @@ pub fn def_local(input: TokenStream) -> TokenStream {
     let builder_build = out_dir.join("local_gen_builder_build.rs");
     let builder_set = out_dir.join("local_gen_builder_set.rs");
 
-    let str_type = match ty {
-        Type::Path(ref path) => path.path.segments.iter().map(|s| s.ident.to_string()).fold(
-            String::new(),
-            |mut acc: String, s: String| {
-                if !acc.is_empty() {
-                    acc.push_str("::");
-                }
-                acc.push_str(&s);
-                acc
-            },
-        ),
-        _ => unimplemented!(),
-    };
+    let str_type = quote! { #ty }.to_string();
 
     write_cpu_local(&local_path, &full_name, &str_type);
     write_cpu_local_builder_struct(&builder_struct, &full_name, &str_type);
@@ -310,28 +335,33 @@ pub fn def_local(input: TokenStream) -> TokenStream {
     write_cpu_local_builder_set(&builder_set, &full_name, &str_type);
 
     quote! {
-        struct #access_type;
+        #vis struct #access_type;
 
         impl core::ops::Deref for #access_type {
             type Target = #ty;
 
             fn deref(&self) -> &Self::Target {
-                &crate::smp::cpu_local2().#full_name
+                self.inner()
             }
         }
 
-        impl core::ops::DerefMut for #access_type {
-            fn deref_mut(&mut self) -> &mut Self::Target {
+        impl #access_type {
+            pub fn inner(&self) -> &'static #ty {
+                &crate::smp::cpu_local2().#full_name
+            }
+
+            pub fn inner_mut(&self) -> &'static mut #ty {
                 &mut crate::smp::cpu_local2().#full_name
             }
         }
 
-        static #name: #access_type = #access_type;
+        #vis static #name: #access_type = #access_type;
     }
     .into()
 }
 
 struct Def {
+    vis: Option<Token![pub]>,
     _static: Token![static],
     name: Ident,
     _colon: Token![:],
@@ -341,6 +371,7 @@ struct Def {
 impl Parse for Def {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         Ok(Self {
+            vis: input.parse()?,
             _static: input.parse()?,
             name: input.parse()?,
             _colon: input.parse()?,
