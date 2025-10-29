@@ -188,6 +188,8 @@ fn tracked_write_file(
             .unwrap();
     }
 
+    wrote.clear();
+
     if let Ok(mut ok) = OpenOptions::new().read(true).open(path) {
         ok.read_to_string(&mut wrote).unwrap();
     }
@@ -202,7 +204,7 @@ fn tracked_write_file(
     let hash = hash.finish().to_string();
     let should_write = !wrote
         .lines()
-        .any(|e| e.strip_prefix("//").is_some_and(|e| e == hash));
+        .any(|e| e.trim().strip_prefix("//").is_some_and(|e| e == hash));
 
     if should_write {
         OpenOptions::new()
@@ -279,7 +281,6 @@ pub fn def_local(input: TokenStream) -> TokenStream {
     let module = module.trim_suffix(".rs");
     let full_name = format_ident!("__{module}_{name}");
     let access_type = format_ident!("__Access{full_name}");
-    let name_mut = format_ident!("{full_name}_mut");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     assert!(out_dir.exists());
