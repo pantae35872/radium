@@ -13,4 +13,6 @@ static PACKETS: [SpinMPSC<PacketData, PACKET_CAPACITY>; MAX_CPU] =
 
 pub struct IPPPipeline {}
 
+impl IPPPipeline {}
+
 pub trait IPPPacket {}

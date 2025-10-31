@@ -1,16 +1,30 @@
+use super::Endian;
+use crate::buffer::BufferReadError;
+
 pub struct BufferReader<'a> {
     buffer: &'a [u8],
     index: usize,
 }
 
-pub enum Endian {
-    BigEndian,
-    LittleEndian,
-}
-
-#[derive(Debug)]
-pub enum BufferReadError {
-    OutOfRange,
+macro_rules! impl_read {
+    ($name:ident, $ty:ty, $len:expr) => {
+        paste::paste! {
+            pub fn $name(&mut self) -> Result<$ty, BufferReadError> {
+                self.[< $name _with_endian>](Endian::Little)
+            }
+            pub fn [< $name _with_endian >](&mut self, endian: Endian) -> Result<$ty, BufferReadError> {
+                let bytes = self.read_bytes($len)?;
+                let arr: [u8; $len] = bytes.try_into().expect(concat!(
+                    "The length of read bytes is somehow not ",
+                    stringify!($len)
+                ));
+                Ok(match endian {
+                    Endian::Big => <$ty>::from_be_bytes(arr),
+                    Endian::Little => <$ty>::from_le_bytes(arr),
+                })
+            }
+        }
+    };
 }
 
 impl<'a> BufferReader<'a> {
@@ -24,11 +38,15 @@ impl<'a> BufferReader<'a> {
         }
         let value = self.buffer[self.index];
         self.index += 1;
-        return Ok(value);
+        Ok(value)
     }
 
     pub fn get_index(&self) -> usize {
-        return self.index;
+        self.index
+    }
+
+    pub fn len(&self) -> usize {
+        self.buffer.len()
     }
 
     pub fn read_bytes(&mut self, amount: usize) -> Result<&'a [u8], BufferReadError> {
@@ -40,104 +58,20 @@ impl<'a> BufferReader<'a> {
         Ok(result)
     }
 
-    pub fn read_i32(&mut self, endian: Endian) -> Result<i32, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(i32::from_be_bytes(
-                self.read_bytes(4)?[0..4]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 4"),
-            )),
-            Endian::LittleEndian => Ok(i32::from_le_bytes(
-                self.read_bytes(4)?[0..4]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 4"),
-            )),
-        }
-    }
-    pub fn read_u32(&mut self, endian: Endian) -> Result<u32, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(u32::from_be_bytes(
-                self.read_bytes(4)?[0..4]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 4"),
-            )),
-            Endian::LittleEndian => Ok(u32::from_le_bytes(
-                self.read_bytes(4)?[0..4]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 4"),
-            )),
-        }
-    }
-    pub fn read_i64(&mut self, endian: Endian) -> Result<i64, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(i64::from_be_bytes(
-                self.read_bytes(8)?[0..8]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 8"),
-            )),
-            Endian::LittleEndian => Ok(i64::from_le_bytes(
-                self.read_bytes(8)?[0..8]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 8"),
-            )),
-        }
-    }
-    pub fn read_u64(&mut self, endian: Endian) -> Result<u64, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(u64::from_be_bytes(
-                self.read_bytes(8)?[0..8]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 8"),
-            )),
-            Endian::LittleEndian => Ok(u64::from_le_bytes(
-                self.read_bytes(8)?[0..8]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 8"),
-            )),
-        }
-    }
+    impl_read!(read_i8, i8, 1);
+    impl_read!(read_i16, i16, 2);
+    impl_read!(read_i32, i32, 4);
+    impl_read!(read_i64, i64, 8);
 
-    pub fn read_u16(&mut self, endian: Endian) -> Result<u16, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(u16::from_be_bytes(
-                self.read_bytes(2)?[0..2]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 2"),
-            )),
-            Endian::LittleEndian => Ok(u16::from_le_bytes(
-                self.read_bytes(2)?[0..2]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 2"),
-            )),
-        }
-    }
-    pub fn read_i16(&mut self, endian: Endian) -> Result<i16, BufferReadError> {
-        match endian {
-            Endian::BigEndian => Ok(i16::from_be_bytes(
-                self.read_bytes(2)?[0..2]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 2"),
-            )),
-            Endian::LittleEndian => Ok(i16::from_le_bytes(
-                self.read_bytes(2)?[0..2]
-                    .try_into()
-                    .expect("The length of read bytes is somehow not 2"),
-            )),
-        }
-    }
+    impl_read!(read_u16, u16, 2);
+    impl_read!(read_u32, u32, 4);
+    impl_read!(read_u64, u64, 8);
+
     pub fn skip(&mut self, amount: usize) -> Result<(), BufferReadError> {
         if self.index + amount > self.buffer.len() {
             return Err(BufferReadError::OutOfRange);
         }
         self.index += amount;
-        return Ok(());
-    }
-
-    pub fn go_to(&mut self, offset: usize) -> Result<(), BufferReadError> {
-        if offset > self.buffer.len() {
-            return Err(BufferReadError::OutOfRange);
-        }
-        self.index = offset;
-        return Ok(());
+        Ok(())
     }
 }
