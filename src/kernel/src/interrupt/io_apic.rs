@@ -11,7 +11,7 @@ use crate::{
     },
     initialization_context::{InitializationContext, Stage3, select_context},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    utils::VolatileCell,
+    sync::VolatileCell,
 };
 use sentinel::log;
 

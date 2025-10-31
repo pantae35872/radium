@@ -5,7 +5,7 @@
 
 use core::{
     cell::UnsafeCell,
-    mem::{zeroed, MaybeUninit},
+    mem::{MaybeUninit, zeroed},
     ptr,
     sync::atomic::{AtomicUsize, Ordering},
 };

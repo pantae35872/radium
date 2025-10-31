@@ -13,7 +13,7 @@ use crate::{
     memory::stack_allocator::Stack,
     scheduler::CURRENT_THREAD_ID,
     smp::{CTX, CoreId, MAX_CPU},
-    utils::spin_mpsc::SpinMPSC,
+    sync::spin_mpsc::SpinMPSC,
 };
 
 use super::{SchedulerError, driv_exit, thread_wait_exit};

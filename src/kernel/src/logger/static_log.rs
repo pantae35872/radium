@@ -9,7 +9,7 @@ use crc::{
     crc64::{self},
 };
 
-use crate::utils::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
+use crate::sync::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
 
 use super::{CallbackFormatter, LogLevel};
 

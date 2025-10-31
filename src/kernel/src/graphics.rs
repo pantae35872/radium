@@ -1,4 +1,4 @@
-use crate::utils::mutex::Mutex;
+use crate::sync::mutex::Mutex;
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bootbridge::{BootBridge, GraphicsInfo, PixelFormat};

@@ -30,7 +30,7 @@ use crate::{
     initialization_context::{End, InitializationContext},
     interrupt::{CORE_ID, ExtendedInterruptStackFrame, InterruptIndex, LAPIC, TPMS},
     smp::{CORE_COUNT, CoreId, MAX_CPU},
-    utils::spin_mpsc::SpinMPSC,
+    sync::spin_mpsc::SpinMPSC,
 };
 
 mod thread;

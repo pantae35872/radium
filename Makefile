@@ -211,4 +211,3 @@ test:
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf $(DISK_FILE)
-	rm -rf $(KERNEL_FONT)

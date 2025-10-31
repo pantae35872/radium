@@ -18,7 +18,7 @@ use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
 use radium::scheduler::{self, CURRENT_THREAD_ID, VsysThread, sleep, vsys_reg};
 use radium::smp::CTX;
-use radium::utils::mutex::Mutex;
+use radium::sync::mutex::Mutex;
 use radium::{print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
 use sentinel::log;

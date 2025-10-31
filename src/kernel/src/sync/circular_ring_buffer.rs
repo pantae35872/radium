@@ -230,52 +230,56 @@ pub mod lockfree {
         }
 
         fn write(&self, value: T) {
-            interrupt::without_interrupts(|| loop {
-                match self
-                    .state
-                    .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-                {
-                    Ok(..) => {
-                        let data = unsafe { &mut *self.data.get() };
-                        *data = Some(value);
-
-                        // This point is where interrupts may occurs, and causing a deadlock
-
-                        self.state.store(2, Ordering::Release);
-                        break;
-                    }
-                    Err(state) => match state {
-                        1 => continue,
-                        2 => {
+            interrupt::without_interrupts(|| {
+                loop {
+                    match self
+                        .state
+                        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+                    {
+                        Ok(..) => {
                             let data = unsafe { &mut *self.data.get() };
                             *data = Some(value);
+
+                            // This point is where interrupts may occurs, and causing a deadlock
+
+                            self.state.store(2, Ordering::Release);
                             break;
                         }
-                        _ => panic!("Invalid state in slot"),
-                    },
+                        Err(state) => match state {
+                            1 => continue,
+                            2 => {
+                                let data = unsafe { &mut *self.data.get() };
+                                *data = Some(value);
+                                break;
+                            }
+                            _ => panic!("Invalid state in slot"),
+                        },
+                    }
                 }
             });
         }
 
         fn take(&self) -> Option<T> {
-            interrupt::without_interrupts(|| loop {
-                match self
-                    .state
-                    .compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed)
-                {
-                    Ok(..) => {
-                        let data = unsafe { &mut *self.data.get() };
-                        let result = data.take();
+            interrupt::without_interrupts(|| {
+                loop {
+                    match self
+                        .state
+                        .compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed)
+                    {
+                        Ok(..) => {
+                            let data = unsafe { &mut *self.data.get() };
+                            let result = data.take();
 
-                        self.state.store(0, Ordering::Release);
+                            self.state.store(0, Ordering::Release);
 
-                        return result;
+                            return result;
+                        }
+                        Err(state) => match state {
+                            1 => continue,
+                            0 => break None,
+                            _ => panic!("Invalid state in slot"),
+                        },
                     }
-                    Err(state) => match state {
-                        1 => continue,
-                        0 => break None,
-                        _ => panic!("Invalid state in slot"),
-                    },
                 }
             })
         }

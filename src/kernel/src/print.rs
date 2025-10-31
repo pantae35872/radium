@@ -3,7 +3,7 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Stage2};
-use crate::utils::mutex::Mutex;
+use crate::sync::mutex::Mutex;
 use conquer_once::spin::OnceCell;
 use sentinel::log;
 

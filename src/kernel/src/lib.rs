@@ -13,7 +13,7 @@
 #![feature(iter_array_chunks)]
 #![feature(decl_macro)]
 #![feature(assert_matches)]
-#![recursion_limit = "512"]
+#![recursion_limit = "16384"]
 #![allow(internal_features)]
 #![allow(dead_code)]
 #![allow(unused_macros)]
@@ -26,6 +26,7 @@ extern crate core;
 extern crate lazy_static;
 extern crate spin;
 
+pub mod buffer;
 pub mod driver;
 pub mod gdt;
 pub mod graphics;
@@ -37,6 +38,7 @@ pub mod port;
 pub mod print;
 pub mod scheduler;
 pub mod serial;
+pub mod sync;
 pub mod userland;
 pub mod utils;
 
