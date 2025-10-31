@@ -1,6 +1,29 @@
+//! This module manages all sorts of pipeline[^pipeline] that will be executed in an event of a request
+//! either from a user syscall or a hardware interrupt, returning the [`Dispatcher`] as a result.
+//!
+//! **Use** [`handle_request`] **function to handle the request, the return value will be the**
+//! [`Dispatcher`].
+//!
+//! # Implementaion details
+//!
+//! The main data structure of this module is the [`ControlPipeline`] (a cpu local), it contains all
+//! of the pipeline[^pipeline] that is to be executed when a request comes in. the main idea is that we have a request
+//! independent state (the pipeline[^pipeline] stores in [`ControlPipeline`]), and rd[^rd] state
+//! [`PipelineContext`].
+//!
+//! When a request comes in the [`handle_request`] function will create an rd[^rd] context, that context can be used to call
+//! different functions within the [`ControlPipeline`] to operate on that context, returning a
+//! result depending to that context. This creates a clean seperation between specific request.
+//!
+//! **Use** [`ControlPipeline::create_context`] to create a context that is rd[^rd].
+//!
+//!
+//! # Definitions
+//! [^rd]: referring to a request dependent state
+//! [^pipeline]: a request independent procedure managing different type of resources (e.g. thread resources, process resources, ..).
+
 use alloc::vec::Vec;
 use kernel_proc::{def_local, local_builder};
-use pager::paging::{ActivePageTable, table::RecurseLevel4};
 
 use crate::{
     initialization_context::{End, InitializationContext},
@@ -17,10 +40,24 @@ use crate::{
 };
 
 mod dispatch;
+mod ipp;
 mod process;
 mod scheduler;
 mod thread;
 
+pub fn init(ctx: &mut InitializationContext<End>) {
+    ctx.local_initializer(|i| {
+        i.register(|builder, _ctx, _id| {
+            local_builder!(builder, PIPELINE(ControlPipeline::new()));
+        })
+    });
+}
+
+def_local!(pub static PIPELINE: crate::userland::pipeline::ControlPipeline);
+
+/// A cpu local structure that contains all the specific request independent pipelines (the state is shared
+/// across request), use [`ControlPipeline::create_context`] to create the specific request
+/// context.
 pub struct ControlPipeline {
     thread: ThreadPipeline,
     process: ProcessPipeline,
@@ -96,17 +133,26 @@ impl ControlPipeline {
 }
 
 /// A lightweight struct to store just enough data to know which process or thread, we're talking
-/// about
+/// about (an indirect reference)
 #[derive(Debug, Clone, Copy)]
 struct TaskBlock {
     thread: Thread,
     process: Process,
 }
 
+/// A structure describing the context of the requester.
 pub struct CommonRequestContext<'a> {
     stack_frame: &'a ExtendedInterruptStackFrame,
-    page_table: ActivePageTable<RecurseLevel4>,
     referer: RequestReferer,
+}
+
+impl<'a> CommonRequestContext<'a> {
+    pub fn new(stack_frame: &'a ExtendedInterruptStackFrame, referer: RequestReferer) -> Self {
+        Self {
+            stack_frame,
+            referer,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -115,22 +161,15 @@ pub enum RequestReferer {
     SyscallRequest(SyscallId),
 }
 
-def_local!(pub static PIPELINE: crate::userland::pipeline::ControlPipeline);
-
+/// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
+/// [`Dispatcher`] that must be used to operate the right following actions.
+#[must_use]
 pub fn handle_request(context: CommonRequestContext<'_>) -> Dispatcher {
     let pipeline = PIPELINE.inner_mut();
     let mut context = pipeline.create_context(&context);
     pipeline.handle_syscall(&mut context);
     pipeline.schedule(&mut context);
     Dispatcher::new(context)
-}
-
-pub fn init(ctx: &mut InitializationContext<End>) {
-    ctx.local_initializer(|i| {
-        i.register(|builder, _ctx, _id| {
-            local_builder!(builder, PIPELINE(ControlPipeline::new()));
-        })
-    });
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -174,6 +213,10 @@ impl TaskProcesserState {
             rax: context.stack_frame.rax,
             extended_state: ExtendedState,
         }
+    }
+
+    fn empty() -> Self {
+        Self::default()
     }
 }
 

@@ -12,6 +12,7 @@
 #![feature(iter_next_chunk)]
 #![feature(iter_array_chunks)]
 #![feature(decl_macro)]
+#![feature(assert_matches)]
 #![recursion_limit = "512"]
 #![allow(internal_features)]
 #![allow(dead_code)]

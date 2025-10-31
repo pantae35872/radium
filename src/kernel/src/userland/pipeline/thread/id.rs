@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use spin::RwLock;
 
-use crate::userland::pipeline::thread::LocalThreadId;
+use crate::userland::pipeline::thread::{LocalThreadId, Thread};
 
 static GLOBAL_THREAD_ID_MAP: RwLock<GlobalThreadIdPool> = RwLock::new(GlobalThreadIdPool::new());
 
@@ -12,7 +12,7 @@ struct GlobalThreadIdPool {
 }
 
 impl GlobalThreadIdPool {
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             pool: Vec::new(),
             free_id: Vec::new(),
@@ -55,4 +55,15 @@ struct GlobalThreadIdData {
 
 pub fn translate_to_local(global_id: usize) -> LocalThreadId {
     GLOBAL_THREAD_ID_MAP.read().translate(global_id)
+}
+
+pub fn alloc_thread(local_id: LocalThreadId) -> Thread {
+    Thread {
+        global_id: GLOBAL_THREAD_ID_MAP.write().alloc(local_id),
+        local_id,
+    }
+}
+
+pub fn free_thread(thread: Thread) {
+    GLOBAL_THREAD_ID_MAP.write().free(thread.global_id);
 }
