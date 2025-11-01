@@ -112,6 +112,10 @@ impl ControlPipeline {
         }
     }
 
+    fn handle_ipp(&mut self) {
+        self.thread.handle_ipp();
+    }
+
     fn handle_syscall(&mut self, context: &mut PipelineContext) {}
 
     fn schedule(&mut self, context: &mut PipelineContext) {
@@ -163,10 +167,16 @@ pub enum RequestReferer {
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
 /// [`Dispatcher`] that must be used to operate the right following actions.
 #[must_use]
-pub fn handle_request(context: CommonRequestContext<'_>) -> Dispatcher {
+pub fn handle_request(rq_context: CommonRequestContext<'_>) -> Dispatcher {
     let pipeline = PIPELINE.inner_mut();
-    let mut context = pipeline.create_context(&context);
-    pipeline.handle_syscall(&mut context);
+    let mut context = pipeline.create_context(&rq_context);
+    match rq_context.referer {
+        RequestReferer::SyscallRequest(..) => pipeline.handle_syscall(&mut context),
+        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => pipeline.handle_ipp(),
+        RequestReferer::HardwareInterrupt(i) => {
+            todo!("Handle {i:?} hardware interrupt in the scheduler")
+        }
+    }
     pipeline.schedule(&mut context);
     Dispatcher::new(context)
 }

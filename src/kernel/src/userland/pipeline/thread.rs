@@ -9,7 +9,7 @@
 //! to the thread resources, This is done because directly giving a reference to the thread resources
 //! can causes borrow checker problems.
 
-use core::assert_matches::assert_matches;
+use core::{assert_matches::assert_matches, mem::zeroed};
 
 use alloc::vec::Vec;
 use kernel_proc::IPPacket;
@@ -55,6 +55,44 @@ impl ThreadPipeline {
 
     pub fn task_processor_state(&self, thread: Thread) -> &TaskProcesserState {
         &self.thread_context(thread).processor_state
+    }
+
+    pub fn handle_ipp(&mut self) {
+        ThreadMigratePacket::handle(|ThreadMigratePacket { context, global_id }| {
+            if let Some(unused) = self
+                .unused_thread
+                .iter()
+                .find(|e| matches!(self.pool[**e].state, ThreadState::Migrated))
+            {
+                let thread_ctx = &mut self.pool[*unused];
+                *thread_ctx = context;
+            } else {
+                let id = self.pool.len();
+                self.pool.push(context);
+                id::migrate_thread(global_id, LocalThreadId::new(id));
+            }
+        });
+    }
+
+    pub fn migrate(&mut self, destination: CoreId, thread: Thread) {
+        let id = thread.local_id.thread;
+
+        let context = core::mem::replace(
+            self.thread_context_mut(thread),
+            ThreadContext {
+                state: ThreadState::Migrated,
+                // SAFETY: This is fine since the new ThreadState is set to migrated which will be
+                // replaced with the new context when this is reused
+                ..unsafe { zeroed() }
+            },
+        );
+        ThreadMigratePacket {
+            context,
+            global_id: thread.global_id,
+        }
+        .send(destination, false);
+
+        self.unused_thread.push(id);
     }
 
     pub fn free(&mut self, thread: Thread) {
@@ -120,7 +158,13 @@ impl ThreadPipeline {
     }
 
     fn thread_context(&self, thread: Thread) -> &ThreadContext {
-        &self.pool[thread.local_id.thread]
+        let context = &self.pool[thread.local_id.thread];
+        assert_eq!(
+            context.state,
+            ThreadState::Migrated,
+            "trying to access a migrated thread"
+        );
+        context
     }
 
     fn thread_context_mut(&mut self, thread: Thread) -> &mut ThreadContext {
@@ -135,6 +179,12 @@ impl Default for ThreadPipeline {
 }
 
 #[derive(Debug, IPPacket)]
+struct ThreadMigratePacket {
+    context: ThreadContext,
+    global_id: usize,
+}
+
+#[derive(Debug)]
 struct ThreadContext {
     state: ThreadState,
     processor_state: TaskProcesserState,

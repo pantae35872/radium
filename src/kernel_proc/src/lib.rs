@@ -399,7 +399,11 @@ pub fn ipp_packet(input: TokenStream) -> TokenStream {
                     .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
 
                 if urgent {
-                    while !#static_handled_flags_name[core].load(core::sync::atomic::Ordering::Release) {}
+                    while !#static_handled_flags_name[core].load(core::sync::atomic::Ordering::Release) {
+                        crate::interrupt::LAPIC
+                            .inner_mut()
+                            .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
+                    }
                 }
             }
 

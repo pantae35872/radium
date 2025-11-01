@@ -67,3 +67,7 @@ pub fn alloc_thread(local_id: LocalThreadId) -> Thread {
 pub fn free_thread(thread: Thread) {
     GLOBAL_THREAD_ID_MAP.write().free(thread.global_id);
 }
+
+pub fn migrate_thread(global_id: usize, local_id: LocalThreadId) {
+    GLOBAL_THREAD_ID_MAP.write().migrate(global_id, local_id);
+}
