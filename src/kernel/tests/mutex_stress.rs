@@ -8,7 +8,7 @@ extern crate alloc;
 
 use alloc::{sync::Arc, vec::Vec};
 use bootbridge::RawBootBridge;
-use radium::{scheduler, utils::mutex::Mutex};
+use radium::{scheduler, sync::mutex::Mutex};
 
 const NUM_THREADS: usize = 64;
 const NUM_INCREMENTS: usize = 100_000;
