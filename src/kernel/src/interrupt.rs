@@ -62,6 +62,7 @@ pub enum InterruptIndex {
     ErrorVector,
     DriverCall = 0x90,
     CheckFutex = 0x92,
+    CheckIPP = 0x95,
     SpuriousInterruptsVector = 0xFF,
 }
 

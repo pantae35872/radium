@@ -40,7 +40,6 @@ use crate::{
 };
 
 mod dispatch;
-mod ipp;
 mod process;
 mod scheduler;
 mod thread;

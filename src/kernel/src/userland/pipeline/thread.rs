@@ -12,6 +12,7 @@
 use core::assert_matches::assert_matches;
 
 use alloc::vec::Vec;
+use kernel_proc::IPPacket;
 
 use crate::{
     interrupt::CORE_ID,
@@ -133,7 +134,7 @@ impl Default for ThreadPipeline {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, IPPacket)]
 struct ThreadContext {
     state: ThreadState,
     processor_state: TaskProcesserState,

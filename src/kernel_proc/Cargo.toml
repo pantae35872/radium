@@ -8,5 +8,6 @@ proc-macro = true
 
 [dependencies]
 quote = "1.0.40"
-syn = "2.0.108"
+syn = { version = "2.0.108", features = ["full", "extra-traits"]}
 proc-macro2 = "1.0.103"
+convert_case = "0.8.0"

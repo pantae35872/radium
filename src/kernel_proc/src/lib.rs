@@ -7,13 +7,14 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     io::{Read, Seek, SeekFrom, Write},
     os::unix::fs::FileExt,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 
+use convert_case::{Case, Casing};
 use proc_macro::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, Ident, Token, Type, parenthesized,
+    Expr, Ident, ItemStruct, Token, Type, parenthesized,
     parse::{Parse, ParseStream},
     parse_macro_input,
     punctuated::Punctuated,
@@ -189,20 +190,24 @@ pub fn local_builder(input: TokenStream) -> TokenStream {
 }
 
 fn tracked_write_file(
-    path: &Path,
-    full_name: &Ident,
-    ty: &str,
+    name: &str,
+    hash: impl FnOnce(&mut DefaultHasher),
     initial: &str,
     append: &str,
     append_index: u64,
 ) {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    assert!(out_dir.exists());
+
+    let path = out_dir.join(name).with_extension("rs");
+
     let mut wrote: String = "".to_string();
     let build_uuid = env::var("BUILD_UUID").unwrap();
     let mut length = 0;
-    if let Ok(mut ok) = OpenOptions::new().read(true).open(path) {
+    if let Ok(mut ok) = OpenOptions::new().read(true).open(&path) {
         length = ok.seek(SeekFrom::End(0)).unwrap();
     }
-    if let Ok(mut ok) = OpenOptions::new().read(true).open(path) {
+    if let Ok(mut ok) = OpenOptions::new().read(true).open(&path) {
         ok.read_to_string(&mut wrote).unwrap();
     }
 
@@ -213,13 +218,13 @@ fn tracked_write_file(
         || length == 0
     {
         if path.exists() {
-            remove_file(path).unwrap();
+            remove_file(&path).unwrap();
         }
         OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
-            .open(path)
+            .open(&path)
             .unwrap()
             .write_all(format!("//{build_uuid}\n{initial}").as_bytes())
             .unwrap();
@@ -227,18 +232,17 @@ fn tracked_write_file(
 
     wrote.clear();
 
-    if let Ok(mut ok) = OpenOptions::new().read(true).open(path) {
+    if let Ok(mut ok) = OpenOptions::new().read(true).open(&path) {
         ok.read_to_string(&mut wrote).unwrap();
     }
 
-    if let Ok(mut ok) = OpenOptions::new().read(true).open(path) {
+    if let Ok(mut ok) = OpenOptions::new().read(true).open(&path) {
         length = ok.seek(SeekFrom::End(0)).unwrap();
     }
 
-    let mut hash = DefaultHasher::new();
-    full_name.hash(&mut hash);
-    ty.hash(&mut hash);
-    let hash = hash.finish().to_string();
+    let mut hasher = DefaultHasher::new();
+    hash(&mut hasher);
+    let hash = hasher.finish().to_string();
     let should_write = !wrote
         .lines()
         .any(|e| e.trim().strip_prefix("//").is_some_and(|e| e == hash));
@@ -246,7 +250,7 @@ fn tracked_write_file(
     if should_write {
         OpenOptions::new()
             .write(true)
-            .open(path)
+            .open(&path)
             .unwrap()
             .write_all_at(
                 format!(
@@ -260,57 +264,6 @@ fn tracked_write_file(
     }
 }
 
-fn write_cpu_local_builder_set(path: &Path, full_name: &Ident, ty: &str) {
-    tracked_write_file(
-        path,
-        full_name,
-        ty,
-        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder { pub fn new() -> Self {Self::default()}\n\n}",
-        &format!(
-            "pub fn {full_name}(&mut self, value: {ty}) {{ self.{full_name} = Some(value); }}"
-        ),
-        1,
-    );
-}
-
-fn write_cpu_local_builder_build(path: &Path, full_name: &Ident, ty: &str) {
-    tracked_write_file(
-        path,
-        full_name,
-        ty,
-        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder {\
-            pub fn build(self) -> Option<CpuLocal> {\
-                Some(CpuLocal {\n\
-                })\
-            }\
-        }",
-        &format!("{full_name}: self.{full_name}?,"),
-        4,
-    );
-}
-
-fn write_cpu_local_builder_struct(path: &Path, full_name: &Ident, ty: &str) {
-    tracked_write_file(
-        path,
-        full_name,
-        ty,
-        "#[allow(non_snake_case)]\n#[derive(Default)]\npub struct CpuLocalBuilder {\n}",
-        &format!("pub {full_name}: Option<{ty}>,"),
-        1,
-    );
-}
-
-fn write_cpu_local(path: &Path, full_name: &Ident, ty: &str) {
-    tracked_write_file(
-        path,
-        full_name,
-        ty,
-        "#[allow(non_snake_case)]\npub struct CpuLocal {\n}",
-        &format!("pub {full_name}: {ty},"),
-        1,
-    );
-}
-
 #[proc_macro]
 pub fn def_local(input: TokenStream) -> TokenStream {
     let Def { vis, name, ty, .. } = parse_macro_input!(input as Def);
@@ -322,17 +275,50 @@ pub fn def_local(input: TokenStream) -> TokenStream {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     assert!(out_dir.exists());
 
-    let local_path = out_dir.join("local_gen_struct.rs");
-    let builder_struct = out_dir.join("local_gen_builder_struct.rs");
-    let builder_build = out_dir.join("local_gen_builder_build.rs");
-    let builder_set = out_dir.join("local_gen_builder_set.rs");
-
     let str_type = quote! { #ty }.to_string();
+    let hasher = |hasher: &mut DefaultHasher| {
+        full_name.hash(hasher);
+        str_type.hash(hasher);
+    };
 
-    write_cpu_local(&local_path, &full_name, &str_type);
-    write_cpu_local_builder_struct(&builder_struct, &full_name, &str_type);
-    write_cpu_local_builder_build(&builder_build, &full_name, &str_type);
-    write_cpu_local_builder_set(&builder_set, &full_name, &str_type);
+    tracked_write_file(
+        "local_gen_struct",
+        hasher,
+        "#[allow(non_snake_case)]\npub struct CpuLocal {\n}",
+        &format!("pub {full_name}: {str_type},"),
+        1,
+    );
+
+    tracked_write_file(
+        "local_gen_builder_struct",
+        hasher,
+        "#[allow(non_snake_case)]\n#[derive(Default)]\npub struct CpuLocalBuilder {\n}",
+        &format!("pub {full_name}: Option<{str_type}>,"),
+        1,
+    );
+
+    tracked_write_file(
+        "local_gen_builder_build",
+        hasher,
+        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder {\
+            pub fn build(self) -> Option<CpuLocal> {\
+                Some(CpuLocal {\n\
+                })\
+            }\
+        }",
+        &format!("{full_name}: self.{full_name}?,"),
+        4,
+    );
+
+    tracked_write_file(
+        "local_gen_builder_set",
+        hasher,
+        "#[allow(non_snake_case)]\nimpl CpuLocalBuilder { pub fn new() -> Self {Self::default()}\n\n}",
+        &format!(
+            "pub fn {full_name}(&mut self, value: {str_type}) {{ self.{full_name} = Some(value); }}"
+        ),
+        1,
+    );
 
     quote! {
         #vis struct #access_type;
@@ -358,6 +344,74 @@ pub fn def_local(input: TokenStream) -> TokenStream {
         #vis static #name: #access_type = #access_type;
     }
     .into()
+}
+
+#[proc_macro]
+pub fn gen_ipp(_item: TokenStream) -> TokenStream {
+    let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let constants_path = out_dir.join("ipp_gen_constants.rs").display().to_string();
+    let pipeline_path = out_dir
+        .join("ipp_gen_packet_pipeline.rs")
+        .display()
+        .to_string();
+
+    let packets_path = out_dir.join("ipp_gen_packets.rs").display().to_string();
+    let impl_path = out_dir.join("ipp_gen_packet_impl.rs").display().to_string();
+
+    quote! {
+        include!(#constants_path);
+        include!(#pipeline_path);
+        include!(#packets_path);
+        include!(#impl_path);
+    }
+    .into()
+}
+
+#[proc_macro_derive(IPPacket)]
+pub fn ipp_packet(input: TokenStream) -> TokenStream {
+    let packet = parse_macro_input!(input as ItemStruct);
+    let ty = &packet.ident;
+    let upper_case_name = packet.ident.to_string().to_case(Case::Constant);
+    let static_packet_name = format_ident!("{upper_case_name}_PACKETS");
+    let static_handled_flags_name = format_ident!("{upper_case_name}_HANDLED_FLAGS",);
+
+    quote! {
+        static #static_packet_name: [crate::sync::spin_mpsc::SpinMPSC<#ty, 256>; crate::smp::MAX_CPU] = [
+            const { crate::sync::spin_mpsc::SpinMPSC::new() }; crate::smp::MAX_CPU];
+        static #static_handled_flags_name: [core::sync::atomic::AtomicBool; crate::smp::MAX_CPU] = 
+            [const { core::sync::atomic::AtomicBool::new(false) }; crate::smp::MAX_CPU];
+
+        impl #ty {
+            pub fn send(self, core: crate::smp::CoreId, urgent: bool) {
+                let core = core.id();
+                #static_handled_flags_name[core].store(false, core::sync::atomic::Ordering::Release);
+                let mut send = self;
+                while let Err(failed) = #static_packet_name[core].push(send) {
+                    crate::interrupt::LAPIC
+                        .inner_mut()
+                        .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
+
+                    send = failed;
+                }
+
+                crate::interrupt::LAPIC
+                    .inner_mut()
+                    .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
+
+                if urgent {
+                    while !#static_handled_flags_name[core].load(core::sync::atomic::Ordering::Release) {}
+                }
+            }
+
+            fn handle(mut handler: impl FnMut(#ty)) {
+                while let Some(c) = #static_packet_name[crate::interrupt::CORE_ID.id()].pop() {
+                    handler(c)
+                }
+
+                #static_handled_flags_name[crate::interrupt::CORE_ID.id()].store(true, core::sync::atomic::Ordering::Release);
+            }
+        }
+    }.into()
 }
 
 struct Def {
