@@ -68,6 +68,7 @@ struct PipelineContext {
     interrupted_task: Option<TaskBlock>,
     added_tasks: Vec<TaskBlock>,
     added_processes: Vec<Process>,
+    should_schedule: bool,
     scheduled_task: Option<TaskBlock>,
 }
 
@@ -112,13 +113,18 @@ impl ControlPipeline {
         }
     }
 
-    fn handle_ipp(&mut self) {
+    fn handle_ipp(&mut self, context: &mut PipelineContext) {
         self.thread.handle_ipp();
+        context.should_schedule = false;
     }
 
     fn handle_syscall(&mut self, context: &mut PipelineContext) {}
 
     fn schedule(&mut self, context: &mut PipelineContext) {
+        if !context.should_schedule {
+            return;
+        }
+
         self.scheduler.schedule(context, &mut self.thread);
     }
 
@@ -172,7 +178,9 @@ pub fn handle_request(rq_context: CommonRequestContext<'_>) -> Dispatcher {
     let mut context = pipeline.create_context(&rq_context);
     match rq_context.referer {
         RequestReferer::SyscallRequest(..) => pipeline.handle_syscall(&mut context),
-        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => pipeline.handle_ipp(),
+        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
+            pipeline.handle_ipp(&mut context)
+        }
         RequestReferer::HardwareInterrupt(i) => {
             todo!("Handle {i:?} hardware interrupt in the scheduler")
         }

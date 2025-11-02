@@ -382,16 +382,28 @@ pub fn ipp_packet(input: TokenStream) -> TokenStream {
             [const { core::sync::atomic::AtomicBool::new(false) }; crate::smp::MAX_CPU];
 
         impl #ty {
-            pub fn send(self, core: crate::smp::CoreId, urgent: bool) {
-                let core = core.id();
-                #static_handled_flags_name[core].store(false, core::sync::atomic::Ordering::Release);
-                let mut send = self;
-                while let Err(failed) = #static_packet_name[core].push(send) {
-                    crate::interrupt::LAPIC
-                        .inner_mut()
-                        .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
+            pub fn broadcast(self, urgent: bool)
+            where
+                for<'a> Self: Clone,
+            {
+                for flag in #static_handled_flags_name.iter() {
+                    flag.store(false, core::sync::atomic::Ordering::Release);
+                }
 
-                    send = failed;
+                for (core, packet) in #static_packet_name 
+                    .iter()
+                    .enumerate()
+                    .filter(|(core, ..)| crate::interrupt::CORE_ID.id() != *core && *core < *crate::smp::CORE_COUNT)
+                {
+                    let mut send = self.clone();
+                    while let Err(failed) = packet.push(send) {
+                        crate::interrupt::LAPIC.inner_mut().send_fixed_ipi(
+                            crate::smp::CoreId::new(core).unwrap(),
+                            crate::interrupt::InterruptIndex::CheckIPP,
+                        );
+
+                        send = failed;
+                    }
                 }
 
                 crate::interrupt::LAPIC
@@ -399,10 +411,55 @@ pub fn ipp_packet(input: TokenStream) -> TokenStream {
                     .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
 
                 if urgent {
-                    while !#static_handled_flags_name[core].load(core::sync::atomic::Ordering::Release) {
+                    loop {
+                        let cores = #static_handled_flags_name
+                            .iter()
+                            .enumerate()
+                            .filter(|(core, ..)| crate::interrupt::CORE_ID.id() != *core && *core < *crate::smp::CORE_COUNT)
+                            .map(|(core, flag)| {
+                                (
+                                    crate::smp::CoreId::new(core).unwrap(),
+                                    flag.load(core::sync::atomic::Ordering::Acquire),
+                                )
+                            })
+                            .filter_map(|(core, handled)| crate::inline_if!(handled, None, Some(core)));
+                        let mut all_handled = true;
+
+                        for core in cores {
+                            all_handled = false;
+                            crate::interrupt::LAPIC
+                                .inner_mut()
+                                .send_fixed_ipi(core, crate::interrupt::InterruptIndex::CheckIPP);
+                        }
+
+                        if all_handled {
+                            break;
+                        }
+                    }
+                }
+            }
+
+            pub fn send(self, core_id: crate::smp::CoreId, urgent: bool) {
+                let core = core_id.id();
+                #static_handled_flags_name[core].store(false, core::sync::atomic::Ordering::Release);
+                let mut send = self;
+                while let Err(failed) = #static_packet_name[core].push(send) {
+                    crate::interrupt::LAPIC
+                        .inner_mut()
+                        .send_fixed_ipi(core_id, crate::interrupt::InterruptIndex::CheckIPP);
+
+                    send = failed;
+                }
+
+                crate::interrupt::LAPIC
+                    .inner_mut()
+                    .send_fixed_ipi(core_id, crate::interrupt::InterruptIndex::CheckIPP);
+
+                if urgent {
+                    while !#static_handled_flags_name[core].load(core::sync::atomic::Ordering::Acquire) {
                         crate::interrupt::LAPIC
                             .inner_mut()
-                            .broadcast_fixed_ipi(crate::interrupt::InterruptIndex::CheckIPP);
+                            .send_fixed_ipi(core_id, crate::interrupt::InterruptIndex::CheckIPP);
                     }
                 }
             }
