@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use bootbridge::BootBridge;
-use pager::paging::{ActivePageTable, table::RecurseLevel4};
+use pager::paging::{ActivePageTable, table::RecurseLevel4, temporary_page::TemporaryPage};
 
 use crate::{
     driver::acpi::{Acpi, madt::IoApicInterruptSourceOverride},
@@ -142,6 +142,7 @@ create_initialization_chain! {
         active_table: ActivePageTable<RecurseLevel4>,
         buddy_allocator: BuddyAllocator<64>,
         stack_allocator: StackAllocator,
+        temporary_page: TemporaryPage,
     } => Stage2 {
         processors: Vec<ApicId>,
         local_apic_mmio: MMIOBufferInfo,

@@ -10,18 +10,13 @@ use super::table::{RecurseLevel1, Table};
 pub struct TemporaryPage {
     mapped: bool,
     page: Page,
-    allocator: TinyAllocator,
 }
 
 impl TemporaryPage {
-    pub fn new<A>(page: Page, allocator: &mut A) -> TemporaryPage
-    where
-        A: FrameAllocator,
-    {
+    pub fn new(page: Page) -> Self {
         TemporaryPage {
             mapped: false,
             page,
-            allocator: TinyAllocator::new(allocator),
         }
     }
 
@@ -37,6 +32,7 @@ impl TemporaryPage {
         &mut self,
         frame: Frame,
         active_table: &mut ActivePageTable<P4>,
+        allocator: &mut impl FrameAllocator,
     ) -> VirtAddr
     where
         P4: TopLevelP4,
@@ -47,7 +43,7 @@ impl TemporaryPage {
         );
 
         // SAFETY: The frame contact is uphold by the caller
-        unsafe { active_table.map_to(self.page, frame, EntryFlags::WRITABLE, &mut self.allocator) };
+        unsafe { active_table.map_to(self.page, frame, EntryFlags::WRITABLE, allocator) };
 
         self.mapped = true;
         self.page.start_address()
@@ -83,6 +79,7 @@ impl TemporaryPage {
         &mut self,
         frame: Frame,
         active_table: &mut ActivePageTable<P4>,
+        allocator: &mut impl FrameAllocator,
     ) -> &mut Table<RecurseLevel1>
     where
         P4: TopLevelP4,
@@ -93,44 +90,8 @@ impl TemporaryPage {
         // Table<RecurseLevel1>, gurentee by const assert above
         unsafe {
             &mut *(self
-                .map(frame, active_table)
+                .map(frame, active_table, allocator)
                 .as_mut_ptr::<Table<RecurseLevel1>>())
         }
-    }
-}
-
-/// A simple [`FrameAllocator`] implementation that can hold 3 frame at a time
-struct TinyAllocator([Option<Frame>; 3]);
-
-impl TinyAllocator {
-    fn new<A>(allocator: &mut A) -> TinyAllocator
-    where
-        A: FrameAllocator,
-    {
-        let mut f = || allocator.allocate_frame();
-        let frames = [f(), f(), f()];
-        TinyAllocator(frames)
-    }
-}
-
-// SAFETY: since we call another frame allocator to allocate a frame, this is safe
-unsafe impl FrameAllocator for TinyAllocator {
-    fn allocate_frame(&mut self) -> Option<Frame> {
-        for frame_option in &mut self.0 {
-            if frame_option.is_some() {
-                return frame_option.take();
-            }
-        }
-        None
-    }
-
-    fn deallocate_frame(&mut self, frame: Frame) {
-        for frame_option in &mut self.0 {
-            if frame_option.is_none() {
-                *frame_option = Some(frame);
-                return;
-            }
-        }
-        panic!("Tiny allocator can hold only 3 frames.");
     }
 }

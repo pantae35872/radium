@@ -17,7 +17,7 @@ use table::{AnyLevel, DirectP4Create, RecurseP4Create, TableLevel4};
 mod entry;
 pub mod mapper;
 pub mod table;
-mod temporary_page;
+pub mod temporary_page;
 
 const ENTRY_COUNT: u64 = 512;
 
@@ -95,13 +95,14 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         unsafe { self.p4.as_mut() }
     }
 
-    pub fn with<F>(
+    pub fn with<F, A: FrameAllocator>(
         &mut self,
         table: &mut InactivePageTable,
         temporary_page: &mut temporary_page::TemporaryPage,
+        allocator: &mut A,
         f: F,
     ) where
-        F: FnOnce(&mut Mapper<P4>),
+        F: FnOnce(&mut Mapper<P4>, &mut A),
     {
         let (level_4_table_frame, _) = Cr3::read();
         let backup = level_4_table_frame;
@@ -109,12 +110,12 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because we're reading it from the cr3
             // which if it's is indeed invalid, this code shouldn't be even executing
-            let p4_table = unsafe { temporary_page.map_table_frame(backup, self) };
+            let p4_table = unsafe { temporary_page.map_table_frame(backup, self, allocator) };
 
             self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
 
-            f(self);
+            f(self, allocator);
 
             p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
@@ -234,7 +235,7 @@ impl InactivePageTable {
         let frame = allocator.allocate_frame().expect("no more frames");
         {
             // SAFETY: We know that the frame is valid because it's is being allocated above
-            let table = unsafe { temporary_page.map_table_frame(frame, active_table) };
+            let table = unsafe { temporary_page.map_table_frame(frame, active_table, allocator) };
             table.zero();
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
@@ -254,13 +255,18 @@ where
     F: FnOnce(&mut Mapper<P>, &mut A),
     A: FrameAllocator,
 {
-    let mut temporary_page = TemporaryPage::new(Page::deadbeef(), allocator);
+    let mut temporary_page = TemporaryPage::new(Page::deadbeef());
 
     let mut new_table = InactivePageTable::new(allocator, active_table, &mut temporary_page);
 
-    active_table.with(&mut new_table, &mut temporary_page, |mapper| {
-        f(mapper, allocator);
-    });
+    active_table.with(
+        &mut new_table,
+        &mut temporary_page,
+        allocator,
+        |mapper, allocator| {
+            f(mapper, allocator);
+        },
+    );
 
     new_table
 }

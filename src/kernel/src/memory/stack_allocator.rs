@@ -2,11 +2,11 @@ use pager::{
     EntryFlags, PAGE_SIZE,
     address::{Page, PageIter, VirtAddr},
     allocator::FrameAllocator,
-    paging::{ActivePageTable, table::RecurseLevel4},
+    paging::{ActivePageTable, mapper::Mapper, table::RecurseLevel4},
 };
 use sentinel::log;
 
-use super::WithTable;
+use super::WithMapper;
 
 pub struct StackAllocator {
     range: PageIter,
@@ -26,10 +26,10 @@ impl StackAllocator {
         self.original_range.clone()
     }
 
-    pub fn alloc_stack<A: FrameAllocator>(
+    pub fn alloc_stack(
         &mut self,
-        active_table: &mut ActivePageTable<RecurseLevel4>,
-        frame_allocator: &mut A,
+        mapper: &mut Mapper<RecurseLevel4>,
+        frame_allocator: &mut impl FrameAllocator,
         size_in_pages: usize,
     ) -> Option<Stack> {
         if size_in_pages == 0 {
@@ -51,7 +51,7 @@ impl StackAllocator {
                 self.range = range;
 
                 for page in Page::range_inclusive(start, end) {
-                    active_table.map(
+                    mapper.map(
                         page,
                         EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
                         frame_allocator,
@@ -77,8 +77,8 @@ impl StackAllocator {
         &'a mut self,
         active_table: &'a mut ActivePageTable<RecurseLevel4>,
         allocator: &'a mut A,
-    ) -> WithTable<'a, Self, A> {
-        WithTable {
+    ) -> WithMapper<'a, Self, A> {
+        WithMapper {
             table: active_table,
             with_table: self,
             allocator,
@@ -86,7 +86,7 @@ impl StackAllocator {
     }
 }
 
-impl<A: FrameAllocator> WithTable<'_, StackAllocator, A> {
+impl<A: FrameAllocator> WithMapper<'_, StackAllocator, A> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
         self.with_table
             .alloc_stack(self.table, self.allocator, size_in_pages)

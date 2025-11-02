@@ -148,6 +148,13 @@ impl Page {
         Self { number: 0xdeadbeef }
     }
 
+    /// Also just a dummy page if anyone needs it
+    ///
+    /// Create a cafebabe page
+    pub const fn cafebabe() -> Self {
+        Self { number: 0xcafebabe }
+    }
+
     /// Get the start address of this frame
     ///
     /// # Note

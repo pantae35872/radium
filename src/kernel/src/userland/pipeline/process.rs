@@ -5,6 +5,7 @@ use spin::Mutex;
 
 use crate::{
     memory::stack_allocator::Stack,
+    smp::CTX,
     userland::pipeline::{CommonRequestContext, thread::Thread},
 };
 
@@ -47,6 +48,10 @@ impl ProcessPipeline {
     }
 
     pub fn alloc_stack(&mut self, process: Process) -> Stack {
+        CTX.lock().with_inactive(
+            todo!("Get the page table for each process"),
+            |_mapper, _allocator| {},
+        );
         todo!()
     }
 

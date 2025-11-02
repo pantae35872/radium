@@ -4,7 +4,12 @@ use pager::{
     EntryFlags, KERNEL_GENERAL_USE, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
-    paging::{ActivePageTable, mapper::MapperWithAllocator, table::RecurseLevel4},
+    paging::{
+        ActivePageTable, InactivePageTable,
+        mapper::{Mapper, MapperWithAllocator},
+        table::RecurseLevel4,
+        temporary_page::TemporaryPage,
+    },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
 };
 use raw_cpuid::CpuId;
@@ -55,6 +60,7 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
                 stack_alloc_start.start_address().as_u64() + STACK_ALLOC_SIZE * PAGE_SIZE;
             Page::range_inclusive(stack_alloc_start, VirtAddr::new(stack_alloc_end).into())
         }),
+        TemporaryPage::new(Page::cafebabe()),
     ));
 
     unsafe {
@@ -148,13 +154,13 @@ pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
         .expect("RAN OUT OF VIRTUAL ADDR")
 }
 
-pub struct WithTable<'a, T, A: FrameAllocator> {
-    table: &'a mut ActivePageTable<RecurseLevel4>,
+pub struct WithMapper<'a, T, A: FrameAllocator> {
+    table: &'a mut Mapper<RecurseLevel4>,
     with_table: &'a mut T,
     allocator: &'a mut A,
 }
 
-impl<'a, T, A: FrameAllocator> WithTable<'a, T, A> {
+impl<'a, T, A: FrameAllocator> WithMapper<'a, T, A> {
     pub fn new(
         active_table: &'a mut ActivePageTable<RecurseLevel4>,
         with_table: &'a mut T,
@@ -278,9 +284,14 @@ select_context! {
         }
     }
     (Stage1, Stage2, Stage3, End) => {
-        pub fn stack_allocator(&mut self) -> WithTable<'_, StackAllocator, BuddyAllocator<64>> {
+        pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
+        }
+
+        pub fn with_inactive(&mut self, table: &mut InactivePageTable, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
+            let ctx = self.context_mut();
+            ctx.active_table.with(table, &mut ctx.temporary_page, &mut ctx.buddy_allocator, f);
         }
 
         pub fn buddy_allocator(&mut self) -> &mut BuddyAllocator<64> {
