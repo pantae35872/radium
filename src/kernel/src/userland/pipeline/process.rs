@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
-use pager::paging::InactivePageTable;
+use pager::paging::{InactivePageTable, create_mappings};
 use spin::Mutex;
 
 use crate::{
@@ -14,14 +14,9 @@ pub struct Process {
     id: usize,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct ProcessPipeline {
     shared_data: Vec<Arc<ProcessShared>>,
-}
-
-#[derive(Debug, Default)]
-struct ProcessShared {
-    stacks: Mutex<Vec<Stack>>,
 }
 
 impl ProcessPipeline {
@@ -56,6 +51,17 @@ impl ProcessPipeline {
     }
 
     pub fn alloc(&mut self) -> Process {
+        todo!()
+    }
+}
+
+struct ProcessShared {
+    stacks: Mutex<Vec<Stack>>,
+    page_table: Mutex<InactivePageTable>,
+}
+
+impl ProcessShared {
+    pub fn new() -> Self {
         todo!()
     }
 }

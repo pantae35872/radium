@@ -1,6 +1,7 @@
 use crate::address::{Frame, Page};
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
+use crate::paging::table::{DirectP4Create, RecurseP4Create};
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
 
@@ -12,7 +13,7 @@ use bit_field::BitField;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use sentinel::log;
-use table::{AnyLevel, DirectP4Create, RecurseP4Create, TableLevel4};
+use table::{AnyLevel, TableLevel4};
 
 mod entry;
 pub mod mapper;
@@ -28,8 +29,7 @@ pub struct ActivePageTable<P4: TableLevel4> {
 
 impl<P4> ActivePageTable<P4>
 where
-    P4: TableLevel4,
-    P4::CreateMarker: RecurseP4Create<P4>,
+    P4: TableLevel4<CreateMarker = RecurseP4Create>,
 {
     /// Create a mapper from the currently active recursive mapped page table
     ///
@@ -49,8 +49,7 @@ where
 
 impl<P4> ActivePageTable<P4>
 where
-    P4: TableLevel4,
-    P4::CreateMarker: DirectP4Create<P4>,
+    P4: TableLevel4<CreateMarker = DirectP4Create>,
 {
     /// Create a page table from the provided page table address
     ///

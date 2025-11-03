@@ -182,7 +182,7 @@ impl NextTableAddress for DirectHierarchicalLevelMarker {
     }
 }
 
-impl DirectP4Marker {}
+impl DirectP4Create {}
 
 impl<L> Index<usize> for Table<L>
 where
@@ -206,37 +206,31 @@ where
 
 pub struct DirectHierarchicalLevelMarker;
 pub struct RecurseHierarchicalLevelMarker;
-pub struct RecurseP4Marker;
-pub struct DirectP4Marker;
-pub trait RecurseP4Create<T>
-where
-    T: TableLevel,
-{
+
+pub struct RecurseP4Create;
+pub struct DirectP4Create;
+
+impl RecurseP4Create {
     /// Create a new recursive p4 table pointer
     ///
     /// # Safety
     ///
     /// the caller must ensure that the current active table is recursive mapped
-    unsafe fn create() -> Unique<Table<T>> {
+    pub unsafe fn create<T: TableLevel4>() -> Unique<Table<T>> {
         unsafe { Unique::new_unchecked(0xffffffff_fffff000 as *mut _) }
     }
 }
-pub trait DirectP4Create<T>
-where
-    T: TableLevel,
-{
+
+impl DirectP4Create {
     /// Create a new p4 table from the provided table pointer
     ///
     /// # Safety
     ///
     /// the caller must ensure that the table pointer is valid and mapped
-    unsafe fn create(p4: *mut Table<T>) -> Unique<Table<T>> {
+    pub unsafe fn create<T: TableLevel4>(p4: *mut Table<T>) -> Unique<Table<T>> {
         unsafe { Unique::new_unchecked(p4) }
     }
 }
-
-impl<T> RecurseP4Create<T> for RecurseP4Marker where T: TableLevel4 {}
-impl<T> DirectP4Create<T> for DirectP4Marker where T: TableLevel4 {}
 
 pub enum RecurseLevel4 {}
 pub enum RecurseLevel3 {}
@@ -260,11 +254,11 @@ where
 }
 
 impl TableLevel4 for RecurseLevel4 {
-    type CreateMarker = RecurseP4Marker;
+    type CreateMarker = RecurseP4Create;
 }
 
 impl TableLevel4 for DirectLevel4 {
-    type CreateMarker = DirectP4Marker;
+    type CreateMarker = DirectP4Create;
 }
 
 pub trait HierarchicalLevel: TableLevel {

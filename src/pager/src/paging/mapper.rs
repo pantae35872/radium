@@ -3,13 +3,11 @@ use sentinel::log;
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::allocator::virt_allocator::VirtualAllocator;
+use crate::paging::table::{DirectP4Create, RecurseP4Create};
 use crate::registers::tlb;
 use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE};
 
-use super::table::{
-    DirectP4Create, HierarchicalLevel, NextTableAddress, RecurseP4Create, Table, TableLevel,
-    TableLevel4,
-};
+use super::table::{HierarchicalLevel, NextTableAddress, Table, TableLevel, TableLevel4};
 use super::{ENTRY_COUNT, EntryFlags};
 use core::ptr::Unique;
 
@@ -24,8 +22,7 @@ pub struct MapperWithAllocator<'a, P4: TopLevelP4, A: FrameAllocator> {
 
 impl<P4> Mapper<P4>
 where
-    P4: TableLevel4,
-    P4::CreateMarker: RecurseP4Create<P4>,
+    P4: TableLevel4<CreateMarker = RecurseP4Create>,
 {
     /// Create a mapper from the currently active recursive mapped page table
     ///
@@ -42,8 +39,7 @@ where
 
 impl<P4> Mapper<P4>
 where
-    P4: TableLevel4,
-    P4::CreateMarker: DirectP4Create<P4>,
+    P4: TableLevel4<CreateMarker = DirectP4Create>,
 {
     /// Create a mapper from the provided page table address
     ///
