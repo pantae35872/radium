@@ -1,6 +1,6 @@
 use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
-use pager::paging::{InactivePageTable, create_mappings};
+use pager::paging::{InactivePageTable, create_mappings, table::RecurseLevel4};
 use spin::Mutex;
 
 use crate::{
@@ -38,7 +38,7 @@ impl ProcessPipeline {
         });
     }
 
-    pub fn page_table(&mut self, process: Process) -> &InactivePageTable {
+    pub fn page_table(&mut self, process: Process) -> &InactivePageTable<RecurseLevel4> {
         todo!()
     }
 
@@ -57,7 +57,7 @@ impl ProcessPipeline {
 
 struct ProcessShared {
     stacks: Mutex<Vec<Stack>>,
-    page_table: Mutex<InactivePageTable>,
+    page_table: Mutex<InactivePageTable<RecurseLevel4>>,
 }
 
 impl ProcessShared {

@@ -1,8 +1,9 @@
-use crate::address::{Frame, Page};
+use crate::address::Frame;
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
 use crate::paging::table::{
-    DirectP4Create, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RecurseP4Create,
+    DirectP4Create, RecurseLevel1, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf,
+    RecurseP4Create, TableSwitch,
 };
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
@@ -10,8 +11,8 @@ use crate::{EntryFlags, PAGE_SIZE};
 pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::Table;
-use self::temporary_page::TemporaryPage;
 use bit_field::BitField;
+use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::ptr::Unique;
 use sentinel::log;
@@ -97,9 +98,6 @@ impl ActivePageTable<RecurseLevel4> {
         ActivePageTable<RecurseLevel4LowerHalf>,
         ActivePageTable<RecurseLevel4UpperHalf>,
     ) {
-        // FIXME:: ActivePageTable::switch could cause alot of problems, ALSO CLASSIFY INACTIVE
-        // PAGE TABLE AS UPPER HALF OR LOWER HALF OR FULL
-
         // SAFETY: This is safe because by our model, there should only be one ActivePageTable at a
         // time, BUT. we're spliting the active page table in 2 halves, so there couldn't be a reference
         // to the same entry in the p4 level. if we're not doing some weird tricks like having the
@@ -114,6 +112,11 @@ impl ActivePageTable<RecurseLevel4> {
     }
 }
 
+pub struct TableManipulationContext<'a, A: FrameAllocator> {
+    pub temporary_page: &'a mut temporary_page::TemporaryPage,
+    pub allocator: &'a mut A,
+}
+
 impl<P4: TopLevelP4> ActivePageTable<P4> {
     fn p4_mut(&mut self) -> &mut Table<P4> {
         // SAFETY: Taking a reference to the page table is valid and safe, in this module
@@ -122,9 +125,8 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 
     pub fn with<F, A: FrameAllocator>(
         &mut self,
-        table: &mut InactivePageTable,
-        temporary_page: &mut temporary_page::TemporaryPage,
-        allocator: &mut A,
+        table: &mut InactivePageTable<P4>,
+        context: &mut TableManipulationContext<A>,
         f: F,
     ) where
         F: FnOnce(&mut Mapper<P4>, &mut A),
@@ -135,19 +137,23 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because we're reading it from the cr3
             // which if it's is indeed invalid, this code shouldn't be even executing
-            let p4_table = unsafe { temporary_page.map_table_frame(backup, self, allocator) };
+            let p4_table = unsafe {
+                context
+                    .temporary_page
+                    .map_table_frame(backup, self, context.allocator)
+            };
 
             self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
 
-            f(self, allocator);
+            f(self, context.allocator);
 
             p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
         }
 
         // SAFETY: The reference to the page is gone in the scope above
-        unsafe { temporary_page.unmap(self) };
+        unsafe { context.temporary_page.unmap(self) };
     }
 
     /// Switch the page table with the inactive page table
@@ -155,12 +161,33 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     /// # Safety
     /// the caller must ensure that by swapping the table does not causes any unsafe
     /// side effects
-    pub unsafe fn switch(&mut self, new_table: InactivePageTable) -> InactivePageTable {
+    pub unsafe fn switch<A: FrameAllocator>(
+        &mut self,
+        context: &mut TableManipulationContext<A>,
+        new_table: InactivePageTable<P4>,
+    ) -> InactivePageTable<P4>
+    where
+        P4::Marker: TableSwitch<P4>,
+    {
+        <P4::Marker as TableSwitch<P4>>::switch_impl(self, context, new_table)
+    }
+
+    /// Switch the page table with the inactive page table, UNCONDITIONALLY
+    ///
+    /// # Safety
+    /// this function is VERY VERY unsafe to use, you must be sure that the P4 isn't split or
+    /// paritioned in any way
+    pub unsafe fn full_switch(
+        &mut self,
+        new_table: InactivePageTable<P4>,
+    ) -> InactivePageTable<P4> {
         let (level_4_table_frame, _) = Cr3::read();
-        let old_table = InactivePageTable {
+        let old_table = InactivePageTable::<P4> {
             p4_frame: level_4_table_frame,
+            _p4: PhantomData,
         };
-        // SAFETY: The inactive page table should be valid if created correctly
+        // SAFETY: The inactive page table should be valid if created correctly, and the caller
+        // will uphold the contract that there will be no parition of P4
         unsafe {
             Cr3::write(new_table.p4_frame, Cr3Flags::empty());
         }
@@ -246,52 +273,79 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 
 /// InactivePageTable are the table that can be swapped to be an active page table using
 /// [`ActivePageTable<T>::switch`]
-pub struct InactivePageTable {
+// FIXME: There will be a minor memory leak if this is dropped.
+pub struct InactivePageTable<P4: TopLevelP4> {
     p4_frame: Frame,
+    _p4: PhantomData<P4>,
 }
 
-impl InactivePageTable {
+impl<P4: TopLevelP4> InactivePageTable<P4> {
     /// Create a new InactivePage
-    pub fn new<P4: TopLevelP4, A: FrameAllocator>(
-        allocator: &mut A,
+    pub fn new<A: FrameAllocator>(
         active_table: &mut ActivePageTable<P4>,
-        temporary_page: &mut TemporaryPage,
-    ) -> InactivePageTable {
-        let frame = allocator.allocate_frame().expect("no more frames");
+        context: &mut TableManipulationContext<A>,
+    ) -> Self {
+        let frame = context.allocator.allocate_frame().expect("no more frames");
         {
             // SAFETY: We know that the frame is valid because it's is being allocated above
-            let table = unsafe { temporary_page.map_table_frame(frame, active_table, allocator) };
+            let table = unsafe {
+                context
+                    .temporary_page
+                    .map_table_frame(frame, active_table, context.allocator)
+            };
             table.zero();
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
         // SAFETY: The reference to the table is gone in the scope
-        unsafe { temporary_page.unmap(active_table) };
+        unsafe { context.temporary_page.unmap(active_table) };
 
-        InactivePageTable { p4_frame: frame }
+        InactivePageTable::<P4> {
+            p4_frame: frame,
+            _p4: PhantomData,
+        }
+    }
+
+    /// Mutate the currently owned p4 table
+    ///
+    /// # Safety
+    /// The caller mustn't mutate the 512th element of the table as it's is the recursive mapping.
+    pub unsafe fn table<A: FrameAllocator>(
+        &mut self,
+        active_table: &mut ActivePageTable<P4>,
+        context: &mut TableManipulationContext<A>,
+        table_mutate: impl FnOnce(&mut ActivePageTable<P4>, &mut Table<RecurseLevel1>),
+    ) {
+        {
+            // SAFETY: We know that the frame is valid because it's is being allocated in the new
+            // function
+            let mapped = unsafe {
+                context.temporary_page.map_table_frame(
+                    self.p4_frame,
+                    active_table,
+                    context.allocator,
+                )
+            };
+            table_mutate(active_table, mapped);
+        }
+        // SAFETY: The reference to the table is gone in the scope
+        unsafe { context.temporary_page.unmap(active_table) };
     }
 }
 
 pub fn create_mappings<F, A, P: TopLevelP4>(
     f: F,
-    allocator: &mut A,
+    context: &mut TableManipulationContext<A>,
     active_table: &mut ActivePageTable<P>,
-) -> InactivePageTable
+) -> InactivePageTable<P>
 where
     F: FnOnce(&mut Mapper<P>, &mut A),
     A: FrameAllocator,
 {
-    let mut temporary_page = TemporaryPage::new(Page::deadbeef());
+    let mut new_table = InactivePageTable::new(active_table, context);
 
-    let mut new_table = InactivePageTable::new(allocator, active_table, &mut temporary_page);
-
-    active_table.with(
-        &mut new_table,
-        &mut temporary_page,
-        allocator,
-        |mapper, allocator| {
-            f(mapper, allocator);
-        },
-    );
+    active_table.with(&mut new_table, context, |mapper, allocator| {
+        f(mapper, allocator);
+    });
 
     new_table
 }

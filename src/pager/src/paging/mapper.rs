@@ -49,7 +49,7 @@ where
     /// and is the only mutable reference to the page table
     pub unsafe fn new_custom(p4: *mut Table<P4>) -> Mapper<P4> {
         Mapper {
-            // SAFETY: The validity of the page table is gurentee by the user
+            // SAFETY: The validity of the page table is gurentee by the caller
             p4: unsafe { P4::CreateMarker::create(p4) },
         }
     }

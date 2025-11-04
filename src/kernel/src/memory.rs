@@ -5,7 +5,7 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
     paging::{
-        ActivePageTable, InactivePageTable,
+        ActivePageTable, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator},
         table::RecurseLevel4,
         temporary_page::TemporaryPage,
@@ -289,9 +289,12 @@ select_context! {
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
         }
 
-        pub fn with_inactive(&mut self, table: &mut InactivePageTable, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
+        pub fn with_inactive(&mut self, table: &mut InactivePageTable<RecurseLevel4>, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
             let ctx = self.context_mut();
-            ctx.active_table.with(table, &mut ctx.temporary_page, &mut ctx.buddy_allocator, f);
+            ctx.active_table.with(table, &mut TableManipulationContext {
+                temporary_page: &mut ctx.temporary_page,
+                allocator: &mut ctx.buddy_allocator
+            }, f);
         }
 
         pub fn buddy_allocator(&mut self) -> &mut BuddyAllocator<64> {

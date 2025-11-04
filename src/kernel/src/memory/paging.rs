@@ -1,9 +1,12 @@
 use bootbridge::MemoryType;
 use pager::{
     EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
-    address::VirtAddr,
+    address::{Page, VirtAddr},
     allocator::FrameAllocator,
-    paging::{ActivePageTable, create_mappings, table::RecurseLevel4},
+    paging::{
+        ActivePageTable, TableManipulationContext, create_mappings, table::RecurseLevel4,
+        temporary_page::TemporaryPage,
+    },
 };
 
 use crate::initialization_context::{InitializationContext, Stage0};
@@ -18,6 +21,12 @@ where
     A: FrameAllocator,
 {
     let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+
+    let mut temporary_page = TemporaryPage::new(Page::deadbeef());
+    let mut context = TableManipulationContext {
+        temporary_page: &mut temporary_page,
+        allocator,
+    };
 
     let new_table = create_mappings(
         |mapper, allocator| {
@@ -58,11 +67,11 @@ where
                 &GENERAL_VIRTUAL_ALLOCATOR,
             );
         },
-        allocator,
+        &mut context,
         &mut active_table,
     );
 
-    unsafe { active_table.switch(new_table) };
+    unsafe { active_table.switch(&mut context, new_table) };
 
     active_table
 }
