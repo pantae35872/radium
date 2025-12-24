@@ -34,15 +34,15 @@ use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use c_enum::c_enum;
 use conquer_once::spin::OnceCell;
 use pager::{
-    address::{PhysAddr, VirtAddr},
     Mapper, PAGE_SIZE,
+    address::{PhysAddr, VirtAddr},
 };
 use sentinel::log;
 use spin::Mutex;
 use uguid::Guid;
 
 use crate::{
-    initialization_context::{End, InitializationContext},
+    initialization_context::{InitializationContext, Stage4},
     memory::virt_addr_alloc,
 };
 
@@ -322,7 +322,7 @@ unsafe impl Send for UefiRuntime {}
 unsafe impl Sync for UefiRuntime {}
 
 impl UefiRuntime {
-    fn new(ctx: &mut InitializationContext<End>) -> Self {
+    fn new(ctx: &mut InitializationContext<Stage4>) -> Self {
         let mut mem_map: MemoryMap<'static> =
             ctx.context().boot_bridge().memory_map().clone().into();
         let runtime_table_raw = ctx.context().boot_bridge().uefi_runtime_ptr();
@@ -392,7 +392,11 @@ impl UefiRuntime {
             );
             log!(Debug, "EFI SET VIRTUAL ADDRESS MAP STATUS: {status:?}");
             if status != EfiStatus::SUCCESS {
-                panic!("Failed to set virtual address map for uefi {status:?}, DescSize: {}, DescVersion: {}", mem_map.entry_size(), mem_map.entry_version());
+                panic!(
+                    "Failed to set virtual address map for uefi {status:?}, DescSize: {}, DescVersion: {}",
+                    mem_map.entry_size(),
+                    mem_map.entry_version()
+                );
             }
         };
 
@@ -438,6 +442,6 @@ pub fn uefi_runtime() -> &'static Mutex<UefiRuntime> {
     UEFI_RUNTIME.get().expect("UEFI Runtime not initialized")
 }
 
-pub fn init(ctx: &mut InitializationContext<End>) {
+pub fn init(ctx: &mut InitializationContext<Stage4>) {
     UEFI_RUNTIME.init_once(|| UefiRuntime::new(ctx).into());
 }

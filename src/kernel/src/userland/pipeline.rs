@@ -26,7 +26,7 @@ use alloc::vec::Vec;
 use kernel_proc::{def_local, local_builder};
 
 use crate::{
-    initialization_context::{End, InitializationContext},
+    initialization_context::{InitializationContext, Stage4},
     interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
     userland::{
         pipeline::{
@@ -44,7 +44,7 @@ mod process;
 mod scheduler;
 mod thread;
 
-pub fn init(ctx: &mut InitializationContext<End>) {
+pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.register(|builder, _ctx, _id| {
             local_builder!(builder, PIPELINE(ControlPipeline::new()));

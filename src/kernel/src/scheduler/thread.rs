@@ -8,7 +8,7 @@ use crate::{
     const_assert,
     gdt::CODE_SEG,
     hlt_loop,
-    initialization_context::{End, InitializationContext},
+    initialization_context::{InitializationContext, Stage4},
     interrupt::{CORE_ID, ExtendedInterruptStackFrame},
     memory::stack_allocator::Stack,
     scheduler::CURRENT_THREAD_ID,
@@ -466,7 +466,7 @@ impl ThreadPool {
     }
 
     fn alloc_context(
-        ctx: &mut InitializationContext<End>,
+        ctx: &mut InitializationContext<Stage4>,
     ) -> Result<ThreadContext, SchedulerError> {
         Ok(ThreadContext {
             alive: true,

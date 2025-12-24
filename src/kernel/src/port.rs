@@ -139,7 +139,7 @@ impl<S: PortSize, P: PortPermission> Port<S, P> {
 
 impl<S: PortSize> Port<S, PortWrite> {
     /// Write to a port with the provided value
-    /// 
+    ///
     /// # Safety
     /// Writing to a system port can cause unsafe side effects
     pub unsafe fn write(&mut self, value: S::Type)
@@ -152,7 +152,7 @@ impl<S: PortSize> Port<S, PortWrite> {
 
 impl<S: PortSize> Port<S, PortRead> {
     /// Read from a port
-    /// 
+    ///
     /// # Safety
     /// Reading from a system port can cause unsafe side effects
     pub unsafe fn read(&self) -> S::Type {
@@ -162,7 +162,7 @@ impl<S: PortSize> Port<S, PortRead> {
 
 impl<S: PortSize> Port<S, PortReadWrite> {
     /// Write to a port with the provided value
-    /// 
+    ///
     /// # Safety
     /// Writing to a system port can cause unsafe side effects
     pub unsafe fn read(&self) -> S::Type {
@@ -170,7 +170,7 @@ impl<S: PortSize> Port<S, PortReadWrite> {
     }
 
     /// Read from a port
-    /// 
+    ///
     /// # Safety
     /// Reading from a system port can cause unsafe side effects
     pub unsafe fn write(&mut self, value: S::Type)
@@ -182,7 +182,7 @@ impl<S: PortSize> Port<S, PortReadWrite> {
 }
 
 select_context! {
-    (Stage0, Stage1, Stage2, Stage3, End) => {
+    (Stage0, Stage1, Stage2, Stage3, Stage4) => {
         pub fn alloc_port<P: PortPermission, S: PortSize>(&mut self, address: u16) -> Option<Port<S, P>> {
             self.context_mut().port_allocator.allocate(address)
         }

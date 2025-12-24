@@ -4,9 +4,9 @@ use core::fmt::LowerHex;
 use core::sync::atomic::Ordering;
 
 use crate::PANIC_COUNT;
-use crate::initialization_context::End;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
+use crate::initialization_context::Stage4;
 use crate::interrupt::apic::ApicId;
 use crate::port::Port;
 use crate::port::Port8Bit;
@@ -119,7 +119,7 @@ def_local!(pub static LAST_INTERRUPT_NO: u8);
 def_local!(pub static IS_IN_ISR: bool);
 def_local!(pub static TPMS: usize);
 
-pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End> {
+pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Stage4> {
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
             LocalApicArguments {
@@ -132,7 +132,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
         .unwrap();
     disable_pic(&mut ctx);
 
-    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<End>, id| {
+    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Stage4>, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
         let idt = create_idt();
         idt.load();
@@ -164,7 +164,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<End
         .iter()
         .for_each(|source_override| io_apic_manager.add_source_override(source_override));
 
-    let lapic_calibration = |ctx: &mut InitializationContext<End>, id| {
+    let lapic_calibration = |ctx: &mut InitializationContext<Stage4>, id| {
         log!(Trace, "Calibrating APIC for cpu: {id}");
         ctx.redirect_legacy_irqs(
             0,

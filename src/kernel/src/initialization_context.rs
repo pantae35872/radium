@@ -46,13 +46,13 @@ macro_rules! create_initialization_chain {
     };
 
     (@accum
-        [$($accum_field:ident : $accum_ty:ty),*]
-        [$previous_phase: ident { $($prev_field:ident : $prev_ty:ty),* }]
+        [$($accum_field:ident : $accum_ty:ty),* $(,)?]
+        [$previous_phase: ident { $($prev_field:ident : $prev_ty:ty),* $(,)? }]
         => $current_phase: ident {
-           $($current_field:ident : $current_ty: ty),*
+           $($current_field:ident : $current_ty: ty),* $(,)?
         }
         $(=> $rest_phase:ident {
-           $($rest_field:ident : $rest_ty:ty),*
+           $($rest_field:ident : $rest_ty:ty),* $(,)?
         })*
     ) => {
         pub struct $previous_phase {
@@ -75,8 +75,8 @@ macro_rules! create_initialization_chain {
             fn create(previous: Self::PreviousPhase, additional: Self::Additional) -> Self {
                 let ($($current_field),*) = additional;
                 Self {
-                    $($prev_field: previous.$prev_field,)*
-                    $($current_field),*
+                    $($prev_field: previous.$prev_field.into(),)*
+                    $($current_field: $current_field.into()),*
                 }
             }
         }
@@ -92,29 +92,37 @@ macro_rules! create_initialization_chain {
         }
 
         create_initialization_chain!(@accum
-            [$($accum_field : $accum_ty,)* $($current_field : $current_ty),*]
+            [$($accum_field : $accum_ty,)* $($current_field : $current_ty,)*]
             [$current_phase {
                 $($accum_field : $accum_ty,)*
-                $($current_field : $current_ty),*
+                $($current_field : $current_ty,)*
             }]
             $(=> $rest_phase {
-                $($rest_field : $rest_ty),*
+                $($rest_field : $rest_ty,)*
             })*
         );
     };
 
     (@accum
-        [$($accum_field:ident : $accum_ty:ty),*]
-        [$last_phase:ident { $($last_field:ident : $last_ty:ty),* }]
+        [$($accum_field:ident : $accum_ty:ty),* $(,)?]
+        [$last_phase:ident {
+            $($last_field:ident : $last_ty:ty),* $(,)?
+        }]
     ) => {
         pub struct $last_phase {
-            $(pub $accum_field : $accum_ty),*
+            $(pub $accum_field : Option<$accum_ty>),*
         }
 
         impl $last_phase {
             $(
-                pub fn $accum_field(&self) -> &$accum_ty {
-                    &self.$accum_field
+                paste::paste! {
+                    pub fn [< take_$accum_field >](&mut self) -> Option<$accum_ty> {
+                        self.$accum_field.take()
+                    }
+                }
+
+                pub fn $accum_field(&self) -> Option<&$accum_ty> {
+                    self.$accum_field.as_ref()
                 }
             )*
         }
@@ -151,9 +159,9 @@ create_initialization_chain! {
         acpi: Acpi,
     } => Stage3 {
         local_initializer: Option<LocalInitializer>,
-    } => End {
+    } => Stage4 {
         io_apic_manager: IoApicManager,
-    }
+    } => End {}
 }
 
 pub trait AnyInitializationPhase {

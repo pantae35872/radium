@@ -253,7 +253,7 @@ impl MMIOBufferInfo {
 }
 
 select_context! {
-    (Stage2, Stage3, End) => {
+    (Stage2, Stage3, Stage4) => {
         pub fn mmio_device<T: MMIODevice<A>, A>(
             &mut self,
             args: A,
@@ -283,7 +283,7 @@ select_context! {
             Some(T::new(buf, args))
         }
     }
-    (Stage1, Stage2, Stage3, End) => {
+    (Stage1, Stage2, Stage3, Stage4) => {
         pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)

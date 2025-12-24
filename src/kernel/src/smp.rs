@@ -22,7 +22,7 @@ use pager::{
 
 use crate::{
     hlt_loop,
-    initialization_context::{End, InitializationContext, Stage2, Stage3, select_context},
+    initialization_context::{InitializationContext, Stage2, Stage3, Stage4, select_context},
     interrupt::{
         self, APIC_ID, LAPIC,
         apic::{ApicId, apic_id},
@@ -63,7 +63,7 @@ pub struct ApInitializer {
 }
 
 impl ApInitializer {
-    fn new(ctx: &mut InitializationContext<End>) -> Self {
+    fn new(ctx: &mut InitializationContext<Stage4>) -> Self {
         let trampoline_size = unsafe {
             &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
         };
@@ -123,7 +123,7 @@ impl ApInitializer {
         }
     }
 
-    fn prepare_stack_and_info(&self, ctx: Arc<Mutex<InitializationContext<End>>>) {
+    fn prepare_stack_and_info(&self, ctx: Arc<Mutex<InitializationContext<Stage4>>>) {
         let ctx_ap = Arc::clone(&ctx);
         let mut ctx = ctx.lock();
         let stack = ctx
@@ -157,7 +157,7 @@ impl ApInitializer {
         }
     }
 
-    fn boot_ap(&self, apic_id: ApicId, ctx: Arc<Mutex<InitializationContext<End>>>) {
+    fn boot_ap(&self, apic_id: ApicId, ctx: Arc<Mutex<InitializationContext<Stage4>>>) {
         self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
@@ -184,7 +184,7 @@ static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// # Safety
 /// This should only be called from ap bootstrap trampoline
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>>) -> ! {
+pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<Stage4>>) -> ! {
     // SAFETY: This is safe if not we'll explode
     unsafe { memory::prepare_flags() };
     // SAFETY: This is safe because we called into_raw in the ap startup code and pass through rdi
@@ -200,9 +200,9 @@ pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<End>
 }
 
 type LocalInitialize =
-    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId) + Send + Sync;
-type AfterInitializer = dyn Fn(&mut InitializationContext<End>, CoreId) + Send + Sync;
-type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<End>) + Send + Sync;
+    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<Stage4>, CoreId) + Send + Sync;
+type AfterInitializer = dyn Fn(&mut InitializationContext<Stage4>, CoreId) + Send + Sync;
+type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<Stage4>) + Send + Sync;
 
 pub struct LocalInitializer {
     local_initializers_v2: Vec<Box<LocalInitialize>>,
@@ -221,21 +221,21 @@ impl LocalInitializer {
 
     pub fn after_bsp(
         &mut self,
-        initializer: impl FnOnce(&mut InitializationContext<End>) + Send + Sync + 'static,
+        initializer: impl FnOnce(&mut InitializationContext<Stage4>) + Send + Sync + 'static,
     ) {
         self.after_bsps.push(Box::new(initializer));
     }
 
     pub fn register_after(
         &mut self,
-        initializer: impl Fn(&mut InitializationContext<End>, CoreId) + Send + Sync + 'static,
+        initializer: impl Fn(&mut InitializationContext<Stage4>, CoreId) + Send + Sync + 'static,
     ) {
         self.after_initializers.push(Box::new(initializer));
     }
 
     pub fn register(
         &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<End>, CoreId)
+        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<Stage4>, CoreId)
         + Send
         + Sync
         + 'static,
@@ -243,7 +243,7 @@ impl LocalInitializer {
         self.local_initializers_v2.push(Box::new(initializer));
     }
 
-    fn initialize_current(&mut self, ctx: &mut InitializationContext<End>) {
+    fn initialize_current(&mut self, ctx: &mut InitializationContext<Stage4>) {
         let mut cpu_local_builder = CpuLocalBuilder::new();
         let id = CoreId::from(apic_id());
         log!(Debug, "Initializing cpu: {id}");
@@ -363,7 +363,7 @@ pub fn cpu_local() -> &'static mut CpuLocal {
 }
 
 select_context! {
-    (Stage3, End) => {
+    (Stage3, Stage4) => {
         pub fn local_initializer(&mut self, f: impl FnOnce(&mut LocalInitializer)) {
             let mut initializer = self.context_mut().local_initializer.take().unwrap();
             f(&mut initializer);
@@ -372,7 +372,7 @@ select_context! {
     }
 }
 
-impl InitializationContext<End> {
+impl InitializationContext<Stage4> {
     pub fn initialize_current(&mut self) {
         let mut initializer = self.context_mut().local_initializer.take().unwrap();
         initializer.initialize_current(self);
@@ -406,10 +406,10 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
 }
 
 def_local!(pub static CORE_COUNT: usize);
-def_local!(pub static CTX: Arc<Mutex<InitializationContext<End>>>);
+def_local!(pub static CTX: Arc<Mutex<InitializationContext<Stage4>>>);
 local_gen!();
 
-pub fn init_aps(mut ctx: InitializationContext<End>) {
+pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
     let ap_initializer = ApInitializer::new(&mut ctx);
     let ctx = Arc::new(Mutex::new(ctx));
     let ctx_cloned = Arc::clone(&ctx);

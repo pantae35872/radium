@@ -2,7 +2,7 @@ use pager::address::VirtAddr;
 use santa::SymbolResolver;
 use sentinel::{LoggerBackend, get_logger};
 
-use crate::initialization_context::{End, InitializationContext};
+use crate::initialization_context::{InitializationContext, Stage4};
 
 pub mod acpi;
 pub mod display;
@@ -10,7 +10,7 @@ pub mod pci;
 pub mod pit;
 pub mod uefi_runtime;
 
-pub fn init(ctx: &mut InitializationContext<End>) {
+pub fn init(ctx: &mut InitializationContext<Stage4>) {
     pci::init(ctx);
 }
 

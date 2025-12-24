@@ -116,7 +116,7 @@ impl RedirectionTableEntry {
 }
 
 select_context! {
-    (End) => {
+    (Stage4) => {
         pub fn redirect_legacy_irqs(&mut self, legacy_irq: u8, entry: RedirectionTableEntry) {
             self.context.io_apic_manager.redirect_legacy_irqs(legacy_irq, entry);
         }

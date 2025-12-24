@@ -27,7 +27,7 @@ use sentinel::log;
 use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 
 use crate::{
-    initialization_context::{End, InitializationContext},
+    initialization_context::{InitializationContext, Stage4},
     interrupt::{CORE_ID, ExtendedInterruptStackFrame, InterruptIndex, LAPIC, TPMS},
     smp::{CORE_COUNT, CoreId, MAX_CPU},
     sync::spin_mpsc::SpinMPSC,
@@ -94,7 +94,7 @@ pub fn driv_exit() -> ! {
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<End>, current_core_id: CoreId) -> Self {
+    pub fn new(ctx: &mut InitializationContext<Stage4>, current_core_id: CoreId) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
@@ -656,7 +656,7 @@ impl Dispatcher {
 def_local!(pub static LOCAL_SCHEDULER: crate::scheduler::LocalScheduler);
 def_local!(pub static CURRENT_THREAD_ID: usize);
 
-pub fn init(ctx: &mut InitializationContext<End>) {
+pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.register(|builder, ctx, id| {
             local_builder!(

@@ -4,7 +4,7 @@ use sentinel::log;
 use spin::Mutex;
 
 use crate::{
-    initialization_context::{End, InitializationContext},
+    initialization_context::{InitializationContext, Stage4},
     inline_if,
     port::{Port, Port32Bit, PortReadWrite, PortWrite},
 };
@@ -532,7 +532,7 @@ pub fn register_driver(handle: Arc<dyn PciDeviceHandle>) {
     DRIVER.lock().drivers.push(PciDevice { handle });
 }
 
-pub fn init(ctx: &mut InitializationContext<End>) {
+pub fn init(ctx: &mut InitializationContext<Stage4>) {
     let mut pci_config_data_port = ctx
         .alloc_port(PCI_CONFIG_DATA_PORT)
         .expect("PCI Data port was taken");
