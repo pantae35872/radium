@@ -111,7 +111,7 @@ impl ThreadPipeline {
         &mut self,
         process: &mut ProcessPipeline,
         parent_process: Process,
-        start: F,
+        _start: F,
     ) -> TaskBlock
     where
         F: FnOnce() + Send + 'static,

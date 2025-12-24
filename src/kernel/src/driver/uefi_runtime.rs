@@ -36,14 +36,15 @@ use conquer_once::spin::OnceCell;
 use pager::{
     Mapper, PAGE_SIZE,
     address::{PhysAddr, VirtAddr},
+    paging::table::{RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
 };
 use sentinel::log;
 use spin::Mutex;
 use uguid::Guid;
 
 use crate::{
-    initialization_context::{InitializationContext, Stage4},
-    memory::virt_addr_alloc,
+    BOOT_BRIDGE,
+    memory::{mapper, virt_addr_alloc},
 };
 
 #[repr(C)]
@@ -322,10 +323,9 @@ unsafe impl Send for UefiRuntime {}
 unsafe impl Sync for UefiRuntime {}
 
 impl UefiRuntime {
-    fn new(ctx: &mut InitializationContext<Stage4>) -> Self {
-        let mut mem_map: MemoryMap<'static> =
-            ctx.context().boot_bridge().memory_map().clone().into();
-        let runtime_table_raw = ctx.context().boot_bridge().uefi_runtime_ptr();
+    fn new() -> Self {
+        let mut mem_map: MemoryMap<'static> = BOOT_BRIDGE.memory_map().clone().into();
+        let runtime_table_raw = BOOT_BRIDGE.uefi_runtime_ptr();
 
         log!(
             Info,
@@ -349,19 +349,22 @@ impl UefiRuntime {
                 ufu_stuff.phys_start + (ufu_stuff.page_count * PAGE_SIZE) as usize - 1
             );
             let page = virt_addr_alloc(ufu_stuff.page_count);
-            unsafe {
-                ctx.mapper().map_to_range_by_size(
+
+            mapper::<RecurseLevel4LowerHalf, _>(|mapper| unsafe {
+                mapper.identity_map_by_size(
+                    ufu_stuff.phys_start.into(),
+                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
+                    ufu_stuff.att.into(),
+                );
+            });
+            mapper::<RecurseLevel4UpperHalf, _>(|mapper| unsafe {
+                mapper.map_to_range_by_size(
                     page,
                     ufu_stuff.phys_start.into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,
                     ufu_stuff.att.into(),
                 );
-                ctx.mapper().identity_map_by_size(
-                    ufu_stuff.phys_start.into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                    ufu_stuff.att.into(),
-                );
-            };
+            });
             ufu_stuff.virt_start = page.start_address();
             if ufu_stuff.phys_start < runtime_table_raw
                 && (ufu_stuff.phys_start + ufu_stuff.phys_start.as_u64() * PAGE_SIZE - 1)
@@ -406,12 +409,12 @@ impl UefiRuntime {
                 MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
             )
         }) {
-            unsafe {
-                ctx.mapper().unmap_addr_by_size(
+            mapper::<RecurseLevel4LowerHalf, _>(|mapper| unsafe {
+                mapper.unmap_addr_by_size(
                     VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,
                 )
-            }
+            })
         }
 
         Self {
@@ -442,6 +445,6 @@ pub fn uefi_runtime() -> &'static Mutex<UefiRuntime> {
     UEFI_RUNTIME.get().expect("UEFI Runtime not initialized")
 }
 
-pub fn init(ctx: &mut InitializationContext<Stage4>) {
-    UEFI_RUNTIME.init_once(|| UefiRuntime::new(ctx).into());
+pub fn init() {
+    UEFI_RUNTIME.init_once(|| UefiRuntime::new().into());
 }

@@ -16,8 +16,8 @@ use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
 use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
+use radium::memory::BUDDY_ALLOCATOR;
 use radium::scheduler::{self, CURRENT_THREAD_ID, VsysThread, sleep, vsys_reg};
-use radium::smp::CTX;
 use radium::sync::mutex::Mutex;
 use radium::{print, println, serial_print, serial_println};
 use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
@@ -110,8 +110,7 @@ fn kmain_thread() {
 
     log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
     {
-        let ctx = CTX.lock();
-        let allocator = ctx.context().buddy_allocator();
+        let allocator = BUDDY_ALLOCATOR.lock();
         log!(
             Info,
             "Usable memory left: {:.2} GB",

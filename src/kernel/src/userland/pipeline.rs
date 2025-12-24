@@ -64,7 +64,7 @@ pub struct ControlPipeline {
 }
 
 #[derive(Debug, Default)]
-struct PipelineContext {
+pub struct PipelineContext {
     interrupted_task: Option<TaskBlock>,
     added_tasks: Vec<TaskBlock>,
     added_processes: Vec<Process>,
@@ -118,7 +118,7 @@ impl ControlPipeline {
         context.should_schedule = false;
     }
 
-    fn handle_syscall(&mut self, context: &mut PipelineContext) {}
+    fn handle_syscall(&mut self, _context: &mut PipelineContext) {}
 
     fn schedule(&mut self, context: &mut PipelineContext) {
         if !context.should_schedule {

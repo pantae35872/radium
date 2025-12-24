@@ -1,24 +1,27 @@
+use alloc::sync::Arc;
 use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
+use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, KERNEL_GENERAL_USE, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::{FrameAllocator, virt_allocator::VirtualAllocator},
     paging::{
         ActivePageTable, InactivePageTable, TableManipulationContext,
-        mapper::{Mapper, MapperWithAllocator},
-        table::RecurseLevel4,
+        mapper::{Mapper, MapperWithAllocator, TopLevelP4},
+        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
         temporary_page::TemporaryPage,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
 };
 use raw_cpuid::CpuId;
+use spin::Mutex;
 use stack_allocator::StackAllocator;
 
 use crate::{
     DWARF_DATA,
     driver::acpi::Acpi,
-    initialization_context::{InitializationContext, Stage0, Stage1, select_context},
+    initialization_context::{InitializationContext, Stage0, Stage1, Stage4, select_context},
     initialize_guard, log,
 };
 
@@ -30,6 +33,70 @@ pub mod stack_allocator;
 
 pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
+
+def_local!(pub static ACTIVE_TABLE_LOWER_HALF: Arc<Mutex<ActivePageTable<RecurseLevel4LowerHalf>>>);
+def_local!(pub static ACTIVE_TABLE_UPPER_HALF: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
+def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
+def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
+
+pub trait TableGetter: TopLevelP4 {
+    fn get() -> Arc<Mutex<ActivePageTable<Self>>>;
+}
+
+impl TableGetter for RecurseLevel4UpperHalf {
+    fn get() -> Arc<Mutex<ActivePageTable<Self>>> {
+        Arc::clone(&ACTIVE_TABLE_UPPER_HALF)
+    }
+}
+
+impl TableGetter for RecurseLevel4LowerHalf {
+    fn get() -> Arc<Mutex<ActivePageTable<Self>>> {
+        Arc::clone(&ACTIVE_TABLE_LOWER_HALF)
+    }
+}
+
+pub fn stack_allocator<T: TableGetter, R>(
+    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, T>) -> R,
+) -> R {
+    let mut stack_allocator = STACK_ALLOCATOR.lock();
+    let table = T::get();
+    let mut table = table.lock();
+    f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
+}
+
+pub fn mapper<T: TableGetter, R>(
+    f: impl FnOnce(&mut MapperWithAllocator<T, BuddyAllocator>) -> R,
+) -> R {
+    let table = T::get();
+    let mut table = table.lock();
+    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+}
+
+pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
+    ctx.local_initializer(|i| {
+        i.context_transformer(|builder, context| {
+            let (lower_half, upper_half) = context.context.take_active_table().unwrap().split();
+            builder
+                .table_lower_half(Arc::new(lower_half.into()))
+                .table_upper_half(Arc::new(upper_half.into()))
+                .stack_allocator(Arc::new(
+                    context.context.take_stack_allocator().unwrap().into(),
+                ))
+                .buddy_allocator(Arc::new(
+                    context.context.take_buddy_allocator().unwrap().into(),
+                ));
+        });
+        i.register(|builder, context, _id| {
+            local_builder!(
+                builder,
+                ACTIVE_TABLE_LOWER_HALF(Arc::clone(&context.table_lower_half)),
+                ACTIVE_TABLE_UPPER_HALF(Arc::clone(&context.table_upper_half)),
+                STACK_ALLOCATOR(Arc::clone(&context.stack_allocator)),
+                BUDDY_ALLOCATOR(Arc::clone(&context.buddy_allocator))
+            );
+        })
+    });
+}
 
 /// Initialize the memory
 ///
@@ -154,15 +221,15 @@ pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
         .expect("RAN OUT OF VIRTUAL ADDR")
 }
 
-pub struct WithMapper<'a, T, A: FrameAllocator> {
-    table: &'a mut Mapper<RecurseLevel4>,
+pub struct WithMapper<'a, T, A: FrameAllocator, P4: TopLevelP4> {
+    table: &'a mut Mapper<P4>,
     with_table: &'a mut T,
     allocator: &'a mut A,
 }
 
-impl<'a, T, A: FrameAllocator> WithMapper<'a, T, A> {
+impl<'a, T, A: FrameAllocator, P4: TopLevelP4> WithMapper<'a, T, A, P4> {
     pub fn new(
-        active_table: &'a mut ActivePageTable<RecurseLevel4>,
+        active_table: &'a mut ActivePageTable<P4>,
         with_table: &'a mut T,
         allocator: &'a mut A,
     ) -> Self {
@@ -284,7 +351,7 @@ select_context! {
         }
     }
     (Stage1, Stage2, Stage3, Stage4) => {
-        pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>> {
+        pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>, RecurseLevel4> {
             let ctx = self.context_mut();
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
         }

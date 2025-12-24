@@ -29,7 +29,7 @@ use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 use crate::{
     initialization_context::{InitializationContext, Stage4},
     interrupt::{CORE_ID, ExtendedInterruptStackFrame, InterruptIndex, LAPIC, TPMS},
-    smp::{CORE_COUNT, CoreId, MAX_CPU},
+    smp::{ApInitializationContext, CORE_COUNT, CoreId, MAX_CPU},
     sync::spin_mpsc::SpinMPSC,
 };
 
@@ -94,12 +94,11 @@ pub fn driv_exit() -> ! {
 }
 
 impl LocalScheduler {
-    pub fn new(ctx: &mut InitializationContext<Stage4>, current_core_id: CoreId) -> Self {
+    pub fn new(ctx: &ApInitializationContext, current_core_id: CoreId) -> Self {
         Self {
             rr_queue: VecDeque::new(),
             hlt_thread: Some(Thread::hlt_thread(
-                ctx.stack_allocator()
-                    .alloc_stack(2)
+                ctx.stack_allocator(|mut s| s.alloc_stack(2))
                     .expect("Failed to allocate stack for hlt thread"),
                 current_core_id,
             )),

@@ -110,7 +110,7 @@ macro_rules! create_initialization_chain {
         }]
     ) => {
         pub struct $last_phase {
-            $(pub $accum_field : Option<$accum_ty>),*
+            $(pub $accum_field : Option<$accum_ty>,)*
         }
 
         impl $last_phase {

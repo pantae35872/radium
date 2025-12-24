@@ -4,6 +4,7 @@ use core::{
 };
 
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
@@ -12,7 +13,7 @@ use pager::{
     allocator::FrameAllocator,
     paging::{
         ActivePageTable,
-        table::{DirectLevel4, Table},
+        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
     },
 };
 use pager::{
@@ -22,13 +23,17 @@ use pager::{
 
 use crate::{
     hlt_loop,
-    initialization_context::{InitializationContext, Stage2, Stage3, Stage4, select_context},
+    initialization_context::{End, InitializationContext, Stage2, Stage3, Stage4, select_context},
     interrupt::{
         self, APIC_ID, LAPIC,
         apic::{ApicId, apic_id},
+        io_apic::IoApicManager,
     },
     log,
-    memory::{self},
+    memory::{
+        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, stack_allocator,
+        stack_allocator::StackAllocator,
+    },
     scheduler::{LOCAL_SCHEDULER, pinned, sleep},
 };
 use spin::Mutex;
@@ -123,12 +128,9 @@ impl ApInitializer {
         }
     }
 
-    fn prepare_stack_and_info(&self, ctx: Arc<Mutex<InitializationContext<Stage4>>>) {
+    fn prepare_stack_and_info(&self, ctx: Arc<ApInitializationContext>) {
         let ctx_ap = Arc::clone(&ctx);
-        let mut ctx = ctx.lock();
-        let stack = ctx
-            .stack_allocator()
-            .alloc_stack(256)
+        let stack = stack_allocator::<RecurseLevel4UpperHalf, _>(|mut s| s.alloc_stack(256))
             .expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
@@ -157,7 +159,7 @@ impl ApInitializer {
         }
     }
 
-    fn boot_ap(&self, apic_id: ApicId, ctx: Arc<Mutex<InitializationContext<Stage4>>>) {
+    fn boot_ap(&self, apic_id: ApicId, ctx: Arc<ApInitializationContext>) {
         self.prepare_stack_and_info(ctx);
         assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
@@ -184,13 +186,13 @@ static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 /// # Safety
 /// This should only be called from ap bootstrap trampoline
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<Stage4>>) -> ! {
+pub unsafe extern "C" fn ap_startup(ctx: *const ApInitializationContext) -> ! {
     // SAFETY: This is safe if not we'll explode
     unsafe { memory::prepare_flags() };
     // SAFETY: This is safe because we called into_raw in the ap startup code and pass through rdi
     // register in the boot.asm
     let ctx = unsafe { Arc::from_raw(ctx) };
-    ctx.lock().initialize_current();
+    ctx.initializer.lock().initialize_current(&ctx);
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
@@ -199,51 +201,128 @@ pub unsafe extern "C" fn ap_startup(ctx: *const Mutex<InitializationContext<Stag
     hlt_loop();
 }
 
-type LocalInitialize =
-    dyn Fn(&mut CpuLocalBuilder, &mut InitializationContext<Stage4>, CoreId) + Send + Sync;
-type AfterInitializer = dyn Fn(&mut InitializationContext<Stage4>, CoreId) + Send + Sync;
-type AfterBspInitializers = dyn FnOnce(&mut InitializationContext<Stage4>) + Send + Sync;
+macro_rules! builder {
+    ($vis: vis struct $name: ident {$(
+        $field_vis: vis $field: ident : $type: ty
+    ),* $(,)?}) => {paste::paste!{
+        #[derive(Default)]
+        $vis struct [< $name Builder>] {
+            $($field: Option<$type>),*
+        }
 
+        impl [< $name Builder>] {
+            fn new() -> Self {
+                Self::default()
+            }
+
+            $(
+                $field_vis fn $field(&mut self, $field: $type) -> &mut Self {
+                    self.$field = Some($field);
+                    self
+                }
+            )*
+
+            fn build(self) -> Option<$name> {
+                Some($name {
+                    $($field: self.$field?),*
+                })
+            }
+        }
+
+        $vis struct $name {
+            $($field_vis $field: $type),*
+        }
+    }};
+}
+
+builder! {
+    pub struct ApInitializationContext {
+        pub table_lower_half: Arc<Mutex<ActivePageTable<RecurseLevel4LowerHalf>>>,
+        pub table_upper_half: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>,
+        pub stack_allocator: Arc<Mutex<StackAllocator>>,
+        pub buddy_allocator: Arc<Mutex<BuddyAllocator>>,
+        pub initializer: Mutex<LocalInitializer>,
+        pub boot_bridge: Arc<BootBridge>,
+        pub io_apic: Arc<Mutex<IoApicManager>>,
+        pub processors: Vec<ApicId>,
+    }
+}
+
+impl ApInitializationContext {
+    pub fn stack_allocator<R>(
+        &self,
+        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
+    ) -> R {
+        let mut stack_allocator = self.stack_allocator.lock();
+        let mut table = self.table_upper_half.lock();
+        f(stack_allocator.with_table(&mut *table, &mut self.buddy_allocator.lock()))
+    }
+}
+
+macro_rules! initializer_fn {
+    ([$($fn_impl: tt)*] => $name: ident) => {
+        pub trait $name: $($fn_impl)* + Send + Sync {}
+        impl<T: $($fn_impl)* + Send + Sync> $name for T {}
+    };
+}
+
+initializer_fn!([Fn(CoreId)] => AfterInitializer);
+
+initializer_fn!([FnOnce()] => AfterBspInitializer);
+
+initializer_fn!([Fn(&mut CpuLocalBuilder, &ApInitializationContext, CoreId)] => LocalInitialize);
+
+initializer_fn!(
+    [Fn(&mut ApInitializationContextBuilder, &mut InitializationContext<End>)] =>
+    ContextTransformer
+);
+
+#[derive(Default)]
 pub struct LocalInitializer {
-    local_initializers_v2: Vec<Box<LocalInitialize>>,
-    after_initializers: Vec<Box<AfterInitializer>>,
-    after_bsps: Vec<Box<AfterBspInitializers>>,
+    context_transformer: Vec<Box<dyn ContextTransformer>>,
+    local_initializers_v2: Vec<Box<dyn LocalInitialize>>,
+    after_initializers: Vec<Box<dyn AfterInitializer>>,
+    after_bsps: Vec<Box<dyn AfterBspInitializer>>,
 }
 
 impl LocalInitializer {
-    pub const fn new() -> Self {
-        Self {
-            local_initializers_v2: Vec::new(),
-            after_initializers: Vec::new(),
-            after_bsps: Vec::new(),
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    pub fn after_bsp(
-        &mut self,
-        initializer: impl FnOnce(&mut InitializationContext<Stage4>) + Send + Sync + 'static,
-    ) {
+    pub fn after_bsp(&mut self, initializer: impl AfterBspInitializer + 'static) {
         self.after_bsps.push(Box::new(initializer));
     }
 
-    pub fn register_after(
-        &mut self,
-        initializer: impl Fn(&mut InitializationContext<Stage4>, CoreId) + Send + Sync + 'static,
-    ) {
+    pub fn register_after(&mut self, initializer: impl AfterInitializer + 'static) {
         self.after_initializers.push(Box::new(initializer));
     }
 
-    pub fn register(
-        &mut self,
-        initializer: impl Fn(&mut CpuLocalBuilder, &mut InitializationContext<Stage4>, CoreId)
-        + Send
-        + Sync
-        + 'static,
-    ) {
+    pub fn context_transformer(&mut self, transformer: impl ContextTransformer + 'static) {
+        self.context_transformer.push(Box::new(transformer));
+    }
+
+    pub fn register(&mut self, initializer: impl LocalInitialize + 'static) {
         self.local_initializers_v2.push(Box::new(initializer));
     }
 
-    fn initialize_current(&mut self, ctx: &mut InitializationContext<Stage4>) {
+    fn convert_ctx(self, mut ctx: InitializationContext<End>) -> ApInitializationContext {
+        log!(
+            Trace,
+            "Transforming initialization context into ap initialization context"
+        );
+        let mut builder = ApInitializationContextBuilder::new();
+        for transformer in self.context_transformer.iter() {
+            transformer(&mut builder, &mut ctx);
+        }
+
+        builder.initializer(self.into());
+        builder
+            .build()
+            .expect("Failed to build ap initialization context")
+    }
+
+    fn initialize_current(&mut self, ctx: &ApInitializationContext) {
         let mut cpu_local_builder = CpuLocalBuilder::new();
         let id = CoreId::from(apic_id());
         log!(Debug, "Initializing cpu: {id}");
@@ -258,19 +337,12 @@ impl LocalInitializer {
         interrupt::enable();
 
         if BSP_CORE_ID.get().is_some_and(|bsp_id| *bsp_id == id) {
-            log!(Debug, "initialization bsp, bsp processor id: {id}");
             while let Some(f) = self.after_bsps.pop() {
-                f(ctx);
+                f();
             }
         }
 
-        self.after_initializers.iter().for_each(|e| e(ctx, id));
-    }
-}
-
-impl Default for LocalInitializer {
-    fn default() -> Self {
-        Self::new()
+        self.after_initializers.iter().for_each(|e| e(id));
     }
 }
 
@@ -372,14 +444,6 @@ select_context! {
     }
 }
 
-impl InitializationContext<Stage4> {
-    pub fn initialize_current(&mut self) {
-        let mut initializer = self.context_mut().local_initializer.take().unwrap();
-        initializer.initialize_current(self);
-        self.context_mut().local_initializer = Some(initializer);
-    }
-}
-
 pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
     let processors = ctx.context().processors();
     let mut cpu_id_to_apic_id = [None; MAX_CPU];
@@ -406,29 +470,31 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
 }
 
 def_local!(pub static CORE_COUNT: usize);
-def_local!(pub static CTX: Arc<Mutex<InitializationContext<Stage4>>>);
+def_local!(pub static PROCESSORS: Vec<ApicId>);
 local_gen!();
 
 pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
     let ap_initializer = ApInitializer::new(&mut ctx);
-    let ctx = Arc::new(Mutex::new(ctx));
-    let ctx_cloned = Arc::clone(&ctx);
 
-    ctx.lock().local_initializer(|i| {
-        i.register(move |builder, ctx, _id| {
-            local_builder!(
-                builder,
-                CORE_COUNT(ctx.context().processors().len()),
-                CTX(ctx_cloned.clone())
-            );
-        });
+    let mut ctx = ctx.next(());
+    let mut local_initializer = ctx.context.take_local_initializer().unwrap().unwrap();
+
+    local_initializer.context_transformer(|builder, ctx| {
+        builder.processors(ctx.context.take_processors().unwrap());
     });
-    ctx.lock().initialize_current();
+    local_initializer.register(move |builder, ctx, _id| {
+        local_builder!(
+            builder,
+            CORE_COUNT(ctx.processors.len()),
+            PROCESSORS(ctx.processors.clone())
+        );
+    });
+    let ctx = Arc::new(local_initializer.convert_ctx(ctx));
+    ctx.initializer.lock().initialize_current(&ctx);
 
     LOCAL_SCHEDULER.inner_mut().spawn(move || {
         pinned(|| {
-            let processors = ctx.lock().context().processors().clone();
-            processors.iter().copied().for_each(|apic_id| {
+            PROCESSORS.iter().copied().for_each(|apic_id| {
                 if apic_id == *APIC_ID {
                     return;
                 }

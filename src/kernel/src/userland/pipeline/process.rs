@@ -1,11 +1,10 @@
 use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
-use pager::paging::{InactivePageTable, create_mappings, table::RecurseLevel4};
+use pager::paging::{InactivePageTable, table::RecurseLevel4};
 use spin::Mutex;
 
 use crate::{
     memory::stack_allocator::Stack,
-    smp::CTX,
     userland::pipeline::{CommonRequestContext, thread::Thread},
 };
 
@@ -26,8 +25,8 @@ impl ProcessPipeline {
 
     pub fn sync_and_identify(
         &mut self,
-        context: &CommonRequestContext<'_>,
-        thread: &Thread,
+        _context: &CommonRequestContext<'_>,
+        _thread: &Thread,
     ) -> Process {
         todo!("Identify the process from the thread")
     }
@@ -38,15 +37,15 @@ impl ProcessPipeline {
         });
     }
 
-    pub fn page_table(&mut self, process: Process) -> &InactivePageTable<RecurseLevel4> {
+    pub fn page_table(&mut self, _process: Process) -> &InactivePageTable<RecurseLevel4> {
         todo!()
     }
 
-    pub fn alloc_stack(&mut self, process: Process) -> Stack {
-        CTX.lock().with_inactive(
-            todo!("Get the page table for each process"),
-            |_mapper, _allocator| {},
-        );
+    pub fn alloc_stack(&mut self, _process: Process) -> Stack {
+        //CTX.lock().with_inactive(
+        //    todo!("Get the page table for each process"),
+        //    |_mapper, _allocator| {},
+        //);
         todo!()
     }
 

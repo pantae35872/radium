@@ -12,7 +12,7 @@ pub enum DispatchAction {
 }
 
 impl Dispatcher {
-    pub fn new(context: PipelineContext) -> Self {
+    pub fn new(_context: PipelineContext) -> Self {
         todo!()
     }
 

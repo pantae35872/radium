@@ -1,18 +1,18 @@
 use core::{fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use pager::{address::VirtAddr, registers::RFlags};
+use pager::{address::VirtAddr, paging::table::RecurseLevel4UpperHalf, registers::RFlags};
 use spin::RwLock;
 
 use crate::{
     const_assert,
     gdt::CODE_SEG,
     hlt_loop,
-    initialization_context::{InitializationContext, Stage4},
     interrupt::{CORE_ID, ExtendedInterruptStackFrame},
+    memory::stack_allocator,
     memory::stack_allocator::Stack,
     scheduler::CURRENT_THREAD_ID,
-    smp::{CTX, CoreId, MAX_CPU},
+    smp::{CoreId, MAX_CPU},
     sync::spin_mpsc::SpinMPSC,
 };
 
@@ -303,7 +303,7 @@ impl ThreadState {
             rcx: 0,
             rbx: 0,
             rax: 0,
-            instruction_pointer: VirtAddr::new(thread_trampoline::<F> as u64),
+            instruction_pointer: VirtAddr::new(thread_trampoline::<F> as *const () as u64),
             code_segment: CODE_SEG.0.into(),
             cpu_flags: RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable,
             stack_pointer: context.stack.top(),
@@ -329,7 +329,7 @@ impl ThreadState {
             rcx: 0,
             rbx: 0,
             rax: 0,
-            instruction_pointer: VirtAddr::new(hlt_loop as u64), // HLT thread is unaligned (should
+            instruction_pointer: VirtAddr::new(hlt_loop as *const () as u64), // HLT thread is unaligned (should
             // be fine tho)
             code_segment: 8, // FIXME: I'm too lazy i'll just assume it's eight
             cpu_flags: RFlags::InterruptEnable,
@@ -465,15 +465,11 @@ impl ThreadPool {
         }
     }
 
-    fn alloc_context(
-        ctx: &mut InitializationContext<Stage4>,
-    ) -> Result<ThreadContext, SchedulerError> {
+    fn alloc_context() -> Result<ThreadContext, SchedulerError> {
         Ok(ThreadContext {
             alive: true,
             pinned: false,
-            stack: ctx
-                .stack_allocator()
-                .alloc_stack(256)
+            stack: stack_allocator::<RecurseLevel4UpperHalf, _>(|mut s| s.alloc_stack(256))
                 .ok_or(SchedulerError::FailedToAllocateStack { size: 256 })?,
         })
     }
@@ -497,13 +493,13 @@ impl ThreadPool {
         }
 
         if let Some(id) = self.invalid_thread.pop() {
-            let new_context = ThreadPool::alloc_context(&mut CTX.lock())?;
+            let new_context = ThreadPool::alloc_context()?;
             let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
             self.pool[id] = new_context;
             return Ok(thread);
         }
 
-        let new_context = ThreadPool::alloc_context(&mut CTX.lock())?;
+        let new_context = ThreadPool::alloc_context()?;
         let id = self.pool.len();
         let thread = Thread::new(f, LocalThreadId::create_local(id as u32), &new_context);
         self.pool.push(new_context);

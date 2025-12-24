@@ -2,7 +2,10 @@ use pager::{
     EntryFlags, PAGE_SIZE,
     address::{Page, PageIter, VirtAddr},
     allocator::FrameAllocator,
-    paging::{ActivePageTable, mapper::Mapper, table::RecurseLevel4},
+    paging::{
+        ActivePageTable,
+        mapper::{Mapper, TopLevelP4},
+    },
 };
 use sentinel::log;
 
@@ -26,9 +29,9 @@ impl StackAllocator {
         self.original_range.clone()
     }
 
-    pub fn alloc_stack(
+    pub fn alloc_stack<P4: TopLevelP4>(
         &mut self,
-        mapper: &mut Mapper<RecurseLevel4>,
+        mapper: &mut Mapper<P4>,
         frame_allocator: &mut impl FrameAllocator,
         size_in_pages: usize,
     ) -> Option<Stack> {
@@ -73,11 +76,11 @@ impl StackAllocator {
         }
     }
 
-    pub fn with_table<'a, A: FrameAllocator>(
+    pub fn with_table<'a, A: FrameAllocator, P4: TopLevelP4>(
         &'a mut self,
-        active_table: &'a mut ActivePageTable<RecurseLevel4>,
+        active_table: &'a mut ActivePageTable<P4>,
         allocator: &'a mut A,
-    ) -> WithMapper<'a, Self, A> {
+    ) -> WithMapper<'a, Self, A, P4> {
         WithMapper {
             table: active_table,
             with_table: self,
@@ -86,7 +89,7 @@ impl StackAllocator {
     }
 }
 
-impl<A: FrameAllocator> WithMapper<'_, StackAllocator, A> {
+impl<A: FrameAllocator, P4: TopLevelP4> WithMapper<'_, StackAllocator, A, P4> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
         self.with_table
             .alloc_stack(self.table, self.allocator, size_in_pages)

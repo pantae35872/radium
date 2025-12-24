@@ -17,7 +17,7 @@ impl SchedulerPipeline {
         Self { units: Vec::new() }
     }
 
-    pub fn schedule(&mut self, context: &mut PipelineContext, thread: &mut ThreadPipeline) {}
+    pub fn schedule(&mut self, _context: &mut PipelineContext, _thread: &mut ThreadPipeline) {}
 }
 
 impl Default for SchedulerPipeline {

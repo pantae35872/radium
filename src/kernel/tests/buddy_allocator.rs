@@ -10,7 +10,7 @@ extern crate radium;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::smp::CTX;
+use radium::memory::BUDDY_ALLOCATOR;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_bridge: *mut RawBootBridge) -> ! {
@@ -24,7 +24,7 @@ fn simple_alloc() {
     let mut allocation_ranges = Vec::new();
 
     for &size in sizes.iter() {
-        let ptr = CTX.lock().buddy_allocator().allocate(size);
+        let ptr = BUDDY_ALLOCATOR.lock().allocate(size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
         let ptr = ptr.unwrap();
         assert!(ptr.is_aligned_to(size));
@@ -36,8 +36,8 @@ fn simple_alloc() {
         allocations.push((ptr, size));
     }
 
-    let large_size = CTX.lock().buddy_allocator().max_mem() * 8;
-    let ptr = CTX.lock().buddy_allocator().allocate(large_size);
+    let large_size = BUDDY_ALLOCATOR.lock().max_mem() * 8;
+    let ptr = BUDDY_ALLOCATOR.lock().allocate(large_size);
     assert!(
         ptr.is_none(),
         "Allocation should fail for size: {}",
@@ -67,17 +67,17 @@ fn alloc_free() {
     let mut allocations = Vec::new();
 
     for &size in sizes.iter() {
-        let ptr = CTX.lock().buddy_allocator().allocate(size);
+        let ptr = BUDDY_ALLOCATOR.lock().allocate(size);
         assert!(ptr.is_some(), "Allocation failed for size: {}", size);
         allocations.push((ptr.unwrap(), size));
     }
 
     for &(ptr, size) in &allocations {
-        CTX.lock().buddy_allocator().dealloc(ptr, size);
+        BUDDY_ALLOCATOR.lock().dealloc(ptr, size);
     }
 
     for (i, &size) in sizes.iter().enumerate() {
-        let ptr = CTX.lock().buddy_allocator().allocate(size);
+        let ptr = BUDDY_ALLOCATOR.lock().allocate(size);
         assert!(ptr.is_some(), "Reallocation failed for size: {}", size);
         assert_eq!(
             ptr.unwrap(),

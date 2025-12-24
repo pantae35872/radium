@@ -42,12 +42,11 @@ pub mod sync;
 pub mod userland;
 pub mod utils;
 
-pub mod smp;
-
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
 
+use alloc::sync::Arc;
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
@@ -59,6 +58,7 @@ use driver::{
 use graphics::BACKGROUND_COLOR;
 use graphics::color::Color;
 use initialization_context::{InitializationContext, Stage0};
+use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use scheduler::sleep;
@@ -69,30 +69,40 @@ use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReas
 
 use crate::interrupt::CORE_ID;
 use crate::scheduler::{CURRENT_THREAD_ID, LOCAL_SCHEDULER};
-use crate::smp::CTX;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
+
+def_local!(pub static BOOT_BRIDGE: Arc<BootBridge>);
 
 pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
 where
     F: FnOnce() + Send + 'static,
 {
     let boot_bridge = BootBridge::new(boot_bridge);
-    let mut phase0 = InitializationContext::<Stage0>::start(boot_bridge);
-    logger::init(&phase0);
-    qemu_init(&mut phase0);
-    let phase1 = memory::init(phase0);
-    let mut phase2 = acpi::init(phase1);
-    graphics::init(&mut phase2);
-    print::init(&mut phase2, Color::new(166, 173, 200), BACKGROUND_COLOR);
-    let mut phase3 = smp::init(phase2);
-    gdt::init_gdt(&mut phase3);
-    let mut final_phase = interrupt::init(phase3);
-    scheduler::init(&mut final_phase);
-    userland::init(&mut final_phase);
-    pit::init(&mut final_phase);
-    smp::init_aps(final_phase);
+    let mut stage0 = InitializationContext::<Stage0>::start(boot_bridge);
+    logger::init(&stage0);
+    qemu_init(&mut stage0);
+    let stage1 = memory::init(stage0);
+    let mut stage2 = acpi::init(stage1);
+    graphics::init(&mut stage2);
+    print::init(&mut stage2, Color::new(166, 173, 200), BACKGROUND_COLOR);
+    let mut stage3 = smp::init(stage2);
+    gdt::init_gdt(&mut stage3);
+    let mut stage4 = interrupt::init(stage3);
+    stage4.local_initializer(|i| {
+        i.context_transformer(|builder, ctx| {
+            builder.boot_bridge(Arc::new(ctx.context.take_boot_bridge().unwrap()));
+        });
+        i.register(|builder, ctx, _id| {
+            local_builder!(builder, BOOT_BRIDGE(Arc::clone(&ctx.boot_bridge)));
+        });
+    });
+    memory::init_local(&mut stage4);
+    scheduler::init(&mut stage4);
+    userland::init(&mut stage4);
+    pit::init(&mut stage4);
+    smp::init_aps(stage4);
 
     LOCAL_SCHEDULER.inner_mut().spawn(|| {
         while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
@@ -100,7 +110,7 @@ where
         }
         sleep(1000);
 
-        uefi_runtime::init(&mut CTX.lock());
+        uefi_runtime::init();
 
         main_thread()
     });
@@ -264,3 +274,6 @@ pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     // Wait for qemu to exit
     hlt_loop();
 }
+
+// Apparently the order of proc macro does matter; that should be obvious now, that why is this here.
+pub mod smp;

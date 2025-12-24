@@ -12,7 +12,7 @@ use crate::{
 
 use super::area_allocator::AreaAllocator;
 
-pub struct BuddyAllocator<const ORDER: usize> {
+pub struct BuddyAllocator<const ORDER: usize = 64> {
     free_lists: [FreeList; ORDER],
     max_mem: usize,
     allocated: usize,

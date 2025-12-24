@@ -14,9 +14,11 @@ use crate::port::PortReadWrite;
 use crate::scheduler::Dispatcher;
 use crate::scheduler::FnBox;
 use crate::scheduler::LOCAL_SCHEDULER;
+use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 use apic::LocalApic;
 use apic::LocalApicArguments;
 use idt::Idt;
@@ -47,6 +49,7 @@ use rstd::drivcall::DRIVCALL_VSYS_REQ;
 use rstd::drivcall::DRIVCALL_VSYS_RET;
 use rstd::drivcall::DRIVCALL_VSYS_WAIT;
 use sentinel::log;
+use spin::Mutex;
 
 pub mod apic;
 pub mod idt;
@@ -100,7 +103,7 @@ fn create_idt() -> &'static Idt {
             .set_handler_fn(page_fault_handler)
             .set_stack_index(GENERAL_STACK_INDEX);
         idt.invalid_opcode
-            .set_handler_addr(VirtAddr::new(invalid_opcode as u64))
+            .set_handler_addr(VirtAddr::new(invalid_opcode as *const () as u64))
             .set_stack_index(GENERAL_STACK_INDEX);
         idt.break_point.set_handler_fn(break_point);
         idt.double_fault
@@ -118,6 +121,7 @@ def_local!(pub static APIC_ID: ApicId);
 def_local!(pub static LAST_INTERRUPT_NO: u8);
 def_local!(pub static IS_IN_ISR: bool);
 def_local!(pub static TPMS: usize);
+def_local!(pub static IO_APIC: Arc<Mutex<IoApicManager>>);
 
 pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Stage4> {
     let lapic = ctx
@@ -132,7 +136,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
         .unwrap();
     disable_pic(&mut ctx);
 
-    let lapic = move |cpu: &mut CpuLocalBuilder, _ctx: &mut InitializationContext<Stage4>, id| {
+    let lapic = move |cpu: &mut CpuLocalBuilder, ctx: &ApInitializationContext, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
         let idt = create_idt();
         idt.load();
@@ -151,6 +155,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
             LAST_INTERRUPT_NO(0),
             IS_IN_ISR(false),
             TPMS(1000),
+            IO_APIC(Arc::clone(&ctx.io_apic)),
         );
     };
 
@@ -164,9 +169,9 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
         .iter()
         .for_each(|source_override| io_apic_manager.add_source_override(source_override));
 
-    let lapic_calibration = |ctx: &mut InitializationContext<Stage4>, id| {
+    let lapic_calibration = |id| {
         log!(Trace, "Calibrating APIC for cpu: {id}");
-        ctx.redirect_legacy_irqs(
+        IO_APIC.lock().redirect_legacy_irqs(
             0,
             RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
         );
@@ -174,10 +179,13 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
     };
 
     ctx.local_initializer(|initializer| {
+        initializer.context_transformer(|builder, ctx| {
+            builder.io_apic(Arc::new(ctx.context.take_io_apic_manager().unwrap().into()));
+        });
         initializer.register(lapic);
 
-        initializer.after_bsp(|ctx| {
-            ctx.context.io_apic_manager.redirect_legacy_irqs(
+        initializer.after_bsp(|| {
+            IO_APIC.lock().redirect_legacy_irqs(
                 0,
                 RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
             );

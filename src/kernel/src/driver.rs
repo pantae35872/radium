@@ -22,8 +22,8 @@ unsafe impl SymbolResolver for DriverReslover {
             get_logger().expect("Logger is not inialized")
         }
         match symbol {
-            "kpanic" => Some(crate::panic as usize),
-            "get_klogger" => Some(get_klogger as usize),
+            "kpanic" => Some(crate::panic as *const () as usize),
+            "get_klogger" => Some(get_klogger as *const () as usize),
             _ => None,
         }
         .map(|a| VirtAddr::new(a as u64))
