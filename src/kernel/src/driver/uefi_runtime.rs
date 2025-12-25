@@ -36,7 +36,6 @@ use conquer_once::spin::OnceCell;
 use pager::{
     Mapper, PAGE_SIZE,
     address::{PhysAddr, VirtAddr},
-    paging::table::{RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
 };
 use sentinel::log;
 use spin::Mutex;
@@ -350,14 +349,13 @@ impl UefiRuntime {
             );
             let page = virt_addr_alloc(ufu_stuff.page_count);
 
-            mapper::<RecurseLevel4LowerHalf, _>(|mapper| unsafe {
+            mapper(|mapper| unsafe {
                 mapper.identity_map_by_size(
                     ufu_stuff.phys_start.into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,
                     ufu_stuff.att.into(),
                 );
-            });
-            mapper::<RecurseLevel4UpperHalf, _>(|mapper| unsafe {
+
                 mapper.map_to_range_by_size(
                     page,
                     ufu_stuff.phys_start.into(),
@@ -409,7 +407,7 @@ impl UefiRuntime {
                 MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
             )
         }) {
-            mapper::<RecurseLevel4LowerHalf, _>(|mapper| unsafe {
+            mapper(|mapper| unsafe {
                 mapper.unmap_addr_by_size(
                     VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,

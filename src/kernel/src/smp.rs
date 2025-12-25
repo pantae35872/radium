@@ -13,7 +13,7 @@ use pager::{
     allocator::FrameAllocator,
     paging::{
         ActivePageTable,
-        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
+        table::{DirectLevel4, RecurseLevel4, Table},
     },
 };
 use pager::{
@@ -130,8 +130,8 @@ impl ApInitializer {
 
     fn prepare_stack_and_info(&self, ctx: Arc<ApInitializationContext>) {
         let ctx_ap = Arc::clone(&ctx);
-        let stack = stack_allocator::<RecurseLevel4UpperHalf, _>(|mut s| s.alloc_stack(256))
-            .expect("Failed to allocate stack for ap");
+        let stack =
+            stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
             page_table: self.ap_bootstrap_page_table.start_address().as_u64() as u32,
@@ -237,8 +237,7 @@ macro_rules! builder {
 
 builder! {
     pub struct ApInitializationContext {
-        pub table_lower_half: Arc<Mutex<ActivePageTable<RecurseLevel4LowerHalf>>>,
-        pub table_upper_half: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>,
+        pub table: Arc<Mutex<ActivePageTable<RecurseLevel4>>>,
         pub stack_allocator: Arc<Mutex<StackAllocator>>,
         pub buddy_allocator: Arc<Mutex<BuddyAllocator>>,
         pub initializer: Mutex<LocalInitializer>,
@@ -251,10 +250,10 @@ builder! {
 impl ApInitializationContext {
     pub fn stack_allocator<R>(
         &self,
-        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
+        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4>) -> R,
     ) -> R {
         let mut stack_allocator = self.stack_allocator.lock();
-        let mut table = self.table_upper_half.lock();
+        let mut table = self.table.lock();
         f(stack_allocator.with_table(&mut *table, &mut self.buddy_allocator.lock()))
     }
 }

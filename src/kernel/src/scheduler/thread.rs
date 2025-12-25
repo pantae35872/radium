@@ -1,7 +1,7 @@
 use core::{fmt::Display, mem::zeroed};
 
 use alloc::{boxed::Box, vec, vec::Vec};
-use pager::{address::VirtAddr, paging::table::RecurseLevel4UpperHalf, registers::RFlags};
+use pager::{address::VirtAddr, registers::RFlags};
 use spin::RwLock;
 
 use crate::{
@@ -469,7 +469,7 @@ impl ThreadPool {
         Ok(ThreadContext {
             alive: true,
             pinned: false,
-            stack: stack_allocator::<RecurseLevel4UpperHalf, _>(|mut s| s.alloc_stack(256))
+            stack: stack_allocator(|mut s| s.alloc_stack(256))
                 .ok_or(SchedulerError::FailedToAllocateStack { size: 256 })?,
         })
     }

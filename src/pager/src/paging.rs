@@ -1,10 +1,7 @@
 use crate::address::Frame;
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
-use crate::paging::table::{
-    DirectP4Create, RecurseLevel1, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf,
-    RecurseP4Create, TableSwitch,
-};
+use crate::paging::table::{DirectP4Create, RecurseLevel1, RecurseP4Create, TableSwitch};
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
 
@@ -88,27 +85,6 @@ where
 {
     fn deref_mut(&mut self) -> &mut Mapper<P4> {
         &mut self.mapper
-    }
-}
-
-impl ActivePageTable<RecurseLevel4> {
-    pub fn split(
-        self,
-    ) -> (
-        ActivePageTable<RecurseLevel4LowerHalf>,
-        ActivePageTable<RecurseLevel4UpperHalf>,
-    ) {
-        // SAFETY: This is safe because by our model, there should only be one ActivePageTable at a
-        // time, BUT. we're spliting the active page table in 2 halves, so there couldn't be a reference
-        // to the same entry in the p4 level. if we're not doing some weird tricks like having the
-        // p4 entry on the lower half pointing to the same p3 entry that was pointed by the upper
-        // halfs, which we're not.... hopefully
-        unsafe {
-            (
-                ActivePageTable::<RecurseLevel4LowerHalf>::new(),
-                ActivePageTable::<RecurseLevel4UpperHalf>::new(),
-            )
-        }
     }
 }
 

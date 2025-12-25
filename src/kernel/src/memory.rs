@@ -9,7 +9,7 @@ use pager::{
     paging::{
         ActivePageTable, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator, TopLevelP4},
-        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
+        table::RecurseLevel4,
         temporary_page::TemporaryPage,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
@@ -34,51 +34,32 @@ pub mod stack_allocator;
 pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
 
-def_local!(pub static ACTIVE_TABLE_LOWER_HALF: Arc<Mutex<ActivePageTable<RecurseLevel4LowerHalf>>>);
-def_local!(pub static ACTIVE_TABLE_UPPER_HALF: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
+def_local!(pub static ACTIVE_TABLE: Arc<Mutex<ActivePageTable<RecurseLevel4>>>);
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
 
-pub trait TableGetter: TopLevelP4 {
-    fn get() -> Arc<Mutex<ActivePageTable<Self>>>;
-}
-
-impl TableGetter for RecurseLevel4UpperHalf {
-    fn get() -> Arc<Mutex<ActivePageTable<Self>>> {
-        Arc::clone(&ACTIVE_TABLE_UPPER_HALF)
-    }
-}
-
-impl TableGetter for RecurseLevel4LowerHalf {
-    fn get() -> Arc<Mutex<ActivePageTable<Self>>> {
-        Arc::clone(&ACTIVE_TABLE_LOWER_HALF)
-    }
-}
-
-pub fn stack_allocator<T: TableGetter, R>(
-    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, T>) -> R,
+pub fn stack_allocator<R>(
+    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4>) -> R,
 ) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
-    let table = T::get();
-    let mut table = table.lock();
+    let mut table = ACTIVE_TABLE.lock();
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
 }
 
-pub fn mapper<T: TableGetter, R>(
-    f: impl FnOnce(&mut MapperWithAllocator<T, BuddyAllocator>) -> R,
+pub fn mapper<R>(
+    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4, BuddyAllocator>) -> R,
 ) -> R {
-    let table = T::get();
-    let mut table = table.lock();
+    let mut table = ACTIVE_TABLE.lock();
     f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.context_transformer(|builder, context| {
-            let (lower_half, upper_half) = context.context.take_active_table().unwrap().split();
             builder
-                .table_lower_half(Arc::new(lower_half.into()))
-                .table_upper_half(Arc::new(upper_half.into()))
+                .table(Arc::new(
+                    context.context.take_active_table().unwrap().into(),
+                ))
                 .stack_allocator(Arc::new(
                     context.context.take_stack_allocator().unwrap().into(),
                 ))
@@ -89,8 +70,7 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
         i.register(|builder, context, _id| {
             local_builder!(
                 builder,
-                ACTIVE_TABLE_LOWER_HALF(Arc::clone(&context.table_lower_half)),
-                ACTIVE_TABLE_UPPER_HALF(Arc::clone(&context.table_upper_half)),
+                ACTIVE_TABLE(Arc::clone(&context.table)),
                 STACK_ALLOCATOR(Arc::clone(&context.stack_allocator)),
                 BUDDY_ALLOCATOR(Arc::clone(&context.buddy_allocator))
             );
