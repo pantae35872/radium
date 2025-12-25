@@ -1,3 +1,5 @@
+use core::panic::Location;
+
 use alloc::sync::Arc;
 use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
@@ -195,10 +197,19 @@ static GENERAL_VIRTUAL_ALLOCATOR: VirtualAllocator = VirtualAllocator::new(
     (VirtAddr::new(0xFFFF_F000_0000_0000).as_u64() - KERNEL_GENERAL_USE.as_u64()) as usize,
 );
 
+#[track_caller]
 pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
-    GENERAL_VIRTUAL_ALLOCATOR
+    let allocated = GENERAL_VIRTUAL_ALLOCATOR
         .allocate(size_in_pages as usize)
-        .expect("RAN OUT OF VIRTUAL ADDR")
+        .expect("RAN OUT OF VIRTUAL ADDR");
+    log!(
+        Debug,
+        "\"{}\" Called virt_addr_alloc with size {size_in_pages}, giving {:x}-{:x}",
+        Location::caller(),
+        allocated.start_address(),
+        allocated.start_address() + size_in_pages * PAGE_SIZE
+    );
+    allocated
 }
 
 pub struct WithMapper<'a, T, A: FrameAllocator, P4: TopLevelP4> {

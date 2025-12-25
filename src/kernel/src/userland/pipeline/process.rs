@@ -1,11 +1,20 @@
 use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
-use pager::paging::{InactivePageTable, table::RecurseLevel4};
+use pager::{
+    address::Page,
+    paging::{InactivePageTable, table::RecurseLevel4},
+};
 use spin::Mutex;
 
 use crate::{
-    memory::stack_allocator::Stack,
-    userland::pipeline::{CommonRequestContext, thread::Thread},
+    memory::{
+        ACTIVE_TABLE,
+        stack_allocator::{Stack, StackAllocator},
+    },
+    userland::{
+        self,
+        pipeline::{CommonRequestContext, thread::Thread},
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +25,7 @@ pub struct Process {
 #[derive(Default)]
 pub struct ProcessPipeline {
     shared_data: Vec<Arc<ProcessShared>>,
+    free_data: Vec<usize>,
 }
 
 impl ProcessPipeline {
@@ -50,18 +60,32 @@ impl ProcessPipeline {
     }
 
     pub fn alloc(&mut self) -> Process {
+        if let Some(free_data) = self.free_data.pop() {
+            return Process { id: free_data };
+        }
+
         todo!()
+        //self.shared_data.push(ProcessShared::new());
+
+        //Process { id: () }
     }
 }
 
 struct ProcessShared {
-    stacks: Mutex<Vec<Stack>>,
+    stacks: Mutex<StackAllocator>,
     page_table: Mutex<InactivePageTable<RecurseLevel4>>,
 }
 
 impl ProcessShared {
     pub fn new() -> Self {
-        todo!()
+        Self {
+            stacks: StackAllocator::new(Page::range_inclusive(
+                userland::STACK_START.into(),
+                (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
+            ))
+            .into(),
+            page_table: todo!(), //ACTIVE_TABLE.lock().create_inactive(),
+        }
     }
 }
 

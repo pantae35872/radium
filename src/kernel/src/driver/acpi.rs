@@ -5,8 +5,8 @@ use aml::{AmlContext, AmlHandle};
 use fadt::Fadt;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
+    EntryFlags, Mapper, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
-    EntryFlags, Mapper,
 };
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
@@ -15,7 +15,7 @@ use sentinel::log;
 use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
     interrupt::apic::ApicId,
-    memory::{virt_addr_alloc, MMIOBufferInfo},
+    memory::{MMIOBufferInfo, virt_addr_alloc},
 };
 
 mod aml;
@@ -181,7 +181,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
 
         let detect_sdt = unsafe { Self::from_raw(VirtAddr::new(address)) };
         let sdt_signature = detect_sdt.signature;
-        let sdt_size = detect_sdt.length.into();
+        let sdt_size = detect_sdt.length;
         let _ = detect_sdt;
         unsafe {
             ctx.mapper()
@@ -190,7 +190,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         if sdt_signature != T::signature() {
             return None;
         }
-        let virt_sdt = virt_addr_alloc(sdt_size);
+        let virt_sdt = virt_addr_alloc(sdt_size as u64 / PAGE_SIZE + 1);
         unsafe {
             ctx.mapper().map_to_range_by_size(
                 virt_sdt,

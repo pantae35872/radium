@@ -14,7 +14,6 @@ use core::arch::asm;
 
 use alloc::vec::Vec;
 use bootbridge::RawBootBridge;
-use radium::driver::uefi_runtime::uefi_runtime;
 use radium::logger::LOGGER;
 use radium::memory::BUDDY_ALLOCATOR;
 use radium::scheduler::{self, CURRENT_THREAD_ID, VsysThread, sleep, vsys_reg};
@@ -35,10 +34,6 @@ fn kmain_thread() {
     test_main();
 
     println!("Hello, world!!!, from kmain thread");
-
-    //    unsafe {
-    //        asm!("vmcall");
-    //    }
 
     scheduler::spawn(|| {
         vsys_reg(1); // VSYS 1
@@ -108,7 +103,7 @@ fn kmain_thread() {
         handle.join();
     }
 
-    log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
+    //log!(Info, "Time {:?}", uefi_runtime().lock().get_time());
     {
         let allocator = BUDDY_ALLOCATOR.lock();
         log!(
@@ -117,6 +112,7 @@ fn kmain_thread() {
             (allocator.max_mem() - allocator.allocated()) as f32 / (1 << 30) as f32 // TO GB
         );
     }
+
     log!(Debug, "This should be the last log");
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 }

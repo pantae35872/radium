@@ -53,9 +53,10 @@ impl VirtualAllocator {
 
     pub fn allocate(&self, size_in_pages: usize) -> Option<Page> {
         assert_ne!(size_in_pages, 0);
+        // + 1 for the guard page, in case i messed up
         let current = self
             .current
-            .fetch_add(PAGE_SIZE * size_in_pages as u64, Ordering::SeqCst);
+            .fetch_add(PAGE_SIZE * (size_in_pages + 1) as u64, Ordering::SeqCst);
         if current >= self.end().as_u64() {
             return None;
         }

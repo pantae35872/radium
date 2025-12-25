@@ -31,7 +31,7 @@ use crate::{
     },
     log,
     memory::{
-        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, stack_allocator,
+        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, mapper, stack_allocator,
         stack_allocator::StackAllocator,
     },
     scheduler::{LOCAL_SCHEDULER, pinned, sleep},
@@ -65,6 +65,7 @@ struct SmpInitializationData {
 
 pub struct ApInitializer {
     ap_bootstrap_page_table: Frame,
+    boot_alloc: LinearAllocator,
 }
 
 impl ApInitializer {
@@ -76,8 +77,6 @@ impl ApInitializer {
         // Safety we already allocted this at the bootloader
         let mut boot_alloc =
             unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
-        // SAFETY: We know that the bootloader is not used anymore
-        unsafe { boot_alloc.reset() };
 
         unsafe { ctx.mapper().identity_map_object(&boot_alloc.mappings()) };
         unsafe {
@@ -125,6 +124,7 @@ impl ApInitializer {
 
         Self {
             ap_bootstrap_page_table: p4_table,
+            boot_alloc,
         }
     }
 
@@ -176,6 +176,18 @@ impl ApInitializer {
             sleep(1);
         }
         AP_INITIALIZED.store(false, Ordering::SeqCst);
+    }
+}
+
+impl Drop for ApInitializer {
+    fn drop(&mut self) {
+        // SAFETY: We've identity mapped this in the new function, so we have to unmap it
+        mapper(|mapper| unsafe {
+            mapper.unmap_addr_by_size(
+                VirtAddr::new(self.boot_alloc.original_start().as_u64()).into(),
+                self.boot_alloc.size(),
+            )
+        })
     }
 }
 

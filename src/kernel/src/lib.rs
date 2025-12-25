@@ -110,7 +110,9 @@ where
         }
         sleep(1000);
 
-        uefi_runtime::init();
+        // TODO: Redo this one i'm ready, currently i'm cleaning up the memory map, and this
+        // uefi_runtime pollutes the lower half address space
+        //uefi_runtime::init();
 
         main_thread()
     });
