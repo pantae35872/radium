@@ -86,6 +86,13 @@ where
         unsafe { self.p4.as_ref() }
     }
 
+    pub fn populate_p4_upper_half(&mut self, allocator: &mut impl FrameAllocator) {
+        let p4 = self.p4_mut();
+        for i in 256..512 {
+            p4.next_table_create(i, allocator);
+        }
+    }
+
     pub fn p4_mut(&mut self) -> &mut Table<P4> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
         // or the actively mapping inactive page tables

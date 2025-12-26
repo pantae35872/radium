@@ -28,6 +28,8 @@ where
 
     let new_table = active_table.create_mappings(
         |mapper, allocator| {
+            mapper.populate_p4_upper_half(allocator);
+
             unsafe {
                 ctx.context().boot_bridge().kernel_elf().map_permission(
                     &mut mapper.mapper_with_allocator(allocator),
