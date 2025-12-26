@@ -228,7 +228,7 @@ where
         let old_table = InactivePageTable::new(
             active_page_table,
             context,
-            super::InactivePageCreateOption::Range(START as usize..END as usize),
+            super::InactivePageCopyOption::Range(START as usize..END as usize),
         );
 
         // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that P4 is a recursive mapped.

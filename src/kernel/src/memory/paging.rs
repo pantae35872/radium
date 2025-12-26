@@ -4,7 +4,7 @@ use pager::{
     address::VirtAddr,
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, InactivePageCreateOption, TableManipulationContext, table::RecurseLevel4,
+        ActivePageTable, InactivePageCopyOption, TableManipulationContext, table::RecurseLevel4,
         temporary_page::TemporaryPage,
     },
 };
@@ -62,7 +62,7 @@ where
             mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
         },
         &mut context,
-        InactivePageCreateOption::Empty,
+        InactivePageCopyOption::Empty,
     );
 
     unsafe { active_table.switch(&mut context, new_table) };

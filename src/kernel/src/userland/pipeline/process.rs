@@ -2,13 +2,13 @@ use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
-    paging::{InactivePageTable, table::RecurseLevel4},
+    paging::{InactivePageCopyOption, InactivePageTable, table::RecurseLevel4},
 };
 use spin::Mutex;
 
 use crate::{
     memory::{
-        ACTIVE_TABLE,
+        create_mappings,
         stack_allocator::{Stack, StackAllocator},
     },
     userland::{
@@ -84,8 +84,7 @@ impl ProcessShared {
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
-            page_table: todo!(),
-            //page_table: ACTIVE_TABLE.lock().log_all(),
+            page_table: create_mappings(|_, _| {}, InactivePageCopyOption::upper_half()).into(),
         }
     }
 }

@@ -250,7 +250,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         &mut self,
         f: F,
         context: &mut TableManipulationContext<A>,
-        options: InactivePageCreateOption,
+        options: InactivePageCopyOption,
     ) -> InactivePageTable<P4>
     where
         F: FnOnce(&mut Mapper<P4>, &mut A),
@@ -276,7 +276,7 @@ pub struct InactivePageTable<P4: TopLevelP4> {
 
 /// An argument to the [`InactivePageTable::new`] function, default is empty
 #[derive(Debug, Default)]
-pub enum InactivePageCreateOption {
+pub enum InactivePageCopyOption {
     /// Create a new [`InactivePageTable`] with empty p4, (but with recursive mapping)
     #[default]
     Empty,
@@ -287,7 +287,7 @@ pub enum InactivePageCreateOption {
     All,
 }
 
-impl InactivePageCreateOption {
+impl InactivePageCopyOption {
     pub fn lower_half() -> Self {
         Self::Range(0..256)
     }
@@ -302,7 +302,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
     pub fn new<A: FrameAllocator>(
         active_table: &mut ActivePageTable<P4>,
         context: &mut TableManipulationContext<A>,
-        options: InactivePageCreateOption,
+        options: InactivePageCopyOption,
     ) -> Self {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
@@ -315,13 +315,13 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
             table.zero();
 
             match options {
-                InactivePageCreateOption::All => {
+                InactivePageCopyOption::All => {
                     table[0..512].copy_from_slice(&active_table.p4()[0..512]);
                 }
-                InactivePageCreateOption::Range(range) => {
+                InactivePageCopyOption::Range(range) => {
                     table[range.clone()].copy_from_slice(&active_table.p4()[range]);
                 }
-                InactivePageCreateOption::Empty => {}
+                InactivePageCopyOption::Empty => {}
             }
 
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);

@@ -7,7 +7,7 @@ use pager::{
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, InactivePageTable, TableManipulationContext,
+        ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator, TopLevelP4},
         table::RecurseLevel4,
         temporary_page::TemporaryPage,
@@ -38,6 +38,7 @@ pub const STACK_ALLOC_SIZE: u64 = 32768;
 def_local!(pub static ACTIVE_TABLE: Arc<Mutex<ActivePageTable<RecurseLevel4>>>);
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
+def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryPage>>);
 
 pub fn stack_allocator<R>(
     f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4>) -> R,
@@ -45,6 +46,20 @@ pub fn stack_allocator<R>(
     let mut stack_allocator = STACK_ALLOCATOR.lock();
     let mut table = ACTIVE_TABLE.lock();
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
+}
+
+pub fn create_mappings<F>(f: F, options: InactivePageCopyOption) -> InactivePageTable<RecurseLevel4>
+where
+    F: FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator),
+{
+    ACTIVE_TABLE.lock().create_mappings(
+        f,
+        &mut TableManipulationContext {
+            temporary_page: &mut TEMPORARY_PAGE.lock(),
+            allocator: &mut BUDDY_ALLOCATOR.lock(),
+        },
+        options,
+    )
 }
 
 pub fn mapper<R>(
@@ -66,6 +81,9 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
                 ))
                 .buddy_allocator(Arc::new(
                     context.context.take_buddy_allocator().unwrap().into(),
+                ))
+                .temporary_page(Arc::new(
+                    context.context.take_temporary_page().unwrap().into(),
                 ));
         });
         i.register(|builder, context, _id| {
@@ -73,7 +91,8 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
                 builder,
                 ACTIVE_TABLE(Arc::clone(&context.table)),
                 STACK_ALLOCATOR(Arc::clone(&context.stack_allocator)),
-                BUDDY_ALLOCATOR(Arc::clone(&context.buddy_allocator))
+                BUDDY_ALLOCATOR(Arc::clone(&context.buddy_allocator)),
+                TEMPORARY_PAGE(Arc::clone(&context.temporary_page)),
             );
         })
     });

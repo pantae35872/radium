@@ -14,6 +14,7 @@ use pager::{
     paging::{
         ActivePageTable,
         table::{DirectLevel4, RecurseLevel4, Table},
+        temporary_page::TemporaryPage,
     },
 };
 use pager::{
@@ -252,6 +253,7 @@ builder! {
         pub table: Arc<Mutex<ActivePageTable<RecurseLevel4>>>,
         pub stack_allocator: Arc<Mutex<StackAllocator>>,
         pub buddy_allocator: Arc<Mutex<BuddyAllocator>>,
+        pub temporary_page: Arc<Mutex<TemporaryPage>>,
         pub initializer: Mutex<LocalInitializer>,
         pub boot_bridge: Arc<BootBridge>,
         pub io_apic: Arc<Mutex<IoApicManager>>,
