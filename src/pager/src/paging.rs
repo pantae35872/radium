@@ -1,7 +1,10 @@
 use crate::address::Frame;
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
-use crate::paging::table::{DirectP4Create, RecurseLevel1, RecurseP4Create, TableSwitch};
+use crate::paging::table::{
+    DirectP4Create, RecurseLevel1, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RecurseP4Create,
+    TableSwitch,
+};
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
 
@@ -94,6 +97,25 @@ pub struct TableManipulationContext<'a, A: FrameAllocator> {
 }
 
 impl<P4: TopLevelP4> ActivePageTable<P4> {
+    pub fn split(
+        self,
+    ) -> (
+        ActivePageTable<RecurseLevel4LowerHalf>,
+        ActivePageTable<RecurseLevel4UpperHalf>,
+    ) {
+        // SAFETY: This is safe because by our model, there should only be one ActivePageTable at a
+        // time, BUT. we're spliting the active page table in 2 halves, so there couldn't be a reference
+        // to the same entry in the p4 level. if we're not doing some weird tricks like having the
+        // p4 entry on the lower half pointing to the same p3 entry that was pointed by the upper
+        // halfs, which we're not.... hopefully
+        unsafe {
+            (
+                ActivePageTable::<RecurseLevel4LowerHalf>::new(),
+                ActivePageTable::<RecurseLevel4UpperHalf>::new(),
+            )
+        }
+    }
+
     fn p4_mut(&mut self) -> &mut Table<P4> {
         // SAFETY: Taking a reference to the page table is valid and safe, in this module
         unsafe { self.p4.as_mut() }
@@ -135,8 +157,8 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     /// Switch the page table with the inactive page table
     ///
     /// # Safety
-    /// the caller must ensure that by swapping the table does not causes any unsafe
-    /// side effects
+    /// the caller must ensure that by swapping the table doesn't break the exclusivity of the
+    /// p3 entries or any entries.
     pub unsafe fn switch<A: FrameAllocator>(
         &mut self,
         context: &mut TableManipulationContext<A>,
@@ -246,7 +268,23 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         }
     }
 
-    pub fn create_mappings<F, A>(
+    /// Create a new mapping, f can be used to map the mapping while the map is being created,
+    /// [`InactivePageCopyOption`] can be use to specify the entries that willb be copied from the
+    /// currently active table, but this must be use with caution (read the safety section)
+    ///
+    /// # Safety
+    ///
+    /// When [`InactivePageCopyOption`] is used but the variant aren't [`InactivePageCopyOption::Empty`]
+    /// the caller must gurentee that there will be only one mutable exclusive access to entries within
+    /// the new inactive page table while it's active.
+    ///
+    /// There can be an exclusivity violation because there can be multiple [`ActivePageTable`] on
+    /// different cores, for example if someone used this function multiple times to create new
+    /// [`InactivePageTable`] with the same entries, and then they send it across different cores,
+    /// when each core swapped out the [`ActivePageTable`] with these copied [`InactivePageTable`],
+    /// without a proper lock in place, there will be a multiple mutable reference
+    /// to the same p3 entries of the [`ActivePageTable`].
+    pub unsafe fn create_mappings<F, A>(
         &mut self,
         f: F,
         context: &mut TableManipulationContext<A>,

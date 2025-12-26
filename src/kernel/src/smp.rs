@@ -1,4 +1,5 @@
 use core::{
+    cell::RefCell,
     fmt::Display,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -13,7 +14,7 @@ use pager::{
     allocator::FrameAllocator,
     paging::{
         ActivePageTable,
-        table::{DirectLevel4, RecurseLevel4, Table},
+        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
         temporary_page::TemporaryPage,
     },
 };
@@ -32,8 +33,8 @@ use crate::{
     },
     log,
     memory::{
-        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, mapper, stack_allocator,
-        stack_allocator::StackAllocator,
+        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, mapper_lower,
+        stack_allocator, stack_allocator::StackAllocator,
     },
     scheduler::{LOCAL_SCHEDULER, pinned, sleep},
 };
@@ -183,7 +184,7 @@ impl ApInitializer {
 impl Drop for ApInitializer {
     fn drop(&mut self) {
         // SAFETY: We've identity mapped this in the new function, so we have to unmap it
-        mapper(|mapper| unsafe {
+        mapper_lower(|mapper| unsafe {
             mapper.unmap_addr_by_size(
                 VirtAddr::new(self.boot_alloc.original_start().as_u64()).into(),
                 self.boot_alloc.size(),
@@ -250,7 +251,8 @@ macro_rules! builder {
 
 builder! {
     pub struct ApInitializationContext {
-        pub table: Arc<Mutex<ActivePageTable<RecurseLevel4>>>,
+        pub original_table: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>,
+        pub bsp_only_table: Arc<Mutex<Option<ActivePageTable<RecurseLevel4LowerHalf>>>>,
         pub stack_allocator: Arc<Mutex<StackAllocator>>,
         pub buddy_allocator: Arc<Mutex<BuddyAllocator>>,
         pub temporary_page: Arc<Mutex<TemporaryPage>>,
@@ -264,10 +266,10 @@ builder! {
 impl ApInitializationContext {
     pub fn stack_allocator<R>(
         &self,
-        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4>) -> R,
+        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
     ) -> R {
         let mut stack_allocator = self.stack_allocator.lock();
-        let mut table = self.table.lock();
+        let mut table = self.original_table.lock();
         f(stack_allocator.with_table(&mut *table, &mut self.buddy_allocator.lock()))
     }
 }
@@ -389,6 +391,10 @@ impl CoreId {
             .expect("CPU ID to APIC ID mapping must be initialized core initialization")
             .get(id)?;
         Some(Self(id))
+    }
+
+    pub fn is_bsp(&self) -> bool {
+        BSP_CORE_ID.get().is_some_and(|e| e == self)
     }
 
     #[inline]

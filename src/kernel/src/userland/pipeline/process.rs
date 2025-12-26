@@ -2,13 +2,16 @@ use alloc::{sync::Arc, vec::Vec};
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
-    paging::{InactivePageCopyOption, InactivePageTable, table::RecurseLevel4},
+    paging::{
+        InactivePageCopyOption, InactivePageTable,
+        table::{RecurseLevel4, RecurseLevel4LowerHalf},
+    },
 };
 use spin::Mutex;
 
 use crate::{
     memory::{
-        create_mappings,
+        create_mappings_lower,
         stack_allocator::{Stack, StackAllocator},
     },
     userland::{
@@ -52,10 +55,6 @@ impl ProcessPipeline {
     }
 
     pub fn alloc_stack(&mut self, _process: Process) -> Stack {
-        //CTX.lock().with_inactive(
-        //    todo!("Get the page table for each process"),
-        //    |_mapper, _allocator| {},
-        //);
         todo!()
     }
 
@@ -63,17 +62,16 @@ impl ProcessPipeline {
         if let Some(free_data) = self.free_data.pop() {
             return Process { id: free_data };
         }
+        let id = self.shared_data.len();
+        self.shared_data.push(ProcessShared::new().into());
 
-        todo!()
-        //self.shared_data.push(ProcessShared::new());
-
-        //Process { id: () }
+        Process { id }
     }
 }
 
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
-    page_table: Mutex<InactivePageTable<RecurseLevel4>>,
+    page_table: Mutex<InactivePageTable<RecurseLevel4LowerHalf>>,
 }
 
 impl ProcessShared {
@@ -84,7 +82,11 @@ impl ProcessShared {
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
-            page_table: create_mappings(|_, _| {}, InactivePageCopyOption::upper_half()).into(),
+            // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
+            // [`InactivePageCopyOption`] is Empty
+            page_table: unsafe {
+                create_mappings_lower(|_, _| {}, InactivePageCopyOption::Empty).into()
+            },
         }
     }
 }

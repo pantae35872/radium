@@ -1,3 +1,5 @@
+use core::cell::RefCell;
+
 use alloc::sync::Arc;
 use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
@@ -9,7 +11,7 @@ use pager::{
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator, TopLevelP4},
-        table::RecurseLevel4,
+        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
         temporary_page::TemporaryPage,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
@@ -35,47 +37,64 @@ pub mod stack_allocator;
 pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
 
-def_local!(pub static ACTIVE_TABLE: Arc<Mutex<ActivePageTable<RecurseLevel4>>>);
+def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
+def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RecurseLevel4LowerHalf>>);
+
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
 def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryPage>>);
 
 pub fn stack_allocator<R>(
-    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4>) -> R,
+    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
 ) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
-    let mut table = ACTIVE_TABLE.lock();
+    let mut table = ACTIVE_TABLE_UPPER.lock();
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
 }
 
-pub fn create_mappings<F>(f: F, options: InactivePageCopyOption) -> InactivePageTable<RecurseLevel4>
+/// # Safety
+/// See [`ActivePageTable::create_mappings`].
+pub unsafe fn create_mappings_lower<F>(
+    f: F,
+    options: InactivePageCopyOption,
+) -> InactivePageTable<RecurseLevel4LowerHalf>
 where
-    F: FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator),
+    F: FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator),
 {
-    ACTIVE_TABLE.lock().create_mappings(
-        f,
-        &mut TableManipulationContext {
-            temporary_page: &mut TEMPORARY_PAGE.lock(),
-            allocator: &mut BUDDY_ALLOCATOR.lock(),
-        },
-        options,
-    )
+    // SAFETY: This is just a helper function, the options contract are uphold by the caller
+    unsafe {
+        ACTIVE_TABLE_LOWER.inner_mut().get_mut().create_mappings(
+            f,
+            &mut TableManipulationContext {
+                temporary_page: &mut TEMPORARY_PAGE.lock(),
+                allocator: &mut BUDDY_ALLOCATOR.lock(),
+            },
+            options,
+        )
+    }
 }
 
-pub fn mapper<R>(
-    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4, BuddyAllocator>) -> R,
+pub fn mapper_lower<R>(
+    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R,
 ) -> R {
-    let mut table = ACTIVE_TABLE.lock();
+    let table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
+    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+}
+
+pub fn mapper_upper<R>(
+    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4UpperHalf, BuddyAllocator>) -> R,
+) -> R {
+    let mut table = ACTIVE_TABLE_UPPER.lock();
     f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.context_transformer(|builder, context| {
+            let (table_lower, table_upper) = context.context.take_active_table().unwrap().split();
             builder
-                .table(Arc::new(
-                    context.context.take_active_table().unwrap().into(),
-                ))
+                .original_table(Arc::new(table_upper.into()))
+                .bsp_only_table(Arc::new(Some(table_lower).into()))
                 .stack_allocator(Arc::new(
                     context.context.take_stack_allocator().unwrap().into(),
                 ))
@@ -86,13 +105,58 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
                     context.context.take_temporary_page().unwrap().into(),
                 ));
         });
-        i.register(|builder, context, _id| {
+        i.register(|builder, context, id| {
             local_builder!(
                 builder,
-                ACTIVE_TABLE(Arc::clone(&context.table)),
+                ACTIVE_TABLE_UPPER(Arc::clone(&context.original_table)),
                 STACK_ALLOCATOR(Arc::clone(&context.stack_allocator)),
                 BUDDY_ALLOCATOR(Arc::clone(&context.buddy_allocator)),
                 TEMPORARY_PAGE(Arc::clone(&context.temporary_page)),
+            );
+
+            if id.is_bsp() {
+                let bsp_only = context
+                    .bsp_only_table
+                    .lock()
+                    .take()
+                    .expect("BSP lower half table has been stolen");
+                local_builder!(builder, ACTIVE_TABLE_LOWER(RefCell::new(bsp_only)));
+                return;
+            }
+
+            let mut table_upper = context.original_table.lock();
+            let mut table_manipulation_context = TableManipulationContext {
+                temporary_page: &mut context.temporary_page.lock(),
+                allocator: &mut *context.buddy_allocator.lock(),
+            };
+            // SAFETY: Since the ACTIVE_TABLE_UPPER is locked behind a shared mutex, the safety
+            // contract upholds
+            let new_table = unsafe {
+                table_upper.create_mappings(
+                    |_, _| {},
+                    &mut table_manipulation_context,
+                    InactivePageCopyOption::upper_half(),
+                )
+            };
+
+            // SAFETY: Well the safety contract aren't uphold BUT we have to do this because
+            // we need upper page table consistency across core, because the lower half has to be seperated each core
+            // for the userland implementation to work; to beable to isolate the lower half from different cores,
+            // we create a new table with the upper half copied (important! the upper half must be
+            // populated first, check paging.rs if this contract still holds true), and put that as
+            // a cpu local, this make every p4 lower half on each cpu different and can be swapped
+            // out
+            unsafe { table_upper.full_switch(new_table) };
+
+            local_builder!(
+                builder,
+                // SAFETY: Since we need the lower half to be seperated on each core, we've need
+                // a seperate instance of RecurseLevel4LowerHalf, this should really be created from
+                // the create_mapping above, but we can't since that function doesnt allow
+                // arbitrary return P4 types yet, this might be a FIXME
+                ACTIVE_TABLE_LOWER(unsafe {
+                    ActivePageTable::<RecurseLevel4LowerHalf>::new().into()
+                })
             );
         })
     });

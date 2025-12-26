@@ -42,7 +42,7 @@ use sentinel::log;
 use spin::Mutex;
 use uguid::Guid;
 
-use crate::{BOOT_BRIDGE, memory::mapper};
+use crate::{BOOT_BRIDGE, memory::mapper_upper};
 
 #[repr(C)]
 struct SystemTable {
@@ -321,7 +321,7 @@ unsafe impl Sync for UefiRuntime {}
 
 impl UefiRuntime {
     fn new() -> Self {
-        let mut mem_map: MemoryMap<'static> = BOOT_BRIDGE.memory_map().clone().into();
+        let mut mem_map: MemoryMap<'static> = BOOT_BRIDGE.memory_map().clone();
         let runtime_table_raw = BOOT_BRIDGE.uefi_runtime_ptr();
 
         log!(
@@ -347,7 +347,7 @@ impl UefiRuntime {
             );
             let page = virt_addr_alloc(ufu_stuff.page_count);
 
-            mapper(|mapper| unsafe {
+            mapper_upper(|mapper| unsafe {
                 mapper.identity_map_by_size(
                     ufu_stuff.phys_start.into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,
@@ -405,7 +405,7 @@ impl UefiRuntime {
                 MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
             )
         }) {
-            mapper(|mapper| unsafe {
+            mapper_upper(|mapper| unsafe {
                 mapper.unmap_addr_by_size(
                     VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,

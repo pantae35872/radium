@@ -4,7 +4,9 @@ use pager::{
     address::VirtAddr,
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, InactivePageCopyOption, TableManipulationContext, table::RecurseLevel4,
+        ActivePageTable, InactivePageCopyOption, TableManipulationContext,
+        mapper::{self},
+        table::RecurseLevel4,
         temporary_page::TemporaryPage,
     },
 };
@@ -26,46 +28,48 @@ where
         allocator,
     };
 
-    let new_table = active_table.create_mappings(
-        |mapper, allocator| {
-            mapper.populate_p4_upper_half(allocator);
+    let new_table = |mapper: &mut mapper::Mapper<RecurseLevel4>, allocator: &mut A| {
+        mapper.populate_p4_upper_half(allocator);
 
+        unsafe {
+            ctx.context().boot_bridge().kernel_elf().map_permission(
+                &mut mapper.mapper_with_allocator(allocator),
+                KERNEL_START,
+                ctx.context().boot_bridge().kernel_base(),
+            )
+        };
+
+        for usable in ctx
+            .context()
+            .boot_bridge()
+            .memory_map()
+            .entries()
+            .filter(|e| e.ty == MemoryType::CONVENTIONAL)
+        {
+            let size = (usable.page_count * PAGE_SIZE) as usize;
             unsafe {
-                ctx.context().boot_bridge().kernel_elf().map_permission(
-                    &mut mapper.mapper_with_allocator(allocator),
-                    KERNEL_START,
-                    ctx.context().boot_bridge().kernel_base(),
-                )
-            };
-
-            for usable in ctx
-                .context()
-                .boot_bridge()
-                .memory_map()
-                .entries()
-                .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-            {
-                let size = (usable.page_count * PAGE_SIZE) as usize;
-                unsafe {
-                    mapper
-                        .mapper_with_allocator(allocator)
-                        .map_to_range_by_size(
-                            VirtAddr::new(
-                                KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start.as_u64(),
-                            )
-                            .into(),
-                            usable.phys_start.into(),
-                            size,
-                            EntryFlags::WRITABLE,
+                mapper
+                    .mapper_with_allocator(allocator)
+                    .map_to_range_by_size(
+                        VirtAddr::new(
+                            KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start.as_u64(),
                         )
-                };
-            }
+                        .into(),
+                        usable.phys_start.into(),
+                        size,
+                        EntryFlags::WRITABLE,
+                    )
+            };
+        }
 
-            mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
-        },
-        &mut context,
-        InactivePageCopyOption::Empty,
-    );
+        mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
+    };
+
+    // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
+    // [`InactivePageCopyOption`] is Empty
+    let new_table = unsafe {
+        active_table.create_mappings(new_table, &mut context, InactivePageCopyOption::Empty)
+    };
 
     unsafe { active_table.switch(&mut context, new_table) };
 
