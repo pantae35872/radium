@@ -171,16 +171,6 @@ where
         let p2 = p3.next_table_create(page.p3_index(), allocator);
         let p1 = p2.next_table_create(page.p2_index(), allocator);
 
-        // FIXME: this is such a duck tape approach, and can cause confusion, make a seperate remap
-        // function instead of making this a "hidden" flags
-        if p1[page.p1_index() as usize].needs_remap() {
-            let previous_value = p1[page.p1_index() as usize]
-                .pointed_frame()
-                .expect("Needs remap has no pointed frame");
-            p1[page.p1_index() as usize].set(previous_value, flags | EntryFlags::PRESENT);
-            return;
-        }
-
         if !(p1[page.p1_index() as usize].is_unused()
             || p1[page.p1_index() as usize].overwriteable())
         {
