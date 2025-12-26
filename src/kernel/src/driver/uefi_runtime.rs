@@ -36,15 +36,13 @@ use conquer_once::spin::OnceCell;
 use pager::{
     Mapper, PAGE_SIZE,
     address::{PhysAddr, VirtAddr},
+    virt_addr_alloc,
 };
 use sentinel::log;
 use spin::Mutex;
 use uguid::Guid;
 
-use crate::{
-    BOOT_BRIDGE,
-    memory::{mapper, virt_addr_alloc},
-};
+use crate::{BOOT_BRIDGE, memory::mapper};
 
 #[repr(C)]
 struct SystemTable {

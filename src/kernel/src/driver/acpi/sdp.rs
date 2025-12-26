@@ -1,16 +1,14 @@
 use alloc::string::String;
 use pager::{
-    address::{Frame, Page, PhysAddr, VirtAddr},
     EntryFlags, Mapper,
+    address::{Frame, Page, PhysAddr, VirtAddr},
+    virt_addr_alloc,
 };
 use sentinel::log;
 
-use crate::{
-    initialization_context::{InitializationContext, Stage1},
-    memory::virt_addr_alloc,
-};
+use crate::initialization_context::{InitializationContext, Stage1};
 
-use super::{rsdt::Xrsdt, AcpiRevisions};
+use super::{AcpiRevisions, rsdt::Xrsdt};
 
 #[repr(C, packed)]
 pub struct Rsdp {

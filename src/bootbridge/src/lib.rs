@@ -302,7 +302,7 @@ impl BootBridgeBuilder {
     /// Build the boot bridge and const return a pointer to it
     /// Failed if the boot bridge is not initialized
     pub fn build(self) -> *mut RawBootBridge {
-        self.boot_bridge as *mut RawBootBridge
+        self.boot_bridge
     }
 }
 

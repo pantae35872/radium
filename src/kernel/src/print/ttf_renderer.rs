@@ -1,12 +1,11 @@
 use alloc::{string::String, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
-use pager::{EntryFlags, Mapper, PAGE_SIZE};
+use pager::{EntryFlags, Mapper, PAGE_SIZE, virt_addr_alloc};
 
 use crate::{
     graphics::{color::Color, graphic},
     initialization_context::{InitializationContext, Stage2},
-    memory::virt_addr_alloc,
 };
 
 #[derive(Hash, PartialEq, Eq)]

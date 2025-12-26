@@ -2,7 +2,6 @@ use sentinel::log;
 
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
-use crate::allocator::virt_allocator::VirtualAllocator;
 use crate::paging::table::{DirectP4Create, RecurseP4Create};
 use crate::registers::tlb;
 use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE};
@@ -302,10 +301,9 @@ where
         &mut self,
         obj: &mut O,
         allocator: &mut A,
-        virtual_allocator: &VirtualAllocator,
     ) {
         let mut mapper = self.mapper_with_allocator(allocator);
-        let mut mapper = MapperWithVirtualAllocator::new(&mut mapper, virtual_allocator);
+        let mut mapper = MapperWithVirtualAllocator::new(&mut mapper);
         obj.identity_replace(&mut mapper)
     }
 

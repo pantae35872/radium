@@ -7,6 +7,7 @@ use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
     EntryFlags, Mapper, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
+    virt_addr_alloc,
 };
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
@@ -15,7 +16,7 @@ use sentinel::log;
 use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
     interrupt::apic::ApicId,
-    memory::{MMIOBufferInfo, virt_addr_alloc},
+    memory::MMIOBufferInfo,
 };
 
 mod aml;

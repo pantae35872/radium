@@ -84,7 +84,8 @@ impl ProcessShared {
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
-            page_table: todo!(), //ACTIVE_TABLE.lock().create_inactive(),
+            page_table: todo!(),
+            //page_table: ACTIVE_TABLE.lock().log_all(),
         }
     }
 }

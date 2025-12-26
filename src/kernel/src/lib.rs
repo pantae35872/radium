@@ -50,7 +50,6 @@ use alloc::sync::Arc;
 use bakery::DwarfBaker;
 use bootbridge::{BootBridge, RawBootBridge};
 use conquer_once::spin::OnceCell;
-use driver::uefi_runtime::{self};
 use driver::{
     acpi::{self},
     pit,

@@ -1,7 +1,7 @@
 use crate::address::{Frame, Page, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
-use crate::{EntryFlags, PAGE_SIZE};
+use crate::{EntryFlags, PAGE_SIZE, virt_addr_alloc};
 
 use super::ActivePageTable;
 use super::table::{RecurseLevel1, Table};
@@ -12,11 +12,17 @@ pub struct TemporaryPage {
     page: Page,
 }
 
+impl Default for TemporaryPage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TemporaryPage {
-    pub fn new(page: Page) -> Self {
+    pub fn new() -> Self {
         TemporaryPage {
             mapped: false,
-            page,
+            page: virt_addr_alloc(1),
         }
     }
 

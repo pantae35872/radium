@@ -3,12 +3,13 @@
 #![feature(ptr_internals)]
 #![allow(internal_features)]
 
-use core::{fmt::Display, ops::Deref};
+use core::{fmt::Display, ops::Deref, panic::Location};
 
 use address::{Frame, Page, PhysAddr, VirtAddr};
 use alloc::vec::Vec;
 use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
+use sentinel::log;
 
 extern crate alloc;
 
@@ -46,14 +47,33 @@ pub const KERNEL_START: VirtAddr = VirtAddr::canonical_higher_half();
 pub const KERNEL_DIRECT_PHYSICAL_MAP: VirtAddr = VirtAddr::new(0xFFFF_9000_0000_0000);
 pub const KERNEL_GENERAL_USE: VirtAddr = VirtAddr::new(0xFFFF_B000_0000_0000);
 
+static GENERAL_VIRTUAL_ALLOCATOR: VirtualAllocator = VirtualAllocator::new(
+    KERNEL_GENERAL_USE,
+    (VirtAddr::new(0xFFFF_F000_0000_0000).as_u64() - KERNEL_GENERAL_USE.as_u64()) as usize,
+);
+
+#[track_caller]
+pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
+    let allocated = GENERAL_VIRTUAL_ALLOCATOR
+        .allocate(size_in_pages as usize)
+        .expect("RAN OUT OF VIRTUAL ADDR");
+    log!(
+        Debug,
+        "\"{}\" Called virt_addr_alloc with size {size_in_pages}, giving {:x}-{:x}",
+        Location::caller(),
+        allocated.start_address(),
+        allocated.start_address() + size_in_pages * PAGE_SIZE
+    );
+    allocated
+}
+
 pub struct MapperWithVirtualAllocator<'a, M: Mapper> {
     mapper: &'a mut M,
-    allocator: &'a VirtualAllocator,
 }
 
 impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
-    pub fn new(mapper: &'a mut M, allocator: &'a VirtualAllocator) -> Self {
-        Self { mapper, allocator }
+    pub fn new(mapper: &'a mut M) -> Self {
+        Self { mapper }
     }
 
     /// Allocate and map a virtual address, to physical address then return the allocated virtual address
@@ -62,10 +82,7 @@ impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
     /// The caller must ensure that the provided physical address is valid and does not overlap
     /// with other allocations or points to an unsafe range of memory
     pub unsafe fn map(&mut self, phys_addr: PhysAddr, size: usize, flags: EntryFlags) -> VirtAddr {
-        let page = self
-            .allocator
-            .allocate(size / PAGE_SIZE as usize + 1)
-            .expect("IMPOSSIBLE OUT OF VIRTUAL MEMORY");
+        let page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
         unsafe {
             self.mapper
                 .map_to_range_by_size(page, phys_addr.into(), size, flags)

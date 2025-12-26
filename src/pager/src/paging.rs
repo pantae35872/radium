@@ -10,7 +10,7 @@ use self::mapper::Mapper;
 use self::table::Table;
 use bit_field::BitField;
 use core::marker::PhantomData;
-use core::ops::{Deref, DerefMut};
+use core::ops::{Deref, DerefMut, Range};
 use core::ptr::Unique;
 use sentinel::log;
 use table::{AnyLevel, TableLevel4};
@@ -245,6 +245,25 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
             }
         }
     }
+
+    pub fn create_mappings<F, A>(
+        &mut self,
+        f: F,
+        context: &mut TableManipulationContext<A>,
+        options: InactivePageCreateOption,
+    ) -> InactivePageTable<P4>
+    where
+        F: FnOnce(&mut Mapper<P4>, &mut A),
+        A: FrameAllocator,
+    {
+        let mut new_table = InactivePageTable::new(self, context, options);
+
+        self.with(&mut new_table, context, |mapper, allocator| {
+            f(mapper, allocator);
+        });
+
+        new_table
+    }
 }
 
 /// InactivePageTable are the table that can be swapped to be an active page table using
@@ -255,11 +274,35 @@ pub struct InactivePageTable<P4: TopLevelP4> {
     _p4: PhantomData<P4>,
 }
 
+/// An argument to the [`InactivePageTable::new`] function, default is empty
+#[derive(Debug, Default)]
+pub enum InactivePageCreateOption {
+    /// Create a new [`InactivePageTable`] with empty p4, (but with recursive mapping)
+    #[default]
+    Empty,
+    /// Create a new [`InactivePageTable`] with the specified range (exclusive) copied from the
+    /// active_table to the new [`InactivePageTable`]
+    Range(Range<usize>),
+    /// Copy all the entries, from the active_table to the new [`InactivePageTable`]
+    All,
+}
+
+impl InactivePageCreateOption {
+    pub fn lower_half() -> Self {
+        Self::Range(0..256)
+    }
+    pub fn upper_half() -> Self {
+        Self::Range(256..512)
+    }
+}
+
 impl<P4: TopLevelP4> InactivePageTable<P4> {
-    /// Create a new InactivePage
+    /// Create a new InactivePage, with a recursive mapping,
+    /// specify the copy behavior with the [`InactivePageCreateOption`]
     pub fn new<A: FrameAllocator>(
         active_table: &mut ActivePageTable<P4>,
         context: &mut TableManipulationContext<A>,
+        options: InactivePageCreateOption,
     ) -> Self {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
@@ -270,6 +313,17 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
                     .map_table_frame(frame, active_table, context.allocator)
             };
             table.zero();
+
+            match options {
+                InactivePageCreateOption::All => {
+                    table[0..512].copy_from_slice(&active_table.p4()[0..512]);
+                }
+                InactivePageCreateOption::Range(range) => {
+                    table[range.clone()].copy_from_slice(&active_table.p4()[range]);
+                }
+                InactivePageCreateOption::Empty => {}
+            }
+
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
         // SAFETY: The reference to the table is gone in the scope
@@ -306,22 +360,4 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         // SAFETY: The reference to the table is gone in the scope
         unsafe { context.temporary_page.unmap(active_table) };
     }
-}
-
-pub fn create_mappings<F, A, P: TopLevelP4>(
-    f: F,
-    context: &mut TableManipulationContext<A>,
-    active_table: &mut ActivePageTable<P>,
-) -> InactivePageTable<P>
-where
-    F: FnOnce(&mut Mapper<P>, &mut A),
-    A: FrameAllocator,
-{
-    let mut new_table = InactivePageTable::new(active_table, context);
-
-    active_table.with(&mut new_table, context, |mapper, allocator| {
-        f(mapper, allocator);
-    });
-
-    new_table
 }

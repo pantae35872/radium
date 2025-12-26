@@ -1,17 +1,15 @@
 use bootbridge::MemoryType;
 use pager::{
     EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
-    address::{Page, VirtAddr},
+    address::VirtAddr,
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, TableManipulationContext, create_mappings, table::RecurseLevel4,
+        ActivePageTable, InactivePageCreateOption, TableManipulationContext, table::RecurseLevel4,
         temporary_page::TemporaryPage,
     },
 };
 
 use crate::initialization_context::{InitializationContext, Stage0};
-
-use super::GENERAL_VIRTUAL_ALLOCATOR;
 
 pub unsafe fn remap_the_kernel<A>(
     allocator: &mut A,
@@ -22,13 +20,13 @@ where
 {
     let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
 
-    let mut temporary_page = TemporaryPage::new(Page::deadbeef());
+    let mut temporary_page = TemporaryPage::new();
     let mut context = TableManipulationContext {
         temporary_page: &mut temporary_page,
         allocator,
     };
 
-    let new_table = create_mappings(
+    let new_table = active_table.create_mappings(
         |mapper, allocator| {
             unsafe {
                 ctx.context().boot_bridge().kernel_elf().map_permission(
@@ -61,14 +59,10 @@ where
                 };
             }
 
-            mapper.virtually_replace(
-                &mut ctx.context_mut().boot_bridge,
-                allocator,
-                &GENERAL_VIRTUAL_ALLOCATOR,
-            );
+            mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
         },
         &mut context,
-        &mut active_table,
+        InactivePageCreateOption::Empty,
     );
 
     unsafe { active_table.switch(&mut context, new_table) };

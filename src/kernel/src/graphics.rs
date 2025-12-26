@@ -6,12 +6,12 @@ use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
-use pager::{EntryFlags, Mapper, PAGE_SIZE, address::Page, registers::Xcr0};
+use pager::{EntryFlags, Mapper, PAGE_SIZE, address::Page, registers::Xcr0, virt_addr_alloc};
 
 use crate::{
     initialization_context::{InitializationContext, Stage2},
     interrupt,
-    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice, virt_addr_alloc},
+    memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
 use sentinel::log;
 

@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use core::ops::{Index, IndexMut};
+use core::ops::{Index, IndexMut, Range};
 use core::ptr::Unique;
 
 use crate::allocator::FrameAllocator;
@@ -138,6 +138,26 @@ where
     }
 }
 
+impl<L> Index<Range<usize>> for Table<L>
+where
+    L: TableLevel,
+{
+    type Output = [Entry];
+
+    fn index(&self, range: Range<usize>) -> &Self::Output {
+        &self.entries[range]
+    }
+}
+
+impl<L> IndexMut<Range<usize>> for Table<L>
+where
+    L: TableLevel,
+{
+    fn index_mut(&mut self, range: Range<usize>) -> &mut Self::Output {
+        &mut self.entries[range]
+    }
+}
+
 impl<L> Index<usize> for Table<L>
 where
     L: TableLevel,
@@ -205,22 +225,18 @@ where
             return unsafe { active_page_table.full_switch(new_table) };
         }
 
-        let mut old_table = InactivePageTable::new(active_page_table, context);
-
-        // SAFETY: We did mutate 512th element but, the impl where clauses guarantee that P4 is a recursive mapped.
-        unsafe {
-            old_table.table(active_page_table, context, |active_page_table, table| {
-                table.entries[START as usize..END as usize]
-                    .copy_from_slice(&active_page_table.p4().entries[START as usize..END as usize])
-            });
-        }
+        let old_table = InactivePageTable::new(
+            active_page_table,
+            context,
+            super::InactivePageCreateOption::Range(START as usize..END as usize),
+        );
 
         // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that P4 is a recursive mapped.
         // and the InactivePageTable is always recursively mapped.
         unsafe {
             new_table.table(active_page_table, context, |active_table, table| {
-                active_table.p4_mut().entries[START as usize..END as usize]
-                    .copy_from_slice(&table.entries[START as usize..END as usize])
+                active_table.p4_mut()[START as usize..END as usize]
+                    .copy_from_slice(&table[START as usize..END as usize])
             })
         };
 
