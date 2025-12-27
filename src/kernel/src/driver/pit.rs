@@ -6,6 +6,7 @@ use spin::Mutex;
 use crate::{
     hlt,
     initialization_context::{InitializationContext, Stage4},
+    initialize_guard,
     interrupt::{InterruptIndex, LAST_INTERRUPT_NO},
     port::{Port, Port8Bit, PortReadWrite, PortWrite},
 };
@@ -173,5 +174,7 @@ impl Default for OperatingMode {
 }
 
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
+    initialize_guard!();
+
     PIT.init_once(|| ProgrammableIntervalTimer::new(ctx).into());
 }

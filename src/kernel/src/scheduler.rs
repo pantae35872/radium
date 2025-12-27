@@ -28,6 +28,7 @@ use thread::{Thread, ThreadHandle, ThreadPool, global_id_to_local_id};
 
 use crate::{
     initialization_context::{InitializationContext, Stage4},
+    initialize_guard,
     interrupt::{CORE_ID, ExtendedInterruptStackFrame, InterruptIndex, LAPIC, TPMS},
     smp::{ApInitializationContext, CORE_COUNT, CoreId, MAX_CPU},
     sync::spin_mpsc::SpinMPSC,
@@ -656,6 +657,8 @@ def_local!(pub static LOCAL_SCHEDULER: crate::scheduler::LocalScheduler);
 def_local!(pub static CURRENT_THREAD_ID: usize);
 
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
+    initialize_guard!();
+
     ctx.local_initializer(|i| {
         i.register(|builder, ctx, id| {
             local_builder!(

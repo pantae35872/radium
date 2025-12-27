@@ -225,11 +225,15 @@ where
             return unsafe { active_page_table.full_switch(new_table) };
         }
 
-        let old_table = InactivePageTable::new(
-            active_page_table,
-            context,
-            super::InactivePageCopyOption::Range(START as usize..END as usize),
-        );
+        // SAFETY: We're swapping out the now inactive ranges of START..END the exclusivity contract is uphold
+        // by the previous [`ActivePageTable::switch`] call
+        let old_table = unsafe {
+            InactivePageTable::new(
+                active_page_table,
+                context,
+                super::InactivePageCopyOption::Range(START as usize..END as usize),
+            )
+        };
 
         // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that P4 is a recursive mapped.
         // and the InactivePageTable is always recursively mapped.

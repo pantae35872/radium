@@ -2,7 +2,7 @@ use sentinel::log;
 
 use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
-use crate::paging::table::{DirectP4Create, RecurseP4Create};
+use crate::paging::table::{DirectP4Create, RecurseHierarchicalLevelMarker, RecurseP4Create};
 use crate::registers::tlb;
 use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE};
 
@@ -76,6 +76,29 @@ where
 {
 }
 
+pub trait TopLevelRecurse: TopLevelP4
+where
+    Self: TableLevel4<CreateMarker = RecurseP4Create>,
+{
+    fn start() -> u64;
+    fn end() -> u64;
+}
+
+impl<T: TopLevelP4, const START: u64, const END: u64> TopLevelRecurse for T
+where
+    T: TableLevel4<
+            CreateMarker = RecurseP4Create,
+            Marker = RecurseHierarchicalLevelMarker<START, END>,
+        >,
+{
+    fn start() -> u64 {
+        START
+    }
+    fn end() -> u64 {
+        END
+    }
+}
+
 impl<P4> Mapper<P4>
 where
     P4: TopLevelP4,
@@ -84,6 +107,13 @@ where
         // SAFETY: We know this is safe because we are the only one who own the active page table
         // or the actively mapping inactive page tables
         unsafe { self.p4.as_ref() }
+    }
+
+    pub fn populate_p4_lower_half(&mut self, allocator: &mut impl FrameAllocator) {
+        let p4 = self.p4_mut();
+        for i in 0..256 {
+            p4.next_table_create(i, allocator);
+        }
     }
 
     pub fn populate_p4_upper_half(&mut self, allocator: &mut impl FrameAllocator) {

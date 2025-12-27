@@ -4,6 +4,7 @@ use pager::gdt::{DOUBLE_FAULT_IST_INDEX, Descriptor, GENERAL_STACK_INDEX, Gdt, T
 use pager::registers::{CS, load_tss};
 
 use crate::initialization_context::{InitializationContext, Stage3};
+use crate::initialize_guard;
 use crate::smp::{ApInitializationContext, CpuLocalBuilder};
 use sentinel::log;
 
@@ -11,6 +12,8 @@ def_local!(pub static GDT: &'static pager::gdt::Gdt);
 def_local!(pub static CODE_SEG: pager::registers::SegmentSelector);
 
 pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
+    initialize_guard!();
+
     let gdt_initializer = |cpu: &mut CpuLocalBuilder, ctx: &ApInitializationContext, id| {
         let double_fault = ctx
             .stack_allocator(|mut s| s.alloc_stack(256))

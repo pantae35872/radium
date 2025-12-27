@@ -14,11 +14,7 @@ use convert_case::{Case, Casing};
 use proc_macro::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, Ident, ItemStruct, Token, Type, parenthesized,
-    parse::{Parse, ParseStream},
-    parse_macro_input,
-    punctuated::Punctuated,
-    token::Paren,
+    Expr, Ident, ItemStruct, Token, Type, parenthesized, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, token::Paren
 };
 
 #[proc_macro]

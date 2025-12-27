@@ -3,6 +3,7 @@ use core::fmt::{Arguments, Write};
 
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Stage2};
+use crate::initialize_guard;
 use crate::sync::mutex::Mutex;
 use conquer_once::spin::OnceCell;
 use sentinel::log;
@@ -36,6 +37,7 @@ macro_rules! println {
 }
 
 pub fn init(ctx: &mut InitializationContext<Stage2>, foreground_color: Color, background: Color) {
+    initialize_guard!();
     log!(Trace, "Initializing text output");
     DRIVER.init_once(|| Mutex::new(Print::new(ctx, foreground_color, background)));
 }

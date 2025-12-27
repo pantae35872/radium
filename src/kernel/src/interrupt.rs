@@ -7,6 +7,7 @@ use crate::PANIC_COUNT;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
 use crate::initialization_context::Stage4;
+use crate::initialize_guard;
 use crate::interrupt::apic::ApicId;
 use crate::port::Port;
 use crate::port::Port8Bit;
@@ -124,6 +125,8 @@ def_local!(pub static TPMS: usize);
 def_local!(pub static IO_APIC: Arc<Mutex<IoApicManager>>);
 
 pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Stage4> {
+    initialize_guard!();
+
     let lapic = ctx
         .mmio_device::<LocalApic, _>(
             LocalApicArguments {

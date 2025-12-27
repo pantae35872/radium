@@ -464,6 +464,8 @@ select_context! {
 }
 
 pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
+    initialize_guard!();
+
     let processors = ctx.context().processors();
     let mut cpu_id_to_apic_id = [None; MAX_CPU];
     APIC_ID_TO_CPU_ID.init_once(|| {
@@ -493,6 +495,8 @@ def_local!(pub static PROCESSORS: Vec<ApicId>);
 local_gen!();
 
 pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
+    initialize_guard!();
+
     let ap_initializer = ApInitializer::new(&mut ctx);
 
     let mut ctx = ctx.next(());

@@ -15,6 +15,7 @@ use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
+    initialize_guard,
     interrupt::apic::ApicId,
     memory::MMIOBufferInfo,
 };
@@ -27,6 +28,8 @@ mod rsdt;
 mod sdp;
 
 pub fn init(mut ctx: InitializationContext<Stage1>) -> InitializationContext<Stage2> {
+    initialize_guard!();
+
     log!(Debug, "Initializing acpi");
     let acpi = unsafe { Acpi::new(&mut ctx) };
     let fadt = acpi

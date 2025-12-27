@@ -13,6 +13,7 @@
 #![feature(iter_array_chunks)]
 #![feature(decl_macro)]
 #![feature(assert_matches)]
+#![feature(vec_from_fn)]
 #![recursion_limit = "16384"]
 #![allow(internal_features)]
 #![allow(dead_code)]
@@ -78,6 +79,8 @@ pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
 where
     F: FnOnce() + Send + 'static,
 {
+    initialize_guard!();
+
     let boot_bridge = BootBridge::new(boot_bridge);
     let mut stage0 = InitializationContext::<Stage0>::start(boot_bridge);
     logger::init(&stage0);

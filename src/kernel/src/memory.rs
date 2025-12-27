@@ -89,6 +89,8 @@ pub fn mapper_upper<R>(
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
+    initialize_guard!();
+
     ctx.local_initializer(|i| {
         i.context_transformer(|builder, context| {
             let (table_lower, table_upper) = context.context.take_active_table().unwrap().split();
@@ -132,32 +134,18 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             // SAFETY: Since the ACTIVE_TABLE_UPPER is locked behind a shared mutex, the safety
             // contract upholds
             let new_table = unsafe {
-                table_upper.create_mappings(
+                table_upper.create_mappings::<_, _, RecurseLevel4>(
                     |_, _| {},
                     &mut table_manipulation_context,
                     InactivePageCopyOption::upper_half(),
                 )
             };
 
-            // SAFETY: Well the safety contract aren't uphold BUT we have to do this because
-            // we need upper page table consistency across core, because the lower half has to be seperated each core
-            // for the userland implementation to work; to beable to isolate the lower half from different cores,
-            // we create a new table with the upper half copied (important! the upper half must be
-            // populated first, check paging.rs if this contract still holds true), and put that as
-            // a cpu local, this make every p4 lower half on each cpu different and can be swapped
-            // out
-            unsafe { table_upper.full_switch(new_table) };
+            // SAFETY: The new table upper half is copied from the currently active page table we
+            // didn't modify anything
+            let (_, active_lower) = unsafe { table_upper.switch_split(new_table) };
 
-            local_builder!(
-                builder,
-                // SAFETY: Since we need the lower half to be seperated on each core, we've need
-                // a seperate instance of RecurseLevel4LowerHalf, this should really be created from
-                // the create_mapping above, but we can't since that function doesnt allow
-                // arbitrary return P4 types yet, this might be a FIXME
-                ACTIVE_TABLE_LOWER(unsafe {
-                    ActivePageTable::<RecurseLevel4LowerHalf>::new().into()
-                })
-            );
+            local_builder!(builder, ACTIVE_TABLE_LOWER(active_lower.into()));
         })
     });
 }
@@ -409,12 +397,18 @@ select_context! {
             ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
         }
 
-        pub fn with_inactive(&mut self, table: &mut InactivePageTable<RecurseLevel4>, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
+        /// Access the mapping of the InactivePageTable.
+        ///
+        /// # Safety
+        /// See [`ActivePageTable::with`] safety docs
+        pub unsafe fn with_inactive(&mut self, table: &mut InactivePageTable<RecurseLevel4>, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
             let ctx = self.context_mut();
-            ctx.active_table.with(table, &mut TableManipulationContext {
-                temporary_page: &mut ctx.temporary_page,
-                allocator: &mut ctx.buddy_allocator
-            }, f);
+            unsafe {
+                ctx.active_table.with(table, &mut TableManipulationContext {
+                    temporary_page: &mut ctx.temporary_page,
+                    allocator: &mut ctx.buddy_allocator
+                }, f)
+            }
         }
 
         pub fn buddy_allocator(&mut self) -> &mut BuddyAllocator<64> {

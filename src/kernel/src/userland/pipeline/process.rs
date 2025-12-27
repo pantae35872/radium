@@ -3,17 +3,14 @@ use kernel_proc::IPPacket;
 use pager::{
     address::Page,
     paging::{
-        InactivePageCopyOption, InactivePageTable,
+        InactivePageTable,
         table::{RecurseLevel4, RecurseLevel4LowerHalf},
     },
 };
 use spin::Mutex;
 
 use crate::{
-    memory::{
-        create_mappings_lower,
-        stack_allocator::{Stack, StackAllocator},
-    },
+    memory::stack_allocator::{Stack, StackAllocator},
     userland::{
         self,
         pipeline::{CommonRequestContext, thread::Thread},
@@ -28,6 +25,7 @@ pub struct Process {
 #[derive(Default)]
 pub struct ProcessPipeline {
     shared_data: Vec<Arc<ProcessShared>>,
+    page_tables: Vec<Option<InactivePageTable<RecurseLevel4LowerHalf>>>,
     free_data: Vec<usize>,
 }
 
@@ -71,22 +69,52 @@ impl ProcessPipeline {
 
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
-    page_table: Mutex<InactivePageTable<RecurseLevel4LowerHalf>>,
 }
+
+//fn create_mapping(amount: usize) -> Vec<InactivePageTable<RecurseLevel4LowerHalf>> {
+//    let mut orignal_table = unsafe {
+//        create_mappings_lower(
+//            |mapper, alloc| {
+//                mapper.populate_p4_lower_half(alloc);
+//            },
+//            InactivePageCopyOption::Empty,
+//        )
+//    };
+//    //let mut copied = ACTIVE_TABLE_LOWER.borrow_mut().with(
+//    //    &mut orignal_table,
+//    //    &mut TableManipulationContext {
+//    //        temporary_page: &mut TEMPORARY_PAGE.lock(),
+//    //        allocator: &mut *BUDDY_ALLOCATOR.lock(),
+//    //    },
+//    //    |mapper, allocator| unsafe {
+//    //        Vec::from_fn(amount - 1, |_| {
+//    //            mapper.create_mappings(
+//    //                |_, _| {},
+//    //                &mut TableManipulationContext {
+//    //                    temporary_page: &mut TemporaryPage::new(),
+//    //                    allocator,
+//    //                },
+//    //                InactivePageCopyOption::lower_half(),
+//    //            )
+//    //        })
+//    //    },
+//    //);
+//
+//    //copied.push(orignal_table);
+//    //copied
+//    Vec::new()
+//}
 
 impl ProcessShared {
     pub fn new() -> Self {
+        // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
+        // [`InactivePageCopyOption`] is Empty
         Self {
             stacks: StackAllocator::new(Page::range_inclusive(
                 userland::STACK_START.into(),
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
-            // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
-            // [`InactivePageCopyOption`] is Empty
-            page_table: unsafe {
-                create_mappings_lower(|_, _| {}, InactivePageCopyOption::Empty).into()
-            },
         }
     }
 }
@@ -94,4 +122,5 @@ impl ProcessShared {
 #[derive(Clone, IPPacket)]
 struct ExpandSharedPacket {
     expanded: Arc<ProcessShared>,
+    template_lower_half: Arc<Mutex<InactivePageTable<RecurseLevel4LowerHalf>>>,
 }

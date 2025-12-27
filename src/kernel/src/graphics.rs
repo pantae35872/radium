@@ -1,4 +1,4 @@
-use crate::sync::mutex::Mutex;
+use crate::{initialize_guard, sync::mutex::Mutex};
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bootbridge::{BootBridge, GraphicsInfo, PixelFormat};
@@ -436,6 +436,7 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
 }
 
 pub fn init(ctx: &mut InitializationContext<Stage2>) {
+    initialize_guard!();
     log!(Trace, "Registering graphic");
     let graphics_info = ctx.context().boot_bridge().graphics_info();
     let start = virt_addr_alloc(

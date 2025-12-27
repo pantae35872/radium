@@ -81,12 +81,12 @@ impl TemporaryPage {
     /// # Safety
     /// The caller must ensure that the provided frame is valid and does not causes any side
     /// effects
-    pub unsafe fn map_table_frame<P4>(
-        &mut self,
+    pub unsafe fn map_table_frame<'a, 'b, P4>(
+        &'a mut self,
         frame: Frame,
-        active_table: &mut ActivePageTable<P4>,
-        allocator: &mut impl FrameAllocator,
-    ) -> &mut Table<RecurseLevel1>
+        active_table: &'b mut ActivePageTable<P4>,
+        allocator: &'b mut impl FrameAllocator,
+    ) -> &'a mut Table<RecurseLevel1>
     where
         P4: TopLevelP4,
     {
