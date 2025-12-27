@@ -4,15 +4,18 @@ use pager::{
     address::Page,
     paging::{
         InactivePageCopyOption, InactivePageTable,
-        table::{RecurseLevel4, RecurseLevel4LowerHalf},
+        mapper::{Mapper, MapperWithAllocator},
+        table::RecurseLevel4LowerHalf,
     },
 };
 use spin::Mutex;
 
 use crate::{
     memory::{
-        copy_mappings, create_mappings_lower,
+        allocator::buddy_allocator::BuddyAllocator,
+        copy_mappings, create_mappings_lower, mapper_lower, mapper_lower_with,
         stack_allocator::{Stack, StackAllocator},
+        switch_lower_half,
     },
     userland::{
         self,
@@ -40,9 +43,15 @@ impl ProcessPipeline {
     pub fn sync_and_identify(
         &mut self,
         _context: &CommonRequestContext<'_>,
-        _thread: &Thread,
+        thread: &Thread,
     ) -> Process {
-        todo!("Identify the process from the thread")
+        // FIXME: probably use a map instead
+        for (id, shared) in self.shared_data.iter().enumerate() {
+            if shared.threads.lock().iter().any(|t| *t == thread.id()) {
+                return Process { id };
+            }
+        }
+        panic!("thread id {} doesn't belong to any processes", thread.id());
     }
 
     pub fn check_ipp(&mut self) {
@@ -55,12 +64,63 @@ impl ProcessPipeline {
         });
     }
 
-    pub fn page_table(&mut self, _process: Process) -> &InactivePageTable<RecurseLevel4> {
-        todo!()
+    pub fn page_table_swap(&mut self, from: Process, with: Process) {
+        assert_ne!(from, with);
+
+        let with = self.page_tables[with.id]
+            .take()
+            .expect("Page table scheduled two times");
+
+        assert!(
+            self.page_tables[from.id].is_none(),
+            "Page table scheduled two times"
+        );
+        self.page_tables[from.id] = Some(switch_lower_half(with));
     }
 
-    pub fn alloc_stack(&mut self, _process: Process) -> Stack {
-        todo!()
+    pub fn mapper<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+        process: Process,
+    ) -> R {
+        // If the table is present in the page_tables then it's not active, use that table as a
+        // mapper
+        // FIXME: RACECONDITION!!!!!!, if the table is active in the other cores, there might be
+        // a race condition
+        if let Some(mut table) = self.page_tables[process.id].take() {
+            // SAFETY: Read the caller of the
+            let r = unsafe {
+                mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table)
+            };
+            self.page_tables[process.id] = Some(table);
+            r
+        } else {
+            // If the table is currently active, use that as a mapper
+            mapper_lower(|MapperWithAllocator { mapper, allocator }| f(self, mapper, allocator))
+        }
+    }
+
+    pub fn alloc_stack(&mut self, process: Process) -> Stack {
+        self.mapper(
+            |s, mapper, allocator| {
+                s.shared_data(process)
+                    .stacks
+                    .lock()
+                    .alloc_stack(mapper, allocator, 16)
+            },
+            process,
+        )
+        .expect(
+            "Can't allocate new stack for process, uhh deal with this, maybe kill the user process",
+        )
+    }
+
+    fn shared_data(&mut self, process: Process) -> &ProcessShared {
+        &self.shared_data[process.id]
+    }
+
+    pub fn alloc_thread(&mut self, parent: Process, thread: Thread) {
+        self.shared_data[parent.id].threads.lock().push(thread.id());
     }
 
     pub fn alloc(&mut self) -> Process {
@@ -96,6 +156,7 @@ impl ProcessPipeline {
 
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
+    threads: Mutex<Vec<usize>>,
 }
 
 impl ProcessShared {
@@ -108,6 +169,7 @@ impl ProcessShared {
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
+            threads: Vec::new().into(),
         }
     }
 }

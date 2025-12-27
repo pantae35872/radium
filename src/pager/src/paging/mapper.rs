@@ -15,8 +15,8 @@ pub struct Mapper<P4: TableLevel4> {
 }
 
 pub struct MapperWithAllocator<'a, P4: TopLevelP4, A: FrameAllocator> {
-    mapper: &'a mut Mapper<P4>,
-    allocator: &'a mut A,
+    pub mapper: &'a mut Mapper<P4>,
+    pub allocator: &'a mut A,
 }
 
 impl<P4> Mapper<P4>

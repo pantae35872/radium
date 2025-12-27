@@ -52,6 +52,21 @@ pub fn stack_allocator<R>(
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
 }
 
+pub fn switch_lower_half(
+    with: InactivePageTable<RecurseLevel4LowerHalf>,
+) -> InactivePageTable<RecurseLevel4LowerHalf> {
+    // SAFETY: Switching the user level4 is completely safe, i think
+    unsafe {
+        ACTIVE_TABLE_LOWER.borrow_mut().switch(
+            &mut TableManipulationContext {
+                temporary_page: &mut TEMPORARY_PAGE.lock(),
+                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+            },
+            with,
+        )
+    }
+}
+
 /// Just a helper See [`ActivePageTable::create_mappings`] for more info
 ///
 /// # Safety
@@ -93,6 +108,26 @@ where
                 allocator: &mut *BUDDY_ALLOCATOR.lock(),
             },
             options,
+        )
+    }
+}
+
+/// Just a helper See [`ActivePageTable::with`] for more info
+///
+/// # Safety
+/// See [`ActivePageTable::with`].
+pub unsafe fn mapper_lower_with<R>(
+    f: impl FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+    with: &mut InactivePageTable<RecurseLevel4LowerHalf>,
+) -> R {
+    unsafe {
+        ACTIVE_TABLE_UPPER.lock().with(
+            with,
+            &mut TableManipulationContext {
+                temporary_page: &mut TEMPORARY_PAGE.lock(),
+                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+            },
+            f,
         )
     }
 }

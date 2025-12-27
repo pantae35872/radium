@@ -141,9 +141,11 @@ impl ThreadPipeline {
             }
 
             thread_ctx.state = ThreadState::Active;
+            let thread = id::alloc_thread(LocalThreadId::new(unused));
+            process.alloc_thread(parent_process, thread);
 
             return TaskBlock {
-                thread: id::alloc_thread(LocalThreadId::new(unused)),
+                thread,
                 process: parent_process,
             };
         }
@@ -151,8 +153,12 @@ impl ThreadPipeline {
         let new_context = ThreadContext::new(process.alloc_stack(parent_process), parent_process);
         let id = self.pool.len();
         self.pool.push(new_context);
+
+        let thread = id::alloc_thread(LocalThreadId::new(id));
+        process.alloc_thread(parent_process, thread);
+
         TaskBlock {
-            thread: id::alloc_thread(LocalThreadId::new(id)),
+            thread,
             process: parent_process,
         }
     }

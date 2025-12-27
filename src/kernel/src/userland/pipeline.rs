@@ -115,6 +115,7 @@ impl ControlPipeline {
 
     fn handle_ipp(&mut self, context: &mut PipelineContext) {
         self.thread.handle_ipp();
+        self.process.check_ipp();
         context.should_schedule = false;
     }
 
@@ -144,7 +145,7 @@ impl ControlPipeline {
 /// A lightweight struct to store just enough data to know which process or thread, we're talking
 /// about (an indirect reference)
 #[derive(Debug, Clone, Copy)]
-struct TaskBlock {
+pub struct TaskBlock {
     thread: Thread,
     process: Process,
 }
@@ -186,11 +187,11 @@ pub fn handle_request(rq_context: CommonRequestContext<'_>) -> Dispatcher {
         }
     }
     pipeline.schedule(&mut context);
-    Dispatcher::new(context)
+    Dispatcher::new(context, &pipeline.thread)
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct TaskProcesserState {
+pub struct TaskProcesserState {
     pub r15: u64,
     pub r14: u64,
     pub r13: u64,
