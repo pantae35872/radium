@@ -3,14 +3,17 @@ use kernel_proc::IPPacket;
 use pager::{
     address::Page,
     paging::{
-        InactivePageTable,
+        InactivePageCopyOption, InactivePageTable,
         table::{RecurseLevel4, RecurseLevel4LowerHalf},
     },
 };
 use spin::Mutex;
 
 use crate::{
-    memory::stack_allocator::{Stack, StackAllocator},
+    memory::{
+        copy_mappings, create_mappings_lower,
+        stack_allocator::{Stack, StackAllocator},
+    },
     userland::{
         self,
         pipeline::{CommonRequestContext, thread::Thread},
@@ -45,6 +48,10 @@ impl ProcessPipeline {
     pub fn check_ipp(&mut self) {
         ExpandSharedPacket::handle(|packet| {
             self.shared_data.push(packet.expanded);
+
+            self.page_tables.push(Some(unsafe {
+                copy_mappings(InactivePageCopyOption::lower_half(), &packet.table_template)
+            }));
         });
     }
 
@@ -61,7 +68,27 @@ impl ProcessPipeline {
             return Process { id: free_data };
         }
         let id = self.shared_data.len();
-        self.shared_data.push(ProcessShared::new().into());
+        let expanded = Arc::new(ProcessShared::new());
+        self.shared_data.push(Arc::clone(&expanded));
+
+        // SAFETY: TODO
+        let orignal_table = Arc::new(unsafe {
+            create_mappings_lower(
+                |mapper, alloc| {
+                    mapper.populate_p4_lower_half(alloc);
+                },
+                InactivePageCopyOption::Empty,
+            )
+        });
+        ExpandSharedPacket {
+            expanded,
+            table_template: Arc::clone(&orignal_table),
+        }
+        .broadcast(false);
+        // SAFETY: TODO
+        self.page_tables.push(Some(unsafe {
+            copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table)
+        }));
 
         Process { id }
     }
@@ -70,40 +97,6 @@ impl ProcessPipeline {
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
 }
-
-//fn create_mapping(amount: usize) -> Vec<InactivePageTable<RecurseLevel4LowerHalf>> {
-//    let mut orignal_table = unsafe {
-//        create_mappings_lower(
-//            |mapper, alloc| {
-//                mapper.populate_p4_lower_half(alloc);
-//            },
-//            InactivePageCopyOption::Empty,
-//        )
-//    };
-//    //let mut copied = ACTIVE_TABLE_LOWER.borrow_mut().with(
-//    //    &mut orignal_table,
-//    //    &mut TableManipulationContext {
-//    //        temporary_page: &mut TEMPORARY_PAGE.lock(),
-//    //        allocator: &mut *BUDDY_ALLOCATOR.lock(),
-//    //    },
-//    //    |mapper, allocator| unsafe {
-//    //        Vec::from_fn(amount - 1, |_| {
-//    //            mapper.create_mappings(
-//    //                |_, _| {},
-//    //                &mut TableManipulationContext {
-//    //                    temporary_page: &mut TemporaryPage::new(),
-//    //                    allocator,
-//    //                },
-//    //                InactivePageCopyOption::lower_half(),
-//    //            )
-//    //        })
-//    //    },
-//    //);
-//
-//    //copied.push(orignal_table);
-//    //copied
-//    Vec::new()
-//}
 
 impl ProcessShared {
     pub fn new() -> Self {
@@ -122,5 +115,5 @@ impl ProcessShared {
 #[derive(Clone, IPPacket)]
 struct ExpandSharedPacket {
     expanded: Arc<ProcessShared>,
-    template_lower_half: Arc<Mutex<InactivePageTable<RecurseLevel4LowerHalf>>>,
+    table_template: Arc<InactivePageTable<RecurseLevel4LowerHalf>>,
 }

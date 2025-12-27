@@ -232,13 +232,14 @@ where
                 active_page_table,
                 context,
                 super::InactivePageCopyOption::Range(START as usize..END as usize),
+                None,
             )
         };
 
         // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that P4 is a recursive mapped.
         // and the InactivePageTable is always recursively mapped.
         unsafe {
-            new_table.table(active_page_table, context, |active_table, table| {
+            new_table.table_mut(active_page_table, context, |active_table, table| {
                 active_table.p4_mut()[START as usize..END as usize]
                     .copy_from_slice(&table[START as usize..END as usize])
             })

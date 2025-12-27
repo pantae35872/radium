@@ -10,7 +10,7 @@ use pager::{
     allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
-        mapper::{Mapper, MapperWithAllocator, TopLevelP4},
+        mapper::{Mapper, MapperWithAllocator, TopLevelP4, TopLevelRecurse},
         table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
         temporary_page::TemporaryPage,
     },
@@ -52,6 +52,29 @@ pub fn stack_allocator<R>(
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
 }
 
+/// Just a helper See [`ActivePageTable::create_mappings`] for more info
+///
+/// # Safety
+/// See [`ActivePageTable::create_mappings`].
+pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
+    options: InactivePageCopyOption,
+    copy_from: &InactivePageTable<From>,
+) -> InactivePageTable<To> {
+    // SAFETY: This is just a helper function, the options contract are uphold by the caller
+    unsafe {
+        ACTIVE_TABLE_UPPER.lock().copy_mappings_from(
+            &mut TableManipulationContext {
+                temporary_page: &mut TEMPORARY_PAGE.lock(),
+                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+            },
+            options,
+            copy_from,
+        )
+    }
+}
+
+/// Just a helper See [`ActivePageTable::create_mappings`] for more info
+///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
 pub unsafe fn create_mappings_lower<F>(
@@ -63,11 +86,11 @@ where
 {
     // SAFETY: This is just a helper function, the options contract are uphold by the caller
     unsafe {
-        ACTIVE_TABLE_LOWER.inner_mut().get_mut().create_mappings(
+        ACTIVE_TABLE_UPPER.lock().create_mappings(
             f,
             &mut TableManipulationContext {
                 temporary_page: &mut TEMPORARY_PAGE.lock(),
-                allocator: &mut BUDDY_ALLOCATOR.lock(),
+                allocator: &mut *BUDDY_ALLOCATOR.lock(),
             },
             options,
         )

@@ -329,6 +329,28 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         }
     }
 
+    /// Copy the entries of one inactive table to another inactive table, you must gurentee mutable
+    /// exclusivity of the entries yourself (Read the Safety section)
+    ///
+    /// # Safety
+    /// See [InactivePageTable::new], basically the caller must ensure mutable exclusivity of the
+    /// entries themself
+    pub unsafe fn copy_mappings_from<A, ToRecurseP4, FromRecurseP4>(
+        &mut self,
+        context: &mut TableManipulationContext<A>,
+        options: InactivePageCopyOption,
+        copy_from: &InactivePageTable<FromRecurseP4>,
+    ) -> InactivePageTable<ToRecurseP4>
+    where
+        A: FrameAllocator,
+        ToRecurseP4: TopLevelRecurse,
+        FromRecurseP4: TopLevelRecurse,
+    {
+        let copy_from = copy_from.table(self, context, |_, table| table.entries);
+        // SAFETY: The contract is uphold by the caller
+        unsafe { InactivePageTable::<ToRecurseP4>::new(self, context, options, Some(&copy_from)) }
+    }
+
     /// Create a new mapping, f can be used to map the mapping while the map is being created,
     /// [`InactivePageCopyOption`] can be use to specify the entries that will be copied from the
     /// currently active table, but this must be use with caution (read the safety section)
@@ -347,7 +369,8 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         A: FrameAllocator,
     {
         // SAFETY: The contract is uphold by the caller
-        let mut new_table = unsafe { InactivePageTable::<RecurseP4>::new(self, context, options) };
+        let mut new_table =
+            unsafe { InactivePageTable::<RecurseP4>::new(self, context, options, None) };
 
         // SAFETY: The contract is uphold by the caller
         unsafe {
@@ -404,7 +427,8 @@ impl InactivePageCopyOption {
 impl<P4: TopLevelP4> InactivePageTable<P4> {
     /// Create a new InactivePage, with a recursive mapping,
     /// specify the copy behavior with the [`InactivePageCreateOption`], but that must be done with
-    /// caution (Read the Safety section)
+    /// caution (Read the Safety section), provide the copy_from Option if you want to copy from
+    /// that instead of the currently active page table.
     ///
     /// # Safety
     ///
@@ -417,6 +441,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
         options: InactivePageCopyOption,
+        copy_from: Option<&[Entry; ENTRY_COUNT as usize]>,
     ) -> Self {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
@@ -428,12 +453,13 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
             };
             table.zero();
 
+            let copy_from = copy_from.unwrap_or_else(|| &active_table.p4().entries);
             match options {
                 InactivePageCopyOption::All => {
-                    table[0..512].copy_from_slice(&active_table.p4()[0..512]);
+                    table[0..512].copy_from_slice(&copy_from[0..512]);
                 }
                 InactivePageCopyOption::Range(range) => {
-                    table[range.clone()].copy_from_slice(&active_table.p4()[range]);
+                    table[range.clone()].copy_from_slice(&copy_from[range]);
                 }
                 InactivePageCopyOption::Empty => {}
             }
@@ -449,18 +475,14 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         }
     }
 
-    /// Mutate the currently owned p4 table
-    ///
-    /// # Safety
-    /// The caller mustn't mutate the 512th element of the table as it's is the recursive mapping.
-    /// Also the caller must still maintains the exclusivity contract, See [`InactivePageTable`]
-    /// safety docs
-    pub unsafe fn table<A: FrameAllocator>(
-        &mut self,
-        active_table: &mut ActivePageTable<P4>,
+    /// Reference the currently owned p4 table
+    pub fn table<A: FrameAllocator, ActiveP4: TopLevelP4, R>(
+        &self,
+        active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
-        table_mutate: impl FnOnce(&mut ActivePageTable<P4>, &mut Table<RecurseLevel1>),
-    ) {
+        f: impl FnOnce(&mut ActivePageTable<ActiveP4>, &Table<RecurseLevel1>) -> R,
+    ) -> R {
+        let result;
         {
             // SAFETY: We know that the frame is valid because it's is being allocated in the new
             // function
@@ -471,9 +493,40 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
                     context.allocator,
                 )
             };
-            table_mutate(active_table, mapped);
+            result = f(active_table, mapped);
         }
         // SAFETY: The reference to the table is gone in the scope
         unsafe { context.temporary_page.unmap(active_table) };
+        result
+    }
+
+    /// Mutate the currently owned p4 table
+    ///
+    /// # Safety
+    /// The caller mustn't mutate the 512th element of the table as it's is the recursive mapping.
+    /// Also the caller must still maintains the exclusivity contract, See [`InactivePageTable`]
+    /// safety docs
+    pub unsafe fn table_mut<A: FrameAllocator, ActiveP4: TopLevelP4, R>(
+        &mut self,
+        active_table: &mut ActivePageTable<ActiveP4>,
+        context: &mut TableManipulationContext<A>,
+        table_mutate: impl FnOnce(&mut ActivePageTable<ActiveP4>, &mut Table<RecurseLevel1>) -> R,
+    ) -> R {
+        let result;
+        {
+            // SAFETY: We know that the frame is valid because it's is being allocated in the new
+            // function
+            let mapped = unsafe {
+                context.temporary_page.map_table_frame(
+                    self.p4_frame,
+                    active_table,
+                    context.allocator,
+                )
+            };
+            result = table_mutate(active_table, mapped);
+        }
+        // SAFETY: The reference to the table is gone in the scope
+        unsafe { context.temporary_page.unmap(active_table) };
+        result
     }
 }
