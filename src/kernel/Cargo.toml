@@ -71,6 +71,9 @@ version = "1.6.1"
 features = ["v4"]
 default-features = false
 
+[dependencies.smart-default]
+version = "0.7.1"
+
 [dependencies.conquer-once]
 version = "0.4.0"
 default-features = false

@@ -13,6 +13,7 @@ use core::{assert_matches::assert_matches, mem::zeroed};
 
 use alloc::vec::Vec;
 use kernel_proc::IPPacket;
+use pager::address::VirtAddr;
 
 use crate::{
     interrupt::CORE_ID,
@@ -20,7 +21,7 @@ use crate::{
     scheduler::CURRENT_THREAD_ID,
     smp::CoreId,
     userland::pipeline::{
-        CommonRequestContext, TaskBlock, TaskProcesserState,
+        CommonRequestContext, Event, TaskBlock, TaskProcesserState,
         process::{Process, ProcessPipeline},
     },
 };
@@ -34,7 +35,9 @@ pub struct ThreadPipeline {
 }
 
 impl ThreadPipeline {
-    pub fn new() -> Self {
+    pub(super) fn new(event: &mut Event) -> Self {
+        event.ipp_handler(|c| c.thread.handle_ipp());
+
         Self {
             pool: Vec::new(),
             unused_thread: Vec::new(),
@@ -49,7 +52,7 @@ impl ThreadPipeline {
             ThreadState::Active,
             "Captured thread isn't active"
         );
-        self.thread_context_mut(thread).processor_state = TaskProcesserState::new(context);
+        self.thread_context_mut(thread).processor_state = TaskProcesserState::from(context);
         thread
     }
 
@@ -57,7 +60,7 @@ impl ThreadPipeline {
         &self.thread_context(thread).processor_state
     }
 
-    pub fn handle_ipp(&mut self) {
+    fn handle_ipp(&mut self) {
         ThreadMigratePacket::handle(|ThreadMigratePacket { context, global_id }| {
             if let Some(unused) = self
                 .unused_thread
@@ -75,7 +78,7 @@ impl ThreadPipeline {
     }
 
     pub fn migrate(&mut self, destination: CoreId, thread: Thread) {
-        let id = thread.local_id.thread;
+        let id = thread.local_id().thread;
 
         let context = core::mem::replace(
             self.thread_context_mut(thread),
@@ -97,25 +100,22 @@ impl ThreadPipeline {
 
     pub fn free(&mut self, thread: Thread) {
         assert!(
-            thread.local_id.core == *CORE_ID,
+            thread.local_id().core == *CORE_ID,
             "Thread has been migrated without changing the local id"
         );
-        let id = thread.local_id.thread;
+        let id = thread.local_id().thread;
         id::free_thread(thread);
         self.pool[id].state = ThreadState::Inactive;
         self.unused_thread.push(id);
     }
 
-    /// Allocate a new thread, with the provided parent_process, and a start function
-    pub fn alloc<F>(
+    /// Allocate a new thread, with the provided parent_process, and a start address
+    pub fn alloc(
         &mut self,
         process: &mut ProcessPipeline,
         parent_process: Process,
-        _start: F,
-    ) -> TaskBlock
-    where
-        F: FnOnce() + Send + 'static,
-    {
+        start: VirtAddr,
+    ) -> TaskBlock {
         if let Some(unused) = self.unused_thread.pop() {
             let thread_ctx = &mut self.pool[unused];
             assert_matches!(
@@ -129,11 +129,20 @@ impl ThreadPipeline {
                 thread_ctx.parent_process == parent_process,
             ) {
                 (ThreadState::Migrated, ..) | (ThreadState::Inactive, false) => {
-                    *thread_ctx =
-                        ThreadContext::new(process.alloc_stack(parent_process), parent_process);
+                    // FIXME: This leaks the stack of the previous parent process
+                    *thread_ctx = ThreadContext::new(
+                        process.alloc_stack(parent_process),
+                        parent_process,
+                        start,
+                    );
                 }
                 (ThreadState::Inactive, true) => {
-                    thread_ctx.processor_state = TaskProcesserState::default();
+                    // TODO: Zero out the stack if possible
+                    thread_ctx.processor_state = TaskProcesserState {
+                        instruction_pointer: start,
+                        stack_pointer: thread_ctx.stack.top(),
+                        ..Default::default()
+                    };
                 }
                 (ThreadState::Active, ..) => {
                     panic!("There shouldn't be an alive thread in the unused thread pool")
@@ -150,7 +159,8 @@ impl ThreadPipeline {
             };
         }
 
-        let new_context = ThreadContext::new(process.alloc_stack(parent_process), parent_process);
+        let new_context =
+            ThreadContext::new(process.alloc_stack(parent_process), parent_process, start);
         let id = self.pool.len();
         self.pool.push(new_context);
 
@@ -164,7 +174,7 @@ impl ThreadPipeline {
     }
 
     fn thread_context(&self, thread: Thread) -> &ThreadContext {
-        let context = &self.pool[thread.local_id.thread];
+        let context = &self.pool[thread.local_id().thread];
         assert_eq!(
             context.state,
             ThreadState::Migrated,
@@ -174,13 +184,7 @@ impl ThreadPipeline {
     }
 
     fn thread_context_mut(&mut self, thread: Thread) -> &mut ThreadContext {
-        &mut self.pool[thread.local_id.thread]
-    }
-}
-
-impl Default for ThreadPipeline {
-    fn default() -> Self {
-        Self::new()
+        &mut self.pool[thread.local_id().thread]
     }
 }
 
@@ -199,10 +203,14 @@ struct ThreadContext {
 }
 
 impl ThreadContext {
-    fn new(stack: Stack, parent: Process) -> Self {
+    fn new(stack: Stack, parent: Process, start: VirtAddr) -> Self {
         Self {
             state: ThreadState::Active,
-            processor_state: TaskProcesserState::empty(),
+            processor_state: TaskProcesserState {
+                instruction_pointer: start,
+                stack_pointer: stack.top(),
+                ..Default::default()
+            },
             parent_process: parent,
             stack,
         }
@@ -222,24 +230,24 @@ enum ThreadState {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Thread {
     global_id: usize,
-    local_id: LocalThreadId,
 }
 
 impl Thread {
     fn capture() -> Self {
-        let global_id = *CURRENT_THREAD_ID;
-        let local_id = id::translate_to_local(global_id);
         Self {
-            global_id,
-            local_id,
+            global_id: *CURRENT_THREAD_ID,
         }
     }
 
     pub fn id(&self) -> usize {
         self.global_id
+    }
+
+    fn local_id(&self) -> LocalThreadId {
+        id::translate_to_local(self.global_id)
     }
 }
 

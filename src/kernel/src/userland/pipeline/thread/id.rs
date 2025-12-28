@@ -60,7 +60,6 @@ pub fn translate_to_local(global_id: usize) -> LocalThreadId {
 pub fn alloc_thread(local_id: LocalThreadId) -> Thread {
     Thread {
         global_id: GLOBAL_THREAD_ID_MAP.write().alloc(local_id),
-        local_id,
     }
 }
 

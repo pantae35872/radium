@@ -19,7 +19,7 @@ use crate::{
     },
     userland::{
         self,
-        pipeline::{CommonRequestContext, thread::Thread},
+        pipeline::{CommonRequestContext, Event, PipelineContext, thread::Thread},
     },
 };
 
@@ -36,7 +36,9 @@ pub struct ProcessPipeline {
 }
 
 impl ProcessPipeline {
-    pub fn new() -> Self {
+    pub(super) fn new(events: &mut Event) -> Self {
+        events.ipp_handler(|c| c.process.check_ipp());
+
         Self::default()
     }
 
@@ -54,7 +56,16 @@ impl ProcessPipeline {
         panic!("thread id {} doesn't belong to any processes", thread.id());
     }
 
-    pub fn check_ipp(&mut self) {
+    pub fn finalize(&mut self, context: &mut PipelineContext) {
+        match (context.interrupted_task, context.scheduled_task) {
+            (Some(interrupted), Some(scheduled)) if interrupted == scheduled => {
+                self.page_table_swap(interrupted.process, scheduled.process);
+            }
+            _ => {}
+        }
+    }
+
+    fn check_ipp(&mut self) {
         ExpandSharedPacket::handle(|packet| {
             self.shared_data.push(packet.expanded);
 

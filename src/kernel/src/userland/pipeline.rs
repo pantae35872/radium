@@ -22,8 +22,12 @@
 //! [^rd]: referring to a request dependent state
 //! [^pipeline]: a request independent procedure managing different type of resources (e.g. thread resources, process resources, ..).
 
+use core::cell::RefCell;
+
 use alloc::vec::Vec;
 use kernel_proc::{def_local, local_builder};
+use pager::{address::VirtAddr, registers::RFlags};
+use smart_default::SmartDefault;
 
 use crate::{
     initialization_context::{InitializationContext, Stage4},
@@ -47,12 +51,12 @@ mod thread;
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.register(|builder, _ctx, _id| {
-            local_builder!(builder, PIPELINE(ControlPipeline::new()));
+            local_builder!(builder, PIPELINE(ControlPipeline::new().into()));
         })
     });
 }
 
-def_local!(pub static PIPELINE: crate::userland::pipeline::ControlPipeline);
+def_local!(pub static PIPELINE: RefCell<crate::userland::pipeline::ControlPipeline>);
 
 /// A cpu local structure that contains all the specific request independent pipelines (the state is shared
 /// across request), use [`ControlPipeline::create_context`] to create the specific request
@@ -61,47 +65,66 @@ pub struct ControlPipeline {
     thread: ThreadPipeline,
     process: ProcessPipeline,
     scheduler: SchedulerPipeline,
+
+    events: Option<Event>,
+}
+
+#[derive(Debug, Default)]
+struct Event {
+    hw_interrupts: Vec<fn(&mut ControlPipeline, InterruptIndex)>,
+    ipp_handlers: Vec<fn(&mut ControlPipeline)>,
+}
+
+impl Event {
+    fn hw_interrupts(&mut self, handler: fn(&mut ControlPipeline, InterruptIndex)) {
+        self.hw_interrupts.push(handler);
+    }
+
+    fn ipp_handler(&mut self, handler: fn(&mut ControlPipeline)) {
+        self.ipp_handlers.push(handler);
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct PipelineContext {
     interrupted_task: Option<TaskBlock>,
     added_tasks: Vec<TaskBlock>,
-    added_processes: Vec<Process>,
     should_schedule: bool,
     scheduled_task: Option<TaskBlock>,
 }
 
 impl PipelineContext {
-    fn alloc_thread<F>(
+    fn alloc_thread(
         &mut self,
         thread: &mut ThreadPipeline,
         process: &mut ProcessPipeline,
         parent_process: Process,
-        start: F,
-    ) -> TaskBlock
-    where
-        F: FnOnce() + Send + 'static,
-    {
+        start: VirtAddr,
+    ) -> TaskBlock {
         let task = thread.alloc(process, parent_process, start);
         self.added_tasks.push(task);
         task
     }
 
     fn alloc_process(&mut self, process: &mut ProcessPipeline) -> Process {
-        let process = process.alloc();
-        self.added_processes.push(process);
-        process
+        process.alloc()
     }
 }
 
 impl ControlPipeline {
     fn new() -> Self {
+        let mut events = Event::default();
+
         Self {
-            thread: ThreadPipeline::default(),
-            process: ProcessPipeline::default(),
-            scheduler: SchedulerPipeline::default(),
+            thread: ThreadPipeline::new(&mut events),
+            process: ProcessPipeline::new(&mut events),
+            scheduler: SchedulerPipeline::new(&mut events),
+            events: Some(events),
         }
+    }
+
+    fn finalize(&mut self, context: &mut PipelineContext) {
+        self.process.finalize(context);
     }
 
     fn create_context(&mut self, context: &CommonRequestContext<'_>) -> PipelineContext {
@@ -113,9 +136,22 @@ impl ControlPipeline {
         }
     }
 
+    fn hardware_interrupt(&mut self, index: InterruptIndex) {
+        if let Some(event) = self.events.take() {
+            for handler in event.hw_interrupts.iter() {
+                handler(self, index)
+            }
+            self.events = Some(event);
+        }
+    }
+
     fn handle_ipp(&mut self, context: &mut PipelineContext) {
-        self.thread.handle_ipp();
-        self.process.check_ipp();
+        if let Some(event) = self.events.take() {
+            for handler in event.ipp_handlers.iter() {
+                handler(self)
+            }
+            self.events = Some(event);
+        }
         context.should_schedule = false;
     }
 
@@ -126,25 +162,13 @@ impl ControlPipeline {
             return;
         }
 
-        self.scheduler.schedule(context, &mut self.thread);
-    }
-
-    fn thread(&mut self) -> &mut ThreadPipeline {
-        &mut self.thread
-    }
-
-    fn process(&mut self) -> &mut ProcessPipeline {
-        &mut self.process
-    }
-
-    fn scheduler(&mut self) -> &mut SchedulerPipeline {
-        &mut self.scheduler
+        self.scheduler.schedule(context);
     }
 }
 
 /// A lightweight struct to store just enough data to know which process or thread, we're talking
 /// about (an indirect reference)
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskBlock {
     thread: Thread,
     process: Process,
@@ -173,12 +197,16 @@ pub enum RequestReferer {
 
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
 /// [`Dispatcher`] that must be used to operate the right following actions.
-#[must_use]
-pub fn handle_request(rq_context: CommonRequestContext<'_>) -> Dispatcher {
-    let pipeline = PIPELINE.inner_mut();
+pub fn handle_request(
+    rq_context: CommonRequestContext<'_>,
+    dispatch: impl for<'a> FnOnce(Dispatcher<'a>),
+) {
+    let mut pipeline = PIPELINE.borrow_mut();
     let mut context = pipeline.create_context(&rq_context);
     match rq_context.referer {
-        RequestReferer::SyscallRequest(..) => pipeline.handle_syscall(&mut context),
+        RequestReferer::SyscallRequest(id) => {
+            super::syscall::syscall_handle(&mut pipeline, &mut context, id)
+        }
         RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
             pipeline.handle_ipp(&mut context)
         }
@@ -187,10 +215,11 @@ pub fn handle_request(rq_context: CommonRequestContext<'_>) -> Dispatcher {
         }
     }
     pipeline.schedule(&mut context);
-    Dispatcher::new(context, &pipeline.thread)
+    pipeline.finalize(&mut context);
+    dispatch(Dispatcher::new(context, &pipeline.thread))
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, SmartDefault, PartialEq, Eq)]
 pub struct TaskProcesserState {
     pub r15: u64,
     pub r14: u64,
@@ -207,12 +236,18 @@ pub struct TaskProcesserState {
     pub rcx: u64,
     pub rbx: u64,
     pub rax: u64,
+    #[default(VirtAddr::null())]
+    pub instruction_pointer: VirtAddr,
+    #[default(RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable)]
+    pub cpu_flags: RFlags,
+    #[default(VirtAddr::null())]
+    pub stack_pointer: VirtAddr,
 
     pub extended_state: ExtendedState,
 }
 
-impl TaskProcesserState {
-    fn new(context: &CommonRequestContext<'_>) -> Self {
+impl<'a> From<&CommonRequestContext<'a>> for TaskProcesserState {
+    fn from(context: &CommonRequestContext<'a>) -> Self {
         Self {
             r15: context.stack_frame.r15,
             r14: context.stack_frame.r14,
@@ -229,12 +264,11 @@ impl TaskProcesserState {
             rcx: context.stack_frame.rcx,
             rbx: context.stack_frame.rbx,
             rax: context.stack_frame.rax,
+            cpu_flags: context.stack_frame.cpu_flags,
+            stack_pointer: context.stack_frame.stack_pointer,
+            instruction_pointer: context.stack_frame.instruction_pointer,
             extended_state: ExtendedState,
         }
-    }
-
-    fn empty() -> Self {
-        Self::default()
     }
 }
 

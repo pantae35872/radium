@@ -1,27 +1,74 @@
-use alloc::vec::Vec;
+use core::cmp::Reverse;
 
-use crate::userland::pipeline::{PipelineContext, TaskBlock, thread::ThreadPipeline};
+use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
+use derivative::Derivative;
 
-#[derive(Debug)]
-struct SchedulerUnit {
-    block: TaskBlock,
+use crate::{
+    interrupt::{InterruptIndex, LAPIC, TPMS},
+    userland::pipeline::{Event, PipelineContext, TaskBlock},
+};
+
+#[derive(Derivative)]
+#[derivative(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SleepEntry {
+    wakeup_time: usize,
+    #[derivative(PartialEq = "ignore", PartialOrd = "ignore", Ord = "ignore")]
+    task: TaskBlock,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct SchedulerPipeline {
-    units: Vec<SchedulerUnit>,
+    units: VecDeque<TaskBlock>,
+    sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
+
+    timer_count: usize,
 }
 
 impl SchedulerPipeline {
-    pub fn new() -> Self {
-        Self { units: Vec::new() }
+    pub(super) fn new(events: &mut Event) -> Self {
+        events.hw_interrupts(|c, index| {
+            if let InterruptIndex::TimerVector = index {
+                c.scheduler.handle_timer_interrupt();
+            }
+        });
+
+        Self::default()
     }
 
-    pub fn schedule(&mut self, _context: &mut PipelineContext, _thread: &mut ThreadPipeline) {}
-}
+    fn handle_timer_interrupt(&mut self) {
+        self.timer_count += 10;
+        let tpms = *TPMS;
+        LAPIC.inner_mut().reset_timer(tpms * 10);
+    }
 
-impl Default for SchedulerPipeline {
-    fn default() -> Self {
-        Self::new()
+    pub fn sleep_task(&mut self, task: TaskBlock, amount_millis: usize) {
+        let sleep_entry = SleepEntry {
+            wakeup_time: self.timer_count + amount_millis,
+            task,
+        };
+
+        self.sleep_queue.push(Reverse(sleep_entry));
+    }
+
+    pub fn schedule(&mut self, context: &mut PipelineContext) {
+        if let Some(task) = context.interrupted_task {
+            self.units.push_back(task);
+        }
+        self.units.extend(&context.added_tasks);
+
+        if self
+            .sleep_queue
+            .peek()
+            .is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time)
+        {
+            self.units
+                .push_front(self.sleep_queue.pop().unwrap().0.task);
+        }
+
+        // FIXME: There might be a case where the thread was freed and the id was reused, introduce
+        // some kind of a signature to the TaskBlock struct, that can differentate reused process
+        // from a previously dead process, in other words, implement a method call is_valid on the
+        // TaskBlock
+        context.scheduled_task = self.units.pop_front();
     }
 }
