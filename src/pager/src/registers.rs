@@ -239,6 +239,29 @@ impl CS {
     }
 }
 
+pub struct SS;
+
+impl SS {
+    /// Read from the ss segment register
+    #[inline(always)]
+    pub fn read() -> SegmentSelector {
+        let result: u16;
+        // SAFETY: We reading the ss is safe we're not setting it
+        unsafe {
+            asm!("mov {0:x}, ss", out(reg) result, options(nostack, nomem, preserves_flags));
+        }
+
+        SegmentSelector(result)
+    }
+
+    #[inline(always)]
+    pub unsafe fn set(sel: SegmentSelector) {
+        unsafe {
+            asm!("mov ss, {0:x}", in(reg) sel.0);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct SegmentSelector(pub u16);

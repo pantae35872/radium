@@ -105,6 +105,12 @@ pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 pub const GENERAL_STACK_INDEX: u16 = 1;
 
 impl Descriptor {
+    pub fn kernel_data_segment() -> Descriptor {
+        let flags =
+            DescriptorFlags::USER_SEGMENT | DescriptorFlags::PRESENT | DescriptorFlags::READ_WRITE;
+        Descriptor::UserSegment(flags.bits())
+    }
+
     pub fn kernel_code_segment() -> Descriptor {
         let flags = DescriptorFlags::USER_SEGMENT
             | DescriptorFlags::PRESENT
@@ -141,5 +147,6 @@ bitflags! {
         const USER_SEGMENT      = 1 << 44;
         const PRESENT           = 1 << 47;
         const LONG_MODE         = 1 << 53;
+        const READ_WRITE        = 1 << 41;
     }
 }

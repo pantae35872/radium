@@ -6,7 +6,7 @@ use spin::RwLock;
 
 use crate::{
     const_assert,
-    gdt::CODE_SEG,
+    gdt::{CODE_SEG, DATA_SEG},
     hlt_loop,
     interrupt::{CORE_ID, ExtendedInterruptStackFrame},
     memory::stack_allocator,
@@ -307,7 +307,7 @@ impl ThreadState {
             code_segment: CODE_SEG.0.into(),
             cpu_flags: RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable,
             stack_pointer: context.stack.top(),
-            stack_segment: 0,
+            stack_segment: DATA_SEG.0.into(),
         }
     }
 
@@ -334,7 +334,7 @@ impl ThreadState {
             code_segment: 8, // FIXME: I'm too lazy i'll just assume it's eight
             cpu_flags: RFlags::InterruptEnable,
             stack_pointer: stack.top(),
-            stack_segment: 0,
+            stack_segment: 0x10,
         }
     }
 }
