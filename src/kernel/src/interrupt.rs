@@ -17,7 +17,6 @@ use crate::interrupt::apic::ApicId;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
-use crate::serial_println;
 use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;

@@ -6,7 +6,6 @@ members = [
     "src/bootbridge", 
     "src/santa", 
     "src/c_enum", 
-    "src/drivers/test_driver", 
     "src/bakery", 
     "src/kernel_proc", 
     "src/pager", 
