@@ -236,12 +236,15 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
     let mut ctx = ctx.next((
         active_table,
         allocator,
-        StackAllocator::new({
-            let stack_alloc_start = virt_addr_alloc(STACK_ALLOC_SIZE);
-            let stack_alloc_end =
-                stack_alloc_start.start_address().as_u64() + STACK_ALLOC_SIZE * PAGE_SIZE;
-            Page::range_inclusive(stack_alloc_start, VirtAddr::new(stack_alloc_end).into())
-        }),
+        StackAllocator::new(
+            {
+                let stack_alloc_start = virt_addr_alloc(STACK_ALLOC_SIZE);
+                let stack_alloc_end =
+                    stack_alloc_start.start_address().as_u64() + STACK_ALLOC_SIZE * PAGE_SIZE;
+                Page::range_inclusive(stack_alloc_start, VirtAddr::new(stack_alloc_end).into())
+            },
+            false,
+        ),
         TemporaryPage::new(),
     ));
 

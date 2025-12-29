@@ -312,10 +312,13 @@ impl ProcessShared {
         // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
         // [`InactivePageCopyOption`] is Empty
         Self {
-            stacks: StackAllocator::new(Page::range_inclusive(
-                userland::STACK_START.into(),
-                (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
-            ))
+            stacks: StackAllocator::new(
+                Page::range_inclusive(
+                    userland::STACK_START.into(),
+                    (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
+                ),
+                true,
+            )
             .into(),
             threads: HashSet::new().into(),
             signature: sig().into(),

@@ -14,14 +14,16 @@ use super::WithMapper;
 pub struct StackAllocator {
     range: PageIter,
     original_range: PageIter,
+    ua: bool,
 }
 
 impl StackAllocator {
     /// Create a new stack allocator
-    pub fn new(page_range: PageIter) -> StackAllocator {
+    pub fn new(page_range: PageIter, ua: bool) -> StackAllocator {
         StackAllocator {
             range: page_range.clone(),
             original_range: page_range,
+            ua,
         }
     }
 
@@ -56,7 +58,13 @@ impl StackAllocator {
                 for page in Page::range_inclusive(start, end) {
                     mapper.map(
                         page,
-                        EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
+                        EntryFlags::WRITABLE
+                            | EntryFlags::NO_EXECUTE
+                            | if self.ua {
+                                EntryFlags::USER_ACCESSIBLE
+                            } else {
+                                EntryFlags::empty()
+                            },
                         frame_allocator,
                     );
                 }

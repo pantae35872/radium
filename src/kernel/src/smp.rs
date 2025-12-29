@@ -493,8 +493,10 @@ def_local!(pub static CORE_COUNT: usize);
 def_local!(pub static PROCESSORS: Vec<ApicId>);
 local_gen!();
 
-pub fn init_aps(ctx: InitializationContext<Stage4>) {
+pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
     initialize_guard!();
+
+    let ap_initializer = ApInitializer::new(&mut ctx);
 
     let mut ctx = ctx.next(());
     let mut local_initializer = ctx.context.take_local_initializer().unwrap().unwrap();
