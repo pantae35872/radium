@@ -31,7 +31,7 @@ use smart_default::SmartDefault;
 
 use crate::{
     initialization_context::{InitializationContext, Stage4},
-    interrupt::{ExtendedInterruptStackFrame, InterruptIndex},
+    interrupt::{self, ExtendedInterruptStackFrame, InterruptIndex},
     userland::{
         pipeline::{
             dispatch::Dispatcher,
@@ -43,7 +43,7 @@ use crate::{
     },
 };
 
-mod dispatch;
+pub mod dispatch;
 mod process;
 mod scheduler;
 mod thread;
@@ -51,12 +51,23 @@ mod thread;
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.register(|builder, _ctx, _id| {
-            local_builder!(builder, PIPELINE(ControlPipeline::new().into()));
+            local_builder!(
+                builder,
+                PIPELINE(ControlPipeline::new().into()),
+                CURRENT_THREAD_ID(0.into())
+            );
         })
     });
 }
 
-def_local!(pub static PIPELINE: RefCell<crate::userland::pipeline::ControlPipeline>);
+def_local!(static PIPELINE: RefCell<crate::userland::pipeline::ControlPipeline>);
+def_local!(pub static CURRENT_THREAD_ID: RefCell<usize>);
+
+pub fn start_scheduling() {
+    interrupt::without_interrupts(|| {
+        PIPELINE.borrow_mut().should_schedule = true;
+    });
+}
 
 /// A cpu local structure that contains all the specific request independent pipelines (the state is shared
 /// across request), use [`ControlPipeline::create_context`] to create the specific request
@@ -67,15 +78,29 @@ pub struct ControlPipeline {
     scheduler: SchedulerPipeline,
 
     events: Option<Event>,
+    should_schedule: bool,
 }
 
 #[derive(Debug, Default)]
 struct Event {
     hw_interrupts: Vec<fn(&mut ControlPipeline, InterruptIndex)>,
     ipp_handlers: Vec<fn(&mut ControlPipeline)>,
+    finalize: Vec<fn(&mut ControlPipeline, &mut PipelineContext)>,
+    begin: Vec<fn(&mut ControlPipeline, &mut PipelineContext, &CommonRequestContext)>,
 }
 
 impl Event {
+    fn begin(
+        &mut self,
+        handler: fn(&mut ControlPipeline, &mut PipelineContext, &CommonRequestContext),
+    ) {
+        self.begin.push(handler);
+    }
+
+    fn finalize(&mut self, handler: fn(&mut ControlPipeline, &mut PipelineContext)) {
+        self.finalize.push(handler);
+    }
+
     fn hw_interrupts(&mut self, handler: fn(&mut ControlPipeline, InterruptIndex)) {
         self.hw_interrupts.push(handler);
     }
@@ -87,28 +112,12 @@ impl Event {
 
 #[derive(Debug, Default)]
 pub struct PipelineContext {
-    interrupted_task: Option<TaskBlock>,
-    added_tasks: Vec<TaskBlock>,
-    should_schedule: bool,
-    scheduled_task: Option<TaskBlock>,
-}
-
-impl PipelineContext {
-    fn alloc_thread(
-        &mut self,
-        thread: &mut ThreadPipeline,
-        process: &mut ProcessPipeline,
-        parent_process: Process,
-        start: VirtAddr,
-    ) -> TaskBlock {
-        let task = thread.alloc(process, parent_process, start);
-        self.added_tasks.push(task);
-        task
-    }
-
-    fn alloc_process(&mut self, process: &mut ProcessPipeline) -> Process {
-        process.alloc()
-    }
+    pub interrupted_thread: Option<Thread>,
+    pub interrupted_process: Option<Process>,
+    pub interrupted_task: Option<TaskBlock>,
+    pub added_tasks: Vec<TaskBlock>,
+    pub should_schedule: bool,
+    pub scheduled_task: Option<TaskBlock>,
 }
 
 impl ControlPipeline {
@@ -120,26 +129,74 @@ impl ControlPipeline {
             process: ProcessPipeline::new(&mut events),
             scheduler: SchedulerPipeline::new(&mut events),
             events: Some(events),
+            should_schedule: false,
         }
     }
 
-    fn finalize(&mut self, context: &mut PipelineContext) {
-        self.process.finalize(context);
+    pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {
+        self.scheduler.sleep_task(task, millis);
+    }
+
+    pub fn free_thread(&mut self, thread: Thread) {
+        self.thread.free(thread);
+        self.process.free_thread(thread);
+    }
+
+    pub fn free_process(&mut self, process: Process) {
+        self.process.free(&mut self.thread, process);
+    }
+
+    pub fn alloc_thread(
+        &mut self,
+        context: &mut PipelineContext,
+        parent_process: Process,
+        start: VirtAddr,
+    ) -> TaskBlock {
+        let task = self.thread.alloc(&mut self.process, parent_process, start);
+        context.added_tasks.push(task);
+        task
+    }
+
+    pub fn alloc_process(&mut self) -> Process {
+        self.process.alloc()
     }
 
     fn create_context(&mut self, context: &CommonRequestContext<'_>) -> PipelineContext {
-        let thread = self.thread.sync_and_identify(context);
-        let process = self.process.sync_and_identify(context, &thread);
-        PipelineContext {
-            interrupted_task: Some(TaskBlock { thread, process }),
+        let mut ctx = PipelineContext {
+            should_schedule: self.should_schedule,
             ..Default::default()
+        };
+
+        if let Some(event) = self.events.take() {
+            for handler in event.begin.iter() {
+                handler(self, &mut ctx, context)
+            }
+            self.events = Some(event);
         }
+
+        ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
+            Some(TaskBlock {
+                thread,
+                process: ctx.interrupted_process?,
+            })
+        });
+
+        ctx
     }
 
     fn hardware_interrupt(&mut self, index: InterruptIndex) {
         if let Some(event) = self.events.take() {
             for handler in event.hw_interrupts.iter() {
                 handler(self, index)
+            }
+            self.events = Some(event);
+        }
+    }
+
+    fn finalize(&mut self, context: &mut PipelineContext) {
+        if let Some(event) = self.events.take() {
+            for handler in event.finalize.iter() {
+                handler(self, context)
             }
             self.events = Some(event);
         }
@@ -155,8 +212,6 @@ impl ControlPipeline {
         context.should_schedule = false;
     }
 
-    fn handle_syscall(&mut self, _context: &mut PipelineContext) {}
-
     fn schedule(&mut self, context: &mut PipelineContext) {
         if !context.should_schedule {
             return;
@@ -170,18 +225,25 @@ impl ControlPipeline {
 /// about (an indirect reference)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskBlock {
-    thread: Thread,
-    process: Process,
+    pub thread: Thread,
+    pub process: Process,
+}
+
+impl TaskBlock {
+    /// When the process id or thread id is reused, this will return false
+    pub fn valid(&self) -> bool {
+        self.thread.valid() && self.process.valid()
+    }
 }
 
 /// A structure describing the context of the requester.
 pub struct CommonRequestContext<'a> {
-    stack_frame: &'a ExtendedInterruptStackFrame,
-    referer: RequestReferer,
+    pub stack_frame: &'a mut ExtendedInterruptStackFrame,
+    pub referer: RequestReferer,
 }
 
 impl<'a> CommonRequestContext<'a> {
-    pub fn new(stack_frame: &'a ExtendedInterruptStackFrame, referer: RequestReferer) -> Self {
+    pub fn new(stack_frame: &'a mut ExtendedInterruptStackFrame, referer: RequestReferer) -> Self {
         Self {
             stack_frame,
             referer,
@@ -197,26 +259,26 @@ pub enum RequestReferer {
 
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
 /// [`Dispatcher`] that must be used to operate the right following actions.
-pub fn handle_request(
-    rq_context: CommonRequestContext<'_>,
-    dispatch: impl for<'a> FnOnce(Dispatcher<'a>),
+pub fn handle_request<'b>(
+    rq_context: CommonRequestContext<'b>,
+    dispatch: impl for<'a> FnOnce(CommonRequestContext<'b>, Dispatcher<'a>),
 ) {
     let mut pipeline = PIPELINE.borrow_mut();
     let mut context = pipeline.create_context(&rq_context);
     match rq_context.referer {
         RequestReferer::SyscallRequest(id) => {
-            super::syscall::syscall_handle(&mut pipeline, &mut context, id)
+            super::syscall::syscall_handle(&rq_context, &mut pipeline, &mut context, id)
         }
         RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
             pipeline.handle_ipp(&mut context)
         }
         RequestReferer::HardwareInterrupt(i) => {
-            todo!("Handle {i:?} hardware interrupt in the scheduler")
+            pipeline.hardware_interrupt(i);
         }
     }
     pipeline.schedule(&mut context);
     pipeline.finalize(&mut context);
-    dispatch(Dispatcher::new(context, &pipeline.thread))
+    dispatch(rq_context, Dispatcher::new(context, &pipeline.thread))
 }
 
 #[derive(Debug, Clone, SmartDefault, PartialEq, Eq)]

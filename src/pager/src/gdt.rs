@@ -20,16 +20,21 @@ impl Gdt {
         }
     }
 
-    pub fn add_entry(&mut self, entry: Descriptor) -> SegmentSelector {
+    pub fn add_entry(&mut self, entry: Descriptor, level: PrivilegeLevel) -> SegmentSelector {
         let index = match entry {
-            Descriptor::UserSegment(value) => self.push(value),
-            Descriptor::SystemSegment(value_low, value_high) => {
+            Descriptor::UserSegment(mut value) => {
+                value.set_bits(45..=46, level.as_u16().into());
+                self.push(value)
+            }
+            Descriptor::SystemSegment(mut value_low, value_high) => {
+                value_low.set_bits(45..=46, level.as_u16().into());
+
                 let index = self.push(value_low);
                 self.push(value_high);
                 index
             }
         };
-        SegmentSelector::new(index as u16, PrivilegeLevel::Ring0)
+        SegmentSelector::new(index as u16, level)
     }
 
     pub fn load(&'static self) {
@@ -105,13 +110,13 @@ pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 pub const GENERAL_STACK_INDEX: u16 = 1;
 
 impl Descriptor {
-    pub fn kernel_data_segment() -> Descriptor {
+    pub fn data_segment() -> Descriptor {
         let flags =
             DescriptorFlags::USER_SEGMENT | DescriptorFlags::PRESENT | DescriptorFlags::READ_WRITE;
         Descriptor::UserSegment(flags.bits())
     }
 
-    pub fn kernel_code_segment() -> Descriptor {
+    pub fn code_segment() -> Descriptor {
         let flags = DescriptorFlags::USER_SEGMENT
             | DescriptorFlags::PRESENT
             | DescriptorFlags::EXECUTABLE

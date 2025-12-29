@@ -1,4 +1,7 @@
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use alloc::{sync::Arc, vec::Vec};
+use hashbrown::HashSet;
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
@@ -8,7 +11,7 @@ use pager::{
         table::RecurseLevel4LowerHalf,
     },
 };
-use spin::Mutex;
+use spin::{Mutex, RwLock};
 
 use crate::{
     memory::{
@@ -19,46 +22,37 @@ use crate::{
     },
     userland::{
         self,
-        pipeline::{CommonRequestContext, Event, PipelineContext, thread::Thread},
+        pipeline::{
+            Event, PipelineContext,
+            thread::{Thread, ThreadPipeline},
+        },
     },
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Process {
-    id: usize,
-}
-
 #[derive(Default)]
 pub struct ProcessPipeline {
-    shared_data: Vec<Arc<ProcessShared>>,
     page_tables: Vec<Option<InactivePageTable<RecurseLevel4LowerHalf>>>,
     free_data: Vec<usize>,
 }
 
 impl ProcessPipeline {
     pub(super) fn new(events: &mut Event) -> Self {
+        events.begin(|_c, pipeline_context, _request_context| {
+            if let Some(thread) = pipeline_context.interrupted_thread {
+                pipeline_context.interrupted_process = Some(find_by_id(&thread))
+            }
+        });
+
+        events.finalize(|c, s| c.process.finalize(s));
+
         events.ipp_handler(|c| c.process.check_ipp());
 
         Self::default()
     }
 
-    pub fn sync_and_identify(
-        &mut self,
-        _context: &CommonRequestContext<'_>,
-        thread: &Thread,
-    ) -> Process {
-        // FIXME: probably use a map instead
-        for (id, shared) in self.shared_data.iter().enumerate() {
-            if shared.threads.lock().iter().any(|t| *t == thread.id()) {
-                return Process { id };
-            }
-        }
-        panic!("thread id {} doesn't belong to any processes", thread.id());
-    }
-
     pub fn finalize(&mut self, context: &mut PipelineContext) {
         match (context.interrupted_task, context.scheduled_task) {
-            (Some(interrupted), Some(scheduled)) if interrupted == scheduled => {
+            (Some(interrupted), Some(scheduled)) if interrupted != scheduled => {
                 self.page_table_swap(interrupted.process, scheduled.process);
             }
             _ => {}
@@ -67,8 +61,6 @@ impl ProcessPipeline {
 
     fn check_ipp(&mut self) {
         ExpandSharedPacket::handle(|packet| {
-            self.shared_data.push(packet.expanded);
-
             self.page_tables.push(Some(unsafe {
                 copy_mappings(InactivePageCopyOption::lower_half(), &packet.table_template)
             }));
@@ -99,7 +91,6 @@ impl ProcessPipeline {
         // FIXME: RACECONDITION!!!!!!, if the table is active in the other cores, there might be
         // a race condition
         if let Some(mut table) = self.page_tables[process.id].take() {
-            // SAFETY: Read the caller of the
             let r = unsafe {
                 mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table)
             };
@@ -113,8 +104,8 @@ impl ProcessPipeline {
 
     pub fn alloc_stack(&mut self, process: Process) -> Stack {
         self.mapper(
-            |s, mapper, allocator| {
-                s.shared_data(process)
+            |_s, mapper, allocator| {
+                shared(&process)
                     .stacks
                     .lock()
                     .alloc_stack(mapper, allocator, 16)
@@ -126,48 +117,155 @@ impl ProcessPipeline {
         )
     }
 
-    fn shared_data(&mut self, process: Process) -> &ProcessShared {
-        &self.shared_data[process.id]
+    pub fn alloc_thread(&mut self, parent: Process, thread: Thread) {
+        shared(&parent).threads.lock().insert(thread);
     }
 
-    pub fn alloc_thread(&mut self, parent: Process, thread: Thread) {
-        self.shared_data[parent.id].threads.lock().push(thread.id());
+    pub fn free_thread(&mut self, thread: Thread) {
+        shared(&find_by_id(&thread)).threads.lock().remove(&thread);
+    }
+
+    pub fn free(&mut self, thread_pipeline: &mut ThreadPipeline, process: Process) {
+        let shared = shared(&process);
+        for thread in shared.threads.lock().iter() {
+            assert!(
+                thread.valid(),
+                "Process pipeline didn't get notified when some thread got freed",
+            );
+            thread_pipeline.free(*thread);
+        }
+
+        shared.threads.lock().clear();
+        free(process);
     }
 
     pub fn alloc(&mut self) -> Process {
-        if let Some(free_data) = self.free_data.pop() {
-            return Process { id: free_data };
-        }
-        let id = self.shared_data.len();
-        let expanded = Arc::new(ProcessShared::new());
-        self.shared_data.push(Arc::clone(&expanded));
+        let process = alloc_shared();
+        if self.page_tables.get(process.id).is_some() {
+            // TODO: Clean up the page tables
+            self.mapper(|_s, _mapper, _allocator| {}, process);
+        } else {
+            let orignal_table = Arc::new(unsafe {
+                create_mappings_lower(
+                    |mapper, alloc| {
+                        mapper.populate_p4_lower_half(alloc);
+                    },
+                    InactivePageCopyOption::Empty,
+                )
+            });
 
-        // SAFETY: TODO
-        let orignal_table = Arc::new(unsafe {
-            create_mappings_lower(
-                |mapper, alloc| {
-                    mapper.populate_p4_lower_half(alloc);
-                },
-                InactivePageCopyOption::Empty,
-            )
-        });
-        ExpandSharedPacket {
-            expanded,
-            table_template: Arc::clone(&orignal_table),
-        }
-        .broadcast(false);
-        // SAFETY: TODO
-        self.page_tables.push(Some(unsafe {
-            copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table)
-        }));
+            ExpandSharedPacket {
+                table_template: Arc::clone(&orignal_table),
+            }
+            .broadcast(false);
 
-        Process { id }
+            self.page_tables.push(Some(unsafe {
+                copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table)
+            }));
+        }
+
+        process
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Process {
+    id: usize,
+
+    /// Used to indicate if [`Process::id`] has been reused, or freed
+    signature: usize,
+}
+
+impl Process {
+    pub fn valid(&self) -> bool {
+        self.signature == sigature(self)
+    }
+}
+
+fn free(process: Process) {
+    GLOBAL_PROCESS_DATA.write().free(process);
+}
+
+fn sigature(process: &Process) -> usize {
+    *shared(process).signature.lock()
+}
+
+fn find_by_id(thread: &Thread) -> Process {
+    GLOBAL_PROCESS_DATA.read().find_by_id(thread)
+}
+
+fn alloc_shared() -> Process {
+    GLOBAL_PROCESS_DATA.write().alloc()
+}
+
+fn shared(process: &Process) -> Arc<ProcessShared> {
+    GLOBAL_PROCESS_DATA.read().shared(process)
+}
+
+static GLOBAL_PROCESS_DATA: RwLock<GlobalProcessDataPool> =
+    RwLock::new(GlobalProcessDataPool::new());
+
+#[derive(Default)]
+struct GlobalProcessDataPool {
+    pool: Vec<Arc<ProcessShared>>,
+    free_id: Vec<usize>,
+}
+
+impl GlobalProcessDataPool {
+    const fn new() -> Self {
+        GlobalProcessDataPool {
+            pool: Vec::new(),
+            free_id: Vec::new(),
+        }
+    }
+
+    fn shared(&self, process: &Process) -> Arc<ProcessShared> {
+        Arc::clone(&self.pool[process.id])
+    }
+
+    fn find_by_id(&self, thread: &Thread) -> Process {
+        // TODO: probably use a map on the pool instead, but HashSet on the process threads is prob
+        // enough
+        for (id, shared) in self.pool.iter().enumerate() {
+            if shared.threads.lock().contains(thread) {
+                return Process {
+                    id,
+                    signature: *shared.signature.lock(),
+                };
+            }
+        }
+        panic!("thread id {} doesn't belong to any processes", thread.id());
+    }
+
+    fn free(&mut self, process: Process) {
+        self.free_id.push(process.id);
+        // Signature 0 is always invalid
+        *self.pool[process.id].signature.lock() = 0;
+    }
+
+    fn alloc(&mut self) -> Process {
+        if let Some(id) = self.free_id.pop() {
+            let free = &mut self.pool[id];
+            let new = ProcessShared::new();
+            let signature = *new.signature.lock();
+            *free = Arc::new(new);
+
+            return Process { id, signature };
+        }
+
+        let id = self.pool.len();
+        let new = ProcessShared::new();
+        let signature = *new.signature.lock();
+        self.pool.push(Arc::new(new));
+
+        Process { id, signature }
     }
 }
 
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
-    threads: Mutex<Vec<usize>>,
+    threads: Mutex<HashSet<Thread>>,
+    signature: Mutex<usize>,
 }
 
 impl ProcessShared {
@@ -180,13 +278,19 @@ impl ProcessShared {
                 (userland::STACK_START + userland::STACK_MAX_SIZE).into(),
             ))
             .into(),
-            threads: Vec::new().into(),
+            threads: HashSet::new().into(),
+            signature: sig().into(),
         }
     }
 }
 
 #[derive(Clone, IPPacket)]
 struct ExpandSharedPacket {
-    expanded: Arc<ProcessShared>,
     table_template: Arc<InactivePageTable<RecurseLevel4LowerHalf>>,
+}
+
+static SIG: AtomicUsize = AtomicUsize::new(1);
+
+fn sig() -> usize {
+    SIG.fetch_add(1, Ordering::Relaxed)
 }

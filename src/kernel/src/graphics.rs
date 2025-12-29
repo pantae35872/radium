@@ -1,4 +1,4 @@
-use crate::{initialize_guard, sync::mutex::Mutex};
+use crate::initialize_guard;
 use alloc::vec::Vec;
 use bit_field::BitField;
 use bootbridge::{BootBridge, GraphicsInfo, PixelFormat};
@@ -7,6 +7,7 @@ use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
 use pager::{EntryFlags, Mapper, PAGE_SIZE, address::Page, registers::Xcr0, virt_addr_alloc};
+use spin::Mutex;
 
 use crate::{
     initialization_context::{InitializationContext, Stage2},

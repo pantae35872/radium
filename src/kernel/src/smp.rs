@@ -27,7 +27,7 @@ use crate::{
     hlt_loop,
     initialization_context::{End, InitializationContext, Stage2, Stage3, Stage4, select_context},
     interrupt::{
-        self, APIC_ID, LAPIC,
+        self,
         apic::{ApicId, apic_id},
         io_apic::IoApicManager,
     },
@@ -36,7 +36,6 @@ use crate::{
         self, WithMapper, allocator::buddy_allocator::BuddyAllocator, mapper_lower,
         stack_allocator, stack_allocator::StackAllocator,
     },
-    scheduler::{LOCAL_SCHEDULER, pinned, sleep},
 };
 use spin::Mutex;
 
@@ -162,22 +161,22 @@ impl ApInitializer {
     }
 
     fn boot_ap(&self, apic_id: ApicId, ctx: Arc<ApInitializationContext>) {
-        self.prepare_stack_and_info(ctx);
-        assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
+        //self.prepare_stack_and_info(ctx);
+        //assert!(!AP_INITIALIZED.load(Ordering::SeqCst));
 
-        LAPIC.inner_mut().send_init_ipi(apic_id, true);
-        sleep(10);
-        LAPIC.inner_mut().send_init_ipi(apic_id, false);
+        //LAPIC.inner_mut().send_init_ipi(apic_id, true);
+        //sleep(10);
+        //LAPIC.inner_mut().send_init_ipi(apic_id, false);
 
-        for _ in 0..2 {
-            LAPIC.inner_mut().send_startup_ipi(apic_id);
-            sleep(1);
-        }
+        //for _ in 0..2 {
+        //    LAPIC.inner_mut().send_startup_ipi(apic_id);
+        //    sleep(1);
+        //}
 
-        while !AP_INITIALIZED.load(Ordering::SeqCst) {
-            sleep(1);
-        }
-        AP_INITIALIZED.store(false, Ordering::SeqCst);
+        //while !AP_INITIALIZED.load(Ordering::SeqCst) {
+        //    sleep(1);
+        //}
+        //AP_INITIALIZED.store(false, Ordering::SeqCst);
     }
 }
 
@@ -210,7 +209,7 @@ pub unsafe extern "C" fn ap_startup(ctx: *const ApInitializationContext) -> ! {
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 
-    LOCAL_SCHEDULER.inner_mut().start_scheduling();
+    //LOCAL_SCHEDULER.inner_mut().start_scheduling();
 
     hlt_loop();
 }
@@ -515,15 +514,15 @@ pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
     let ctx = Arc::new(local_initializer.convert_ctx(ctx));
     ctx.initializer.lock().initialize_current(&ctx);
 
-    LOCAL_SCHEDULER.inner_mut().spawn(move || {
-        pinned(|| {
-            PROCESSORS.iter().copied().for_each(|apic_id| {
-                if apic_id == *APIC_ID {
-                    return;
-                }
-                ap_initializer.boot_ap(apic_id, ctx.clone());
-            });
-            ALL_AP_INITIALIZED.store(true, Ordering::Relaxed);
-        })
-    });
+    //LOCAL_SCHEDULER.inner_mut().spawn(move || {
+    //    pinned(|| {
+    //        PROCESSORS.iter().copied().for_each(|apic_id| {
+    //            if apic_id == *APIC_ID {
+    //                return;
+    //            }
+    //            ap_initializer.boot_ap(apic_id, ctx.clone());
+    //        });
+    //        ALL_AP_INITIALIZED.store(true, Ordering::Relaxed);
+    //    })
+    //});
 }

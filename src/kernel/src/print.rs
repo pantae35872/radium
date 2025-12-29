@@ -4,9 +4,9 @@ use core::fmt::{Arguments, Write};
 use crate::graphics::color::Color;
 use crate::initialization_context::{InitializationContext, Stage2};
 use crate::initialize_guard;
-use crate::sync::mutex::Mutex;
 use conquer_once::spin::OnceCell;
 use sentinel::log;
+use spin::Mutex;
 
 use self::ttf_renderer::TtfRenderer;
 

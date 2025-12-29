@@ -4,6 +4,11 @@ use core::fmt::LowerHex;
 use core::sync::atomic::Ordering;
 
 use crate::PANIC_COUNT;
+use crate::gdt::KERNEL_CODE_SEG;
+use crate::gdt::KERNEL_DATA_SEG;
+use crate::gdt::USER_CODE_SEG;
+use crate::gdt::USER_DATA_SEG;
+use crate::hlt;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
 use crate::initialization_context::Stage4;
@@ -12,12 +17,15 @@ use crate::interrupt::apic::ApicId;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
-use crate::scheduler::Dispatcher;
-use crate::scheduler::FnBox;
-use crate::scheduler::LOCAL_SCHEDULER;
+use crate::serial_println;
 use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
+use crate::userland;
+use crate::userland::pipeline::CommonRequestContext;
+use crate::userland::pipeline::RequestReferer;
+use crate::userland::pipeline::TaskProcesserState;
+use crate::userland::pipeline::dispatch::DispatchAction;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use apic::LocalApic;
@@ -35,20 +43,6 @@ use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
 use pager::registers::RFlags;
-use rstd::drivcall::DRIVCALL_EXIT;
-use rstd::drivcall::DRIVCALL_FUTEX_WAIT;
-use rstd::drivcall::DRIVCALL_FUTEX_WAKE;
-use rstd::drivcall::DRIVCALL_INT_WAIT;
-use rstd::drivcall::DRIVCALL_ISPIN;
-use rstd::drivcall::DRIVCALL_PIN;
-use rstd::drivcall::DRIVCALL_SLEEP;
-use rstd::drivcall::DRIVCALL_SPAWN;
-use rstd::drivcall::DRIVCALL_THREAD_WAIT_EXIT;
-use rstd::drivcall::DRIVCALL_UNPIN;
-use rstd::drivcall::DRIVCALL_VSYS_REG;
-use rstd::drivcall::DRIVCALL_VSYS_REQ;
-use rstd::drivcall::DRIVCALL_VSYS_RET;
-use rstd::drivcall::DRIVCALL_VSYS_WAIT;
 use sentinel::log;
 use spin::Mutex;
 
@@ -68,6 +62,23 @@ pub enum InterruptIndex {
     CheckFutex = 0x92,
     CheckIPP = 0x95,
     SpuriousInterruptsVector = 0xFF,
+}
+
+impl TryFrom<u8> for InterruptIndex {
+    type Error = u8;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            v if v == Self::TimerVector as u8 => Ok(Self::TimerVector),
+            v if v == Self::PITVector as u8 => Ok(Self::PITVector),
+            v if v == Self::ErrorVector as u8 => Ok(Self::ErrorVector),
+            v if v == Self::DriverCall as u8 => Ok(Self::DriverCall),
+            v if v == Self::CheckFutex as u8 => Ok(Self::CheckFutex),
+            v if v == Self::CheckIPP as u8 => Ok(Self::CheckIPP),
+            v if v == Self::SpuriousInterruptsVector as u8 => Ok(Self::SpuriousInterruptsVector),
+            v => Err(v),
+        }
+    }
 }
 
 impl InterruptIndex {
@@ -224,6 +235,32 @@ pub struct ExtendedInterruptStackFrame {
     pub stack_segment: u64,
 }
 
+impl ExtendedInterruptStackFrame {
+    fn replace_with(&mut self, task: &TaskProcesserState) {
+        self.r15 = task.r15;
+        self.r14 = task.r14;
+        self.r13 = task.r13;
+        self.r12 = task.r12;
+        self.r11 = task.r11;
+        self.r10 = task.r10;
+        self.r9 = task.r9;
+        self.r8 = task.r8;
+        self.rsi = task.rsi;
+        self.rdi = task.rdi;
+        self.rbp = task.rbp;
+        self.rdx = task.rdx;
+        self.rcx = task.rcx;
+        self.rbx = task.rbx;
+        self.rax = task.rax;
+        self.instruction_pointer = task.instruction_pointer;
+        self.cpu_flags = task.cpu_flags;
+        self.stack_pointer = task.stack_pointer;
+
+        self.code_segment = USER_CODE_SEG.0.into();
+        self.stack_segment = USER_DATA_SEG.0.into();
+    }
+}
+
 impl fmt::Debug for ExtendedInterruptStackFrame {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         struct Hex<T: LowerHex>(T);
@@ -288,6 +325,12 @@ where
     ret
 }
 
+fn hlt_loop() {
+    loop {
+        hlt();
+    }
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
     if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
@@ -299,111 +342,135 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     *LAST_INTERRUPT_NO.inner_mut() = idx;
     *IS_IN_ISR.inner_mut() = true;
 
-    let current_thread = Dispatcher::save(stack_frame);
-    let mut is_scheduleable_interrupt = false;
-    let local_scheduler = LOCAL_SCHEDULER.inner_mut();
-
-    match idx {
-        idx if idx == InterruptIndex::TimerVector.as_u8() => {
-            local_scheduler.prepare_timer();
-            local_scheduler.check_migrate();
-            local_scheduler.check_return();
-            local_scheduler.check_vsys_request();
-            local_scheduler.check_thread_exit_notice();
-            local_scheduler.push_thread(current_thread);
-            is_scheduleable_interrupt = true;
+    let idx = match InterruptIndex::try_from(idx) {
+        Ok(index) => index,
+        Err(..) => {
+            eoi(idx);
+            *IS_IN_ISR.inner_mut() = false;
+            return;
         }
-        idx if idx == InterruptIndex::PITVector.as_u8() => {}
-        idx if idx == InterruptIndex::ErrorVector.as_u8() => {
-            log!(Error, "Apic configuration error");
-        }
-        idx if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() => {
-            log!(Warning, "Spurious Interrupt Detected");
-        }
-        idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
-            DRIVCALL_SLEEP => {
-                local_scheduler.sleep_thread(current_thread, stack_frame.rax as usize);
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_SPAWN => {
-                let f = stack_frame.rax;
-                let (handle_id, global_id) = local_scheduler
-                    .spawn(move || {
-                        let f = unsafe { Box::from_raw(f as *mut *mut dyn FnBox) };
-                        let f = unsafe { Box::from_raw(*f) };
-                        f.call_box();
-                    })
-                    .into_raw();
-                stack_frame.rcx = handle_id as u64;
-                stack_frame.rdx = global_id as u64;
-            }
-            DRIVCALL_FUTEX_WAIT => {
-                local_scheduler.futex_wait(
-                    VirtAddr::new(stack_frame.rax),
-                    current_thread,
-                    stack_frame.rcx as usize,
-                );
-
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_FUTEX_WAKE => {
-                local_scheduler.futex_wake(VirtAddr::new(stack_frame.rax));
-            }
-            DRIVCALL_EXIT => {
-                local_scheduler.exit_thread(current_thread);
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_VSYS_REG => {
-                // TODO: Check if the request vsys is out of range
-                local_scheduler.vsys_reg(stack_frame.rax as usize, current_thread.global_id());
-            }
-            DRIVCALL_VSYS_WAIT => {
-                local_scheduler.vsys_wait(stack_frame.rax as usize, current_thread);
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_VSYS_REQ => {
-                local_scheduler.vsys_req(stack_frame.rax as usize, current_thread);
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_VSYS_RET => {
-                local_scheduler.vsys_return_thread(current_thread);
-            }
-            DRIVCALL_INT_WAIT => {
-                if let Ok(idx) = TryInto::<u8>::try_into(stack_frame.rax) {
-                    local_scheduler.interrupt_wait(idx, current_thread);
-                    is_scheduleable_interrupt = true;
+    };
+    userland::pipeline::handle_request(
+        CommonRequestContext::new(stack_frame, RequestReferer::HardwareInterrupt(idx)),
+        |CommonRequestContext { stack_frame, .. }, dispatcher| {
+            dispatcher.dispatch(|action| match action {
+                DispatchAction::HltLoop => {
+                    stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
+                    stack_frame.code_segment = KERNEL_CODE_SEG.0.into();
+                    stack_frame.stack_segment = KERNEL_DATA_SEG.0.into();
                 }
-            }
-            DRIVCALL_PIN => {
-                local_scheduler.pin(&current_thread);
-            }
-            DRIVCALL_UNPIN => {
-                local_scheduler.unpin(&current_thread);
-            }
-            DRIVCALL_ISPIN => {
-                local_scheduler.is_pin(current_thread);
-                is_scheduleable_interrupt = true;
-            }
-            DRIVCALL_THREAD_WAIT_EXIT => {
-                local_scheduler.thread_wait_exit(current_thread, stack_frame.rax as usize);
-                is_scheduleable_interrupt = true;
-            }
-            number => log!(Error, "Unknown Driver call called, {number}"),
+                DispatchAction::ReplaceState(state) => {
+                    stack_frame.replace_with(state);
+                }
+            })
         },
-        idx if idx == InterruptIndex::CheckFutex.as_u8() => {
-            local_scheduler.check_futex();
-        }
-        _ => {}
-    }
+    );
 
-    local_scheduler.interrupt_wake(idx);
-
-    if is_scheduleable_interrupt && let Some(sched_thread) = local_scheduler.schedule() {
-        Dispatcher::dispatch(stack_frame, sched_thread);
-    }
-
-    eoi(idx);
+    eoi(idx as u8);
     *IS_IN_ISR.inner_mut() = false;
+
+    //let current_thread = Dispatcher::save(stack_frame);
+    //let mut is_scheduleable_interrupt = false;
+    //let local_scheduler = LOCAL_SCHEDULER.inner_mut();
+
+    //match idx {
+    //    idx if idx == InterruptIndex::TimerVector.as_u8() => {
+    //        local_scheduler.prepare_timer();
+    //        local_scheduler.check_migrate();
+    //        local_scheduler.check_return();
+    //        local_scheduler.check_vsys_request();
+    //        local_scheduler.check_thread_exit_notice();
+    //        local_scheduler.push_thread(current_thread);
+    //        is_scheduleable_interrupt = true;
+    //    }
+    //    idx if idx == InterruptIndex::PITVector.as_u8() => {}
+    //    idx if idx == InterruptIndex::ErrorVector.as_u8() => {
+    //        log!(Error, "Apic configuration error");
+    //    }
+    //    idx if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() => {
+    //        log!(Warning, "Spurious Interrupt Detected");
+    //    }
+    //    idx if idx == InterruptIndex::DriverCall.as_u8() => match stack_frame.rdi {
+    //        DRIVCALL_SLEEP => {
+    //            local_scheduler.sleep_thread(current_thread, stack_frame.rax as usize);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_SPAWN => {
+    //            let f = stack_frame.rax;
+    //            let (handle_id, global_id) = local_scheduler
+    //                .spawn(move || {
+    //                    let f = unsafe { Box::from_raw(f as *mut *mut dyn FnBox) };
+    //                    let f = unsafe { Box::from_raw(*f) };
+    //                    f.call_box();
+    //                })
+    //                .into_raw();
+    //            stack_frame.rcx = handle_id as u64;
+    //            stack_frame.rdx = global_id as u64;
+    //        }
+    //        DRIVCALL_FUTEX_WAIT => {
+    //            local_scheduler.futex_wait(
+    //                VirtAddr::new(stack_frame.rax),
+    //                current_thread,
+    //                stack_frame.rcx as usize,
+    //            );
+
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_FUTEX_WAKE => {
+    //            local_scheduler.futex_wake(VirtAddr::new(stack_frame.rax));
+    //        }
+    //        DRIVCALL_EXIT => {
+    //            local_scheduler.exit_thread(current_thread);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_VSYS_REG => {
+    //            // TODO: Check if the request vsys is out of range
+    //            local_scheduler.vsys_reg(stack_frame.rax as usize, current_thread.global_id());
+    //        }
+    //        DRIVCALL_VSYS_WAIT => {
+    //            local_scheduler.vsys_wait(stack_frame.rax as usize, current_thread);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_VSYS_REQ => {
+    //            local_scheduler.vsys_req(stack_frame.rax as usize, current_thread);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_VSYS_RET => {
+    //            local_scheduler.vsys_return_thread(current_thread);
+    //        }
+    //        DRIVCALL_INT_WAIT => {
+    //            if let Ok(idx) = TryInto::<u8>::try_into(stack_frame.rax) {
+    //                local_scheduler.interrupt_wait(idx, current_thread);
+    //                is_scheduleable_interrupt = true;
+    //            }
+    //        }
+    //        DRIVCALL_PIN => {
+    //            local_scheduler.pin(&current_thread);
+    //        }
+    //        DRIVCALL_UNPIN => {
+    //            local_scheduler.unpin(&current_thread);
+    //        }
+    //        DRIVCALL_ISPIN => {
+    //            local_scheduler.is_pin(current_thread);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        DRIVCALL_THREAD_WAIT_EXIT => {
+    //            local_scheduler.thread_wait_exit(current_thread, stack_frame.rax as usize);
+    //            is_scheduleable_interrupt = true;
+    //        }
+    //        number => log!(Error, "Unknown Driver call called, {number}"),
+    //    },
+    //    idx if idx == InterruptIndex::CheckFutex.as_u8() => {
+    //        local_scheduler.check_futex();
+    //    }
+    //    _ => {}
+    //}
+
+    //local_scheduler.interrupt_wake(idx);
+
+    //if is_scheduleable_interrupt && let Some(sched_thread) = local_scheduler.schedule() {
+    //    Dispatcher::dispatch(stack_frame, sched_thread);
+    //}
 }
 
 generate_interrupt_handlers!();

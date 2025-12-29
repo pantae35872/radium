@@ -8,11 +8,7 @@ use core::{
 
 use pager::address::VirtAddr;
 
-use crate::{
-    interrupt::IS_IN_ISR,
-    scheduler::{futex_wait, futex_wake},
-    smp::cpu_local_avaiable,
-};
+use crate::{interrupt::IS_IN_ISR, smp::cpu_local_avaiable};
 
 const UNLOCKED: usize = 0;
 const LOCKED_NO_WAIT: usize = 1;

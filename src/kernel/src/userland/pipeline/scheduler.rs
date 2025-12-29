@@ -65,10 +65,11 @@ impl SchedulerPipeline {
                 .push_front(self.sleep_queue.pop().unwrap().0.task);
         }
 
-        // FIXME: There might be a case where the thread was freed and the id was reused, introduce
-        // some kind of a signature to the TaskBlock struct, that can differentate reused process
-        // from a previously dead process, in other words, implement a method call is_valid on the
-        // TaskBlock
-        context.scheduled_task = self.units.pop_front();
+        while let Some(task) = self.units.pop_front() {
+            if task.valid() {
+                context.scheduled_task = Some(task);
+                break;
+            }
+        }
     }
 }

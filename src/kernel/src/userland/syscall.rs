@@ -1,4 +1,4 @@
-use crate::userland::pipeline::{ControlPipeline, PipelineContext};
+use crate::userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallId(u32);
@@ -21,13 +21,16 @@ impl TryFrom<SyscallId> for Syscall {
 }
 
 pub(super) fn syscall_handle(
+    rq_context: &CommonRequestContext,
     pipeline: &mut ControlPipeline,
     pipeline_context: &mut PipelineContext,
     syscall: SyscallId,
 ) {
     let syscall = Syscall::try_from(syscall).unwrap_or(Syscall::Exit);
+    let calling_task = pipeline_context.interrupted_task.unwrap();
 
-    //match syscall {
-    //    Syscall::Exit => pipeline_context.exit(),
-    //}
+    match syscall {
+        Syscall::Exit => pipeline.free_process(calling_task.process),
+        Syscall::Sleep => pipeline.sleep_task(calling_task, rq_context.stack_frame.rax as usize),
+    }
 }

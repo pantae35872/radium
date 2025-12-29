@@ -18,7 +18,8 @@ else
 endif
 
 CRATES := $(filter-out src/drivers/,$(patsubst %/,%,$(wildcard src/*/))) \
-          $(patsubst %/,%,$(wildcard src/drivers/*/))
+          $(patsubst %/,%,$(wildcard src/drivers/*/)) \
+          $(patsubst %/,%,$(wildcard userland/*/))
 
 .PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg check tftp-debug tftp-release $(CRATES)
 .DEFAULT_GOAL := debug

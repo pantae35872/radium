@@ -37,7 +37,6 @@ pub mod logger;
 pub mod memory;
 pub mod port;
 pub mod print;
-pub mod scheduler;
 pub mod serial;
 pub mod sync;
 pub mod userland;
@@ -61,24 +60,20 @@ use initialization_context::{InitializationContext, Stage0};
 use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
-use scheduler::sleep;
 use sentinel::log;
 use smp::{ALL_AP_INITIALIZED, cpu_local_avaiable};
 use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
 use crate::interrupt::CORE_ID;
-use crate::scheduler::{CURRENT_THREAD_ID, LOCAL_SCHEDULER};
+use crate::userland::pipeline::CURRENT_THREAD_ID;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
 static STILL_INITIALIZING: AtomicBool = AtomicBool::new(true);
 
 def_local!(pub static BOOT_BRIDGE: Arc<BootBridge>);
 
-pub fn init<F>(boot_bridge: *mut RawBootBridge, main_thread: F) -> !
-where
-    F: FnOnce() + Send + 'static,
-{
+pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     initialize_guard!();
 
     let boot_bridge = BootBridge::new(boot_bridge);
@@ -101,26 +96,25 @@ where
         });
     });
     memory::init_local(&mut stage4);
-    scheduler::init(&mut stage4);
     userland::init(&mut stage4);
     pit::init(&mut stage4);
     smp::init_aps(stage4);
 
-    LOCAL_SCHEDULER.inner_mut().spawn(|| {
-        while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
-            sleep(1000);
-        }
-        sleep(1000);
-
-        // TODO: Redo this one i'm ready, currently i'm cleaning up the memory map, and this
-        // uefi_runtime pollutes the lower half address space
-        //uefi_runtime::init();
-
-        main_thread()
-    });
-    LOCAL_SCHEDULER.inner_mut().start_scheduling();
-
+    userland::pipeline::start_scheduling();
     hlt_loop();
+    //LOCAL_SCHEDULER.inner_mut().spawn(|| {
+    //    while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
+    //        sleep(1000);
+    //    }
+    //    sleep(1000);
+
+    //    // TODO: Redo this one i'm ready, currently i'm cleaning up the memory map, and this
+    //    // uefi_runtime pollutes the lower half address space
+    //    //uefi_runtime::init();
+
+    //    main_thread()
+    //});
+    //LOCAL_SCHEDULER.inner_mut().start_scheduling();
 }
 
 #[macro_export]
@@ -135,7 +129,7 @@ macro_rules! initialize_guard {
 #[cfg(test)]
 #[unsafe(no_mangle)]
 pub extern "C" fn start(boot_info: *mut RawBootBridge) -> ! {
-    init(boot_info, test_main);
+    init(boot_info);
 }
 
 #[inline(always)]
@@ -183,7 +177,7 @@ fn panic(info: &PanicInfo) -> ! {
             Critical,
             "PANIC on core: {}, thread id: {}",
             *CORE_ID,
-            *CURRENT_THREAD_ID
+            *CURRENT_THREAD_ID.inner_mut().borrow_mut()
         );
     }
     log!(Critical, "{}", info);

@@ -9,7 +9,7 @@
 //! to the thread resources, This is done because directly giving a reference to the thread resources
 //! can causes borrow checker problems.
 
-use core::{assert_matches::assert_matches, mem::zeroed};
+use core::{assert_matches::assert_matches, mem::zeroed, num::NonZeroUsize};
 
 use alloc::vec::Vec;
 use kernel_proc::IPPacket;
@@ -18,10 +18,10 @@ use pager::address::VirtAddr;
 use crate::{
     interrupt::CORE_ID,
     memory::stack_allocator::Stack,
-    scheduler::CURRENT_THREAD_ID,
     smp::CoreId,
     userland::pipeline::{
-        CommonRequestContext, Event, TaskBlock, TaskProcesserState,
+        CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock,
+        TaskProcesserState,
         process::{Process, ProcessPipeline},
     },
 };
@@ -36,6 +36,12 @@ pub struct ThreadPipeline {
 
 impl ThreadPipeline {
     pub(super) fn new(event: &mut Event) -> Self {
+        event.begin(|c, pipeline_context, request_context| {
+            pipeline_context.interrupted_thread = c.thread.begin(request_context);
+        });
+
+        event.finalize(|c, s| c.thread.finalize(s));
+
         event.ipp_handler(|c| c.thread.handle_ipp());
 
         Self {
@@ -44,16 +50,23 @@ impl ThreadPipeline {
         }
     }
 
-    /// Sync and identify, the thread interrupted with the information from [CommonRequestContext].
-    pub fn sync_and_identify(&mut self, context: &CommonRequestContext<'_>) -> Thread {
-        let thread = Thread::capture();
+    fn begin(&mut self, context: &CommonRequestContext<'_>) -> Option<Thread> {
+        let thread = Thread::capture()?;
         assert_eq!(
             self.thread_context(thread).state,
             ThreadState::Active,
             "Captured thread isn't active"
         );
         self.thread_context_mut(thread).processor_state = TaskProcesserState::from(context);
-        thread
+        Some(thread)
+    }
+
+    fn finalize(&mut self, ctx: &mut PipelineContext) {
+        if let Some(task) = ctx.scheduled_task {
+            *CURRENT_THREAD_ID.borrow_mut() = task.thread.global_id.get();
+        } else {
+            *CURRENT_THREAD_ID.borrow_mut() = 0;
+        }
     }
 
     pub fn task_processor_state(&self, thread: Thread) -> &TaskProcesserState {
@@ -191,7 +204,7 @@ impl ThreadPipeline {
 #[derive(Debug, IPPacket)]
 struct ThreadMigratePacket {
     context: ThreadContext,
-    global_id: usize,
+    global_id: NonZeroUsize,
 }
 
 #[derive(Debug)]
@@ -230,20 +243,34 @@ enum ThreadState {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Thread {
-    global_id: usize,
+    global_id: NonZeroUsize,
+
+    /// Used to indicate if [`Thread::global_id`] has been reused, or freed
+    signature: usize,
 }
 
 impl Thread {
-    fn capture() -> Self {
-        Self {
-            global_id: *CURRENT_THREAD_ID,
-        }
+    pub fn valid(&self) -> bool {
+        self.signature == id::sigature(self.global_id)
     }
 
-    pub fn id(&self) -> usize {
+    pub fn id(&self) -> NonZeroUsize {
         self.global_id
+    }
+
+    fn capture() -> Option<Self> {
+        if *CURRENT_THREAD_ID.borrow() == 0 {
+            return None;
+        }
+
+        let current = NonZeroUsize::new(*CURRENT_THREAD_ID.borrow()).unwrap();
+
+        Some(Self {
+            global_id: current,
+            signature: id::sigature(current),
+        })
     }
 
     fn local_id(&self) -> LocalThreadId {
