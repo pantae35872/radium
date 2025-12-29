@@ -95,8 +95,53 @@ where
 }
 
 pub struct TableManipulationContext<'a, A: FrameAllocator> {
+    pub temporary_page_mapper: Option<&'a mut ActivePageTable<RecurseLevel4UpperHalf>>,
     pub temporary_page: &'a mut temporary_page::TemporaryPage,
     pub allocator: &'a mut A,
+}
+
+impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
+    /// Just a helper, See [`temporary_page::TemporaryPage::map_table_frame`] for more info
+    ///
+    /// # Safety
+    /// [`temporary_page::TemporaryPage::map_table_frame`] Safety section
+    pub unsafe fn map_temporary_page<'b, P4: TopLevelP4>(
+        &'b mut self,
+        frame: Frame,
+        active_table: &mut ActivePageTable<P4>,
+    ) -> (&'b mut Table<RecurseLevel1>, &'b mut A) {
+        (
+            unsafe {
+                match self.temporary_page_mapper.as_mut() {
+                    Some(mapper) => {
+                        self.temporary_page
+                            .map_table_frame(frame, mapper, self.allocator)
+                    }
+                    None => {
+                        self.temporary_page
+                            .map_table_frame(frame, active_table, self.allocator)
+                    }
+                }
+            },
+            &mut self.allocator,
+        )
+    }
+
+    /// Just a helper, See [`temporary_page::TemporaryPage::unmap`] for more info
+    ///
+    /// # Safety
+    /// [`temporary_page::TemporaryPage::unmap`] Safety section
+    pub unsafe fn unmap_temporary_page<P4: TopLevelP4>(
+        &mut self,
+        active_table: &mut ActivePageTable<P4>,
+    ) {
+        unsafe {
+            match self.temporary_page_mapper.as_mut() {
+                Some(mapper) => self.temporary_page.unmap(mapper),
+                None => self.temporary_page.unmap(active_table),
+            }
+        }
+    }
 }
 
 impl ActivePageTable<RecurseLevel4> {
@@ -187,11 +232,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because we're reading it from the cr3
             // which if it's is indeed invalid, this code shouldn't be even executing
-            let p4_table = unsafe {
-                context
-                    .temporary_page
-                    .map_table_frame(backup, self, context.allocator)
-            };
+            let (p4_table, allocator) = unsafe { context.map_temporary_page(backup, self) };
 
             self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
@@ -203,7 +244,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
                 // because we're not mutating the entry of the active page table directly,
                 // the exclusivity of the inactive page table entries is uphold by the caller
                 let custom_table = unsafe { &mut ActivePageTable::<RecurseP4>::new() };
-                result = f(custom_table, context.allocator);
+                result = f(custom_table, allocator);
             }
 
             p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
@@ -211,7 +252,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         }
 
         // SAFETY: The reference to the page is gone in the scope above
-        unsafe { context.temporary_page.unmap(self) };
+        unsafe { context.unmap_temporary_page(self) };
         result
     }
 
@@ -446,11 +487,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
             // SAFETY: We know that the frame is valid because it's is being allocated above
-            let table = unsafe {
-                context
-                    .temporary_page
-                    .map_table_frame(frame, active_table, context.allocator)
-            };
+            let (table, ..) = unsafe { context.map_temporary_page(frame, active_table) };
             table.zero();
 
             let copy_from = copy_from.unwrap_or_else(|| &active_table.p4().entries);
@@ -467,7 +504,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
         }
         // SAFETY: The reference to the table is gone in the scope
-        unsafe { context.temporary_page.unmap(active_table) };
+        unsafe { context.unmap_temporary_page(active_table) };
 
         InactivePageTable::<P4> {
             p4_frame: frame,
@@ -486,17 +523,11 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because it's is being allocated in the new
             // function
-            let mapped = unsafe {
-                context.temporary_page.map_table_frame(
-                    self.p4_frame,
-                    active_table,
-                    context.allocator,
-                )
-            };
+            let (mapped, ..) = unsafe { context.map_temporary_page(self.p4_frame, active_table) };
             result = f(active_table, mapped);
         }
         // SAFETY: The reference to the table is gone in the scope
-        unsafe { context.temporary_page.unmap(active_table) };
+        unsafe { context.unmap_temporary_page(active_table) };
         result
     }
 
@@ -516,17 +547,11 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because it's is being allocated in the new
             // function
-            let mapped = unsafe {
-                context.temporary_page.map_table_frame(
-                    self.p4_frame,
-                    active_table,
-                    context.allocator,
-                )
-            };
+            let (mapped, ..) = unsafe { context.map_temporary_page(self.p4_frame, active_table) };
             result = table_mutate(active_table, mapped);
         }
         // SAFETY: The reference to the table is gone in the scope
-        unsafe { context.temporary_page.unmap(active_table) };
+        unsafe { context.unmap_temporary_page(active_table) };
         result
     }
 }

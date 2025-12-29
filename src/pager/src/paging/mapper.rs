@@ -184,6 +184,48 @@ where
             .or_else(huge_page)
     }
 
+    /// Change the flags of the frame
+    ///
+    /// # Safety
+    /// The caller must ensure that changing the entry flags doesn't cause any unsafe side effects
+    ///
+    /// # Panics
+    /// Panics if the page isn't mapped,
+    pub unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags) {
+        assert!(
+            self.translate(page.start_address()).is_some(),
+            "trying to change the flags of an unmapped page"
+        );
+
+        let p1 = self
+            .p4_mut()
+            .next_table_mut(page.p4_index())
+            .and_then(|p3| p3.next_table_mut(page.p3_index()))
+            .and_then(|p2| p2.next_table_mut(page.p2_index()))
+            .expect("mapping code does not support huge pages");
+
+        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
+        let current_flags = p1[page.p1_index() as usize].flags();
+        p1[page.p1_index() as usize].set(frame, map(current_flags) | EntryFlags::PRESENT);
+
+        tlb::flush(page.start_address());
+    }
+
+    /// Just a range helper See [Self::change_flags] for more info
+    ///
+    /// # Safety
+    /// See [Self::change_flags]
+    unsafe fn change_flags_ranges(
+        &mut self,
+        start_page: Page,
+        end_page: Page,
+        map: impl Fn(EntryFlags) -> EntryFlags,
+    ) {
+        assert!(start_page <= end_page);
+        Page::range_inclusive(start_page, end_page)
+            .for_each(|page| unsafe { self.change_flags(page, &map) });
+    }
+
     /// Map the page to the frame (Virt -> Phys)
     ///
     /// # Safety
@@ -242,13 +284,10 @@ where
         unsafe { self.map_to(page, frame, flags, allocator) }
     }
 
-    /// Allocate a frames and map the ranges to the allocated frame
+    /// Just a range helper, See [`Self::map`] for more info
     ///
     /// # Note
     /// The range is inclusive
-    ///
-    /// # Panics
-    /// panics if the range is already mapped and not marked OVERWRITEABLE
     pub fn map_range<A>(
         &mut self,
         start_page: Page,
@@ -265,6 +304,9 @@ where
 
     /// Map the virtual address (start_page) -> virtual address (end_page)
     /// to a start physical address (start_frame) -> end physical address (end_frame)
+    ///
+    /// # Safety
+    /// See [`Self::map_to`]
     ///
     /// # Assertions
     /// start_page -> end_page must be contigous
@@ -366,14 +408,11 @@ where
             .for_each(|frame| unsafe { self.identity_map(frame, flags, allocator) });
     }
 
-    /// Unmap the ranges from the page table
+    /// Unmap address ranges from the page table
     ///
     /// # Safety
-    /// The caller must ensure that the provided page was mapped by [`Self::map_to_range`] or [`Self::identity_map_range`]
     ///
-    /// # Panics
-    /// The start_page -> end_page (inclusive) must be contigous
-    /// end_page >= start_page, otherwise panic
+    /// See [`Self::unmap_addr`]
     pub unsafe fn unmap_addr_ranges(&mut self, start_page: Page, end_page: Page) -> FrameIter {
         assert!(start_page <= end_page);
         let mut iter = Page::range_inclusive(start_page, end_page)
@@ -383,15 +422,9 @@ where
     }
 
     /// Unmap the ranges from the page table
-    /// and deallocates from the buffer
-    ///
-    /// The start_page -> end_page (inclusive) must be contigous
-    /// start_page != end_page
-    /// end_page > start_page
     ///
     /// # Safety
-    ///
-    /// The caller must ensure that the provided page was mapped by [`Self::map_range`]
+    /// See [`Self::unmap`]
     pub unsafe fn unmap_ranges<A>(&mut self, start_page: Page, end_page: Page, allocator: &mut A)
     where
         A: FrameAllocator,
@@ -404,8 +437,6 @@ where
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the provided page was mapped by [`Self::map_to`] or [`Self::identity_map`],
-    /// AND NOT [`Self::map`].
     /// and the caller must ensure that reference or allocation referencing this page no longer
     /// exists
     pub unsafe fn unmap_addr(&mut self, page: Page) -> Frame {
@@ -423,12 +454,12 @@ where
         frame
     }
 
-    /// Unmap the page mapped by the map function
+    /// Unmap the page and deallocate it using the provided allocator
     ///
     /// # Safety
     ///
-    /// The caller must ensure that the page provide was mapped by [`Self::map`]
-    /// and must not causes any unsafe side effects
+    /// The caller must ensure that the page provide was mapped by [`Self::map`],
+    /// and unmapping it doesn't causes any unsafe side effects
     pub unsafe fn unmap<A>(&mut self, page: Page, allocator: &mut A)
     where
         A: FrameAllocator,
@@ -449,6 +480,19 @@ impl<'a, P4: TopLevelP4, A: FrameAllocator> crate::Mapper for MapperWithAllocato
             self.mapper
                 .identity_map_range(start_frame, end_frame, entry_flags, self.allocator)
         };
+    }
+
+    unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags) {
+        unsafe { self.mapper.change_flags(page, map) }
+    }
+
+    unsafe fn change_flags_ranges(
+        &mut self,
+        start_page: Page,
+        end_page: Page,
+        map: impl Fn(EntryFlags) -> EntryFlags,
+    ) {
+        unsafe { self.mapper.change_flags_ranges(start_page, end_page, map) }
     }
 
     fn map_range(&mut self, start_page: Page, end_page: Page, flags: EntryFlags) {

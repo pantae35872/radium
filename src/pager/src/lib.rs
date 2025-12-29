@@ -107,6 +107,15 @@ pub trait Mapper {
         entry_flags: EntryFlags,
     );
 
+    unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags);
+
+    unsafe fn change_flags_ranges(
+        &mut self,
+        start_page: Page,
+        end_page: Page,
+        map: impl Fn(EntryFlags) -> EntryFlags,
+    );
+
     unsafe fn map_to_range(
         &mut self,
         start_page: Page,

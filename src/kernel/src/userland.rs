@@ -1,3 +1,5 @@
+use conquer_once::spin::OnceCell;
+use packery::Packed;
 use pager::address::VirtAddr;
 
 use crate::{
@@ -11,8 +13,12 @@ pub const STACK_MAX_SIZE: usize = 0xFFFF_FFFF; // 4 GIB Overall stack per proces
 pub mod pipeline;
 mod syscall;
 
+static PACKED_DATA: OnceCell<Packed<'static>> = OnceCell::uninit();
+
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     initialize_guard!();
+
+    PACKED_DATA.init_once(|| ctx.context_mut().boot_bridge.packed_programs());
 
     pipeline::init(ctx);
 }

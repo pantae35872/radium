@@ -23,7 +23,7 @@ use crate::{
     userland::{
         self,
         pipeline::{
-            Event, PipelineContext,
+            Event, PipelineContext, TaskBlock,
             thread::{Thread, ThreadPipeline},
         },
     },
@@ -32,6 +32,7 @@ use crate::{
 #[derive(Default)]
 pub struct ProcessPipeline {
     page_tables: Vec<Option<InactivePageTable<RecurseLevel4LowerHalf>>>,
+    hlt_page_table: Option<InactivePageTable<RecurseLevel4LowerHalf>>,
     free_data: Vec<usize>,
 }
 
@@ -54,6 +55,24 @@ impl ProcessPipeline {
         match (context.interrupted_task, context.scheduled_task) {
             (Some(interrupted), Some(scheduled)) if interrupted != scheduled => {
                 self.page_table_swap(interrupted.process, scheduled.process);
+            }
+            (None, Some(TaskBlock { process, .. })) => {
+                let with = self.page_tables[process.id]
+                    .take()
+                    .expect("Some one forgot to put back their page table");
+
+                assert!(
+                    self.hlt_page_table.is_none(),
+                    "HLT page table didn't get swapped"
+                );
+                self.hlt_page_table = Some(switch_lower_half(with));
+            }
+            (Some(TaskBlock { process, .. }), None) => {
+                let hlt_table = self
+                    .hlt_page_table
+                    .take()
+                    .expect("HLT Page table stolen or uninitialized");
+                self.page_tables[process.id] = Some(switch_lower_half(hlt_table));
             }
             _ => {}
         }
@@ -79,6 +98,26 @@ impl ProcessPipeline {
             "Page table scheduled two times"
         );
         self.page_tables[from.id] = Some(switch_lower_half(with));
+    }
+
+    pub fn mem_access<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+        process: Process,
+    ) -> R {
+        if let Some(table) = self.page_tables[process.id].take() {
+            let old = switch_lower_half(table);
+
+            let r = mapper_lower(|MapperWithAllocator { mapper, allocator }| {
+                f(self, mapper, allocator)
+            });
+
+            let table = switch_lower_half(old);
+            self.page_tables[process.id] = Some(table);
+            r
+        } else {
+            mapper_lower(|MapperWithAllocator { mapper, allocator }| f(self, mapper, allocator))
+        }
     }
 
     pub fn mapper<R>(

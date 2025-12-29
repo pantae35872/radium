@@ -17,8 +17,8 @@ else
   BUILD_MODE := debug
 endif
 
-CRATES := $(filter-out src/drivers/,$(patsubst %/,%,$(wildcard src/*/))) \
-          $(patsubst %/,%,$(wildcard src/drivers/*/)) \
+CRATES := $(patsubst %/,%,$(wildcard src/*/)) \
+					$(patsubst %/,%,$(wildcard post-processor/*/)) \
           $(patsubst %/,%,$(wildcard userland/*/))
 
 .PHONY: debug release clean run test-run test dbg-run force_rebuild dbg-run-no-dbg check tftp-debug tftp-release $(CRATES)
@@ -26,25 +26,25 @@ CRATES := $(filter-out src/drivers/,$(patsubst %/,%,$(wildcard src/*/))) \
 
 NAME := radium
 BUILD_DIR := build
-DRIVERS_DIR := $(BUILD_DIR)/drivers
+USERS_DIR := $(BUILD_DIR)/usr_bin
 ISO_DIR := $(BUILD_DIR)/iso
 ISO_FILE := $(BUILD_DIR)/os.iso
 FAT_IMG := $(BUILD_DIR)/fat.img
 DISK_FILE := disk.img
 DWARF_FILE := $(abspath $(BUILD_DIR)/dwarf.baker)
-DRIVERS_FILE := $(abspath $(BUILD_DIR)/drivers.pak)
+USERS_FILE := $(abspath $(BUILD_DIR)/usr_bin.pak)
 TFTP_DIR := /srv/tftp
 
-DRIVER_CRATES := $(patsubst %/,%,$(wildcard src/drivers/*/))
-DRIVER_NAMES  := $(notdir $(DRIVER_CRATES))
-DRIVER_BINS   := $(abspath $(addprefix $(BUILD_DIR)/x86_64_kdriver/$(BUILD_MODE)/, $(addsuffix .so, lib$(DRIVER_NAMES))))
+USER_CRATES := $(patsubst %/,%,$(wildcard userland/*/))
+USER_NAMES  := $(notdir $(USER_CRATES))
+USER_BINS   := $(abspath $(BUILD_DIR)/x86_64_userland/$(BUILD_MODE)/$(USER_NAMES))
 
 # Dependency files
 KERNEL_DEPS := $(wildcard $(BUILD_DIR)/x86_64/$(BUILD_MODE)/*.d)
 BAKER_DEPS := $(wildcard $(BUILD_DIR)/release/baker.d)
 PACKER_DEPS := $(wildcard $(BUILD_DIR)/release/packer.d)
 BOOTLOADER_DEPS := $(wildcard $(BUILD_DIR)/x86_64-unknown-uefi/$(BUILD_MODE)/*.d)
-DRIVER_DEPS = $(wildcard $(BUILD_DIR)/x86_64_kdriver/$(BUILD_MODE)/*.d)
+USER_DEPS = $(wildcard $(BUILD_DIR)/x86_64_userland/$(BUILD_MODE)/*.d)
 
 KERNEL_OPTS_DEPS := src/kernel/src/boot/boot.asm src/kernel/src/boot/trampoline.asm
 
@@ -71,7 +71,7 @@ endif
 -include $(BOOTLOADER_DEPS)
 -include $(BAKER_DEPS)
 -include $(PACKER_DEPS)
--include $(DRIVER_DEPS)
+-include $(USER_DEPS)
 
 QEMU_FLAGS := -m 1G -bios OVMF.fd \
 	-drive id=disk,file=$(DISK_FILE),if=none,format=qcow2 -device ahci,id=ahci \
@@ -82,13 +82,13 @@ QEMU_FLAGS := -m 1G -bios OVMF.fd \
 KVM_FLAGS := -enable-kvm -cpu host,+rdrand,+sse,+mmx
 
 $(BUILD_DIR):
-	mkdir $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)
 
-$(DRIVERS_DIR):
-	mkdir $(DRIVERS_DIR) 
+$(USERS_DIR):
+	mkdir -p $(USERS_DIR) 
 
 $(ISO_DIR):
-	mkdir $(ISO_DIR)
+	mkdir -p $(ISO_DIR)
 
 ifneq ($(STILL_TESTING),1)
 ifeq ($(BUILD_MODE_CHANGED),1)
@@ -97,8 +97,8 @@ force_rebuild:
 $(KERNEL_BIN): force_rebuild
 $(KERNEL_BUILD_BIN): force_rebuild
 $(DWARF_FILE): force_rebuild
-$(DRIVER_BINS): force_rebuild
-$(DRIVERS_FILE): force_rebuild
+$(USERS_BINS): force_rebuild
+$(USERS_FILE): force_rebuild
 $(BOOTLOADER_BIN): force_rebuild
 $(FAT_IMG): force_rebuild
 $(ISO_FILE): force_rebuild
@@ -129,18 +129,18 @@ $(KERNEL_FONT):
 	wget https://www.1001fonts.com/download/font/open-sans.regular.ttf
 	mv open-sans.regular.ttf kernel-font.ttf
 
-define DRIVER_template
-$(abspath $(addprefix $(BUILD_DIR)/x86_64_kdriver/$(BUILD_MODE)/, $(addsuffix .so, lib$(1)))):
-	@echo "Building driver $(1)"
-	cd src/drivers/$(1) && cargo build $(if $(RELEASE),--release,)
-	cp $$@ $(DRIVERS_DIR)/
+define USER_template
+$(abspath $(BUILD_DIR)/x86_64_userland/$(BUILD_MODE)/$(1)):
+	@echo "Building user bins $(1)"
+	cd userland/$(1) && cargo build $(if $(RELEASE),--release,)
+	cp $$@ $(USERS_DIR)/
 endef
 
-$(foreach name,$(DRIVER_NAMES),$(eval $(call DRIVER_template,$(name))))
+$(foreach name,$(USER_NAMES),$(eval $(call USER_template,$(name))))
 
-$(DRIVERS_FILE): $(DRIVERS_DIR) $(PACKER_BIN) $(DRIVER_BINS)
-	@echo "Packing drivers"
-	$(PACKER_BIN) $(DRIVERS_DIR) $(DRIVERS_FILE)
+$(USERS_FILE): $(USERS_DIR) $(PACKER_BIN) $(USER_BINS)
+	@echo "Packing users bin"
+	$(PACKER_BIN) $(USERS_DIR) $(USERS_FILE)
 
 $(DWARF_FILE): $(KERNEL_BUILD_BIN) $(BAKER_BIN)
 	$(BAKER_BIN) $(KERNEL_BUILD_BIN) $(DWARF_FILE)
@@ -160,12 +160,12 @@ $(BOOTLOADER_BIN):
 	cp $(BOOTLOADER_BIN) $(BUILD_DIR)/BOOTX64.EFI
 
 $(PACKER_BIN):
-	cd src/packer && cargo build --release
+	cd post-processor/packer && cargo build --release
 
 $(BAKER_BIN):
-	cd src/baker && cargo build --release
+	cd post-processor/baker && cargo build --release
 
-$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(DRIVERS_FILE) $(BOOTLOADER_BIN)
+$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(USERS_FILE) $(BOOTLOADER_BIN)
 	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=64 status=none
 	mkfs.vfat -F32 $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
@@ -175,7 +175,7 @@ else
 	mcopy -D o -i $(FAT_IMG) $(TEST_BOOT_INFO) ::/boot
 	mmove -D o -i $(FAT_IMG) boot/$(TEST_BOOT_INFO) boot/$(BOOT_INFO) 
 endif
-	mcopy -D o -i $(FAT_IMG) $(KERNEL_FONT) $(DWARF_FILE) $(DRIVERS_FILE) ::/boot
+	mcopy -D o -i $(FAT_IMG) $(KERNEL_FONT) $(DWARF_FILE) $(USERS_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT
 
@@ -183,8 +183,8 @@ $(ISO_FILE): $(FAT_IMG) $(ISO_DIR)
 	cp $(FAT_IMG) $(ISO_DIR)
 	xorriso -as mkisofs -R -f -e fat.img -no-emul-boot -o $(BUILD_DIR)/os.iso $(ISO_DIR)
 
-release: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE)
-debug: $(BUILD_MODE_FILE) $(OVMF) $(ISO_FILE) 
+release: $(BUILD_MODE_FILE) $(ISO_FILE)
+debug: $(BUILD_MODE_FILE) $(ISO_FILE) 
 tftp-debug: $(BUILD_MODE_FILE) $(FAT_IMG)
 	sudo rm -rf $(TFTP_DIR)/*
 	sudo mcopy -o -i $(FAT_IMG) -s ::* $(TFTP_DIR)

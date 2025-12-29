@@ -33,16 +33,10 @@ pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
 pub fn load_kernel_elf(ctx: InitializationContext<Stage1>) -> InitializationContext<Stage2> {
     let elf = Elf::new(ctx.context().kernel_file)
         .expect("Failed to create elf file from the kernel file buffer");
-    let page_count: usize = {
-        let padding = elf.mem_min().as_u64() & 0x0fff;
-        let total_bytes = elf.max_memory_needed() as u64 + padding;
-        (1 + (total_bytes >> 12)) as usize
-    };
-
     let program_ptr = match system_table().boot_services().allocate_pages(
         AllocateType::AnyPages,
         MemoryType::LOADER_CODE,
-        page_count,
+        elf.page_needed(),
     ) {
         Ok(ptr) => ptr as *mut u8,
         Err(err) => {

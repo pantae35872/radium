@@ -27,12 +27,15 @@ use core::cell::RefCell;
 use alloc::vec::Vec;
 use kernel_proc::{def_local, local_builder};
 use pager::{address::VirtAddr, registers::RFlags};
+use santa::Elf;
+use sentinel::log;
 use smart_default::SmartDefault;
 
 use crate::{
     initialization_context::{InitializationContext, Stage4},
     interrupt::{self, ExtendedInterruptStackFrame, InterruptIndex},
     userland::{
+        PACKED_DATA,
         pipeline::{
             dispatch::Dispatcher,
             process::{Process, ProcessPipeline},
@@ -56,7 +59,12 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
                 PIPELINE(ControlPipeline::new().into()),
                 CURRENT_THREAD_ID(0.into())
             );
-        })
+        });
+        i.after_bsp(|| {
+            interrupt::without_interrupts(|| {
+                PIPELINE.borrow_mut().spawn_init();
+            })
+        });
     });
 }
 
@@ -131,6 +139,29 @@ impl ControlPipeline {
             events: Some(events),
             should_schedule: false,
         }
+    }
+
+    fn spawn_init(&mut self) {
+        let packed = PACKED_DATA.get().unwrap();
+        let init_program = packed
+            .iter()
+            .find(|e| e.name == "init")
+            .expect("Can't find init!");
+
+        let init_program = Elf::new(init_program.data).expect("Init is not a valid elf");
+        let process = self.alloc_process();
+        let entry = self.process.mem_access(
+            // SAFETY: The mem access uphold the contract
+            |_process, mapper, allocator| unsafe {
+                init_program.load_user(&mut mapper.mapper_with_allocator(allocator))
+            },
+            process,
+        );
+
+        log!(Debug, "Init program entry at 0x{entry:x}");
+
+        self.scheduler
+            .add_init(self.thread.alloc(&mut self.process, process, entry));
     }
 
     pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {

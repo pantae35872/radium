@@ -188,7 +188,7 @@ impl ThreadPipeline {
 
     fn thread_context(&self, thread: Thread) -> &ThreadContext {
         let context = &self.pool[thread.local_id().thread];
-        assert_eq!(
+        assert_ne!(
             context.state,
             ThreadState::Migrated,
             "trying to access a migrated thread"

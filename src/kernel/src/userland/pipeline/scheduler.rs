@@ -50,6 +50,10 @@ impl SchedulerPipeline {
         self.sleep_queue.push(Reverse(sleep_entry));
     }
 
+    pub(super) fn add_init(&mut self, init: TaskBlock) {
+        self.units.push_back(init);
+    }
+
     pub fn schedule(&mut self, context: &mut PipelineContext) {
         if let Some(task) = context.interrupted_task {
             self.units.push_back(task);

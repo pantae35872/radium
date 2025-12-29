@@ -61,6 +61,7 @@ pub fn switch_lower_half(
             &mut TableManipulationContext {
                 temporary_page: &mut TEMPORARY_PAGE.lock(),
                 allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page_mapper: Some(&mut *ACTIVE_TABLE_UPPER.lock()),
             },
             with,
         )
@@ -81,6 +82,7 @@ pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
             &mut TableManipulationContext {
                 temporary_page: &mut TEMPORARY_PAGE.lock(),
                 allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page_mapper: None,
             },
             options,
             copy_from,
@@ -106,6 +108,7 @@ where
             &mut TableManipulationContext {
                 temporary_page: &mut TEMPORARY_PAGE.lock(),
                 allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page_mapper: None,
             },
             options,
         )
@@ -126,6 +129,7 @@ pub unsafe fn mapper_lower_with<R>(
             &mut TableManipulationContext {
                 temporary_page: &mut TEMPORARY_PAGE.lock(),
                 allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page_mapper: None,
             },
             f,
         )
@@ -188,6 +192,7 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             let mut table_manipulation_context = TableManipulationContext {
                 temporary_page: &mut context.temporary_page.lock(),
                 allocator: &mut *context.buddy_allocator.lock(),
+                temporary_page_mapper: None,
             };
             // SAFETY: Since the ACTIVE_TABLE_UPPER is locked behind a shared mutex, the safety
             // contract upholds
@@ -464,7 +469,8 @@ select_context! {
             unsafe {
                 ctx.active_table.with(table, &mut TableManipulationContext {
                     temporary_page: &mut ctx.temporary_page,
-                    allocator: &mut ctx.buddy_allocator
+                    allocator: &mut ctx.buddy_allocator,
+                    temporary_page_mapper: None
                 }, f)
             }
         }

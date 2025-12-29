@@ -2,10 +2,12 @@
 name = "packer"
 version = "0.1.0"
 edition = "2024"
+description = "Pack elf executeables into a single file"
 
 [dependencies]
+is_executable = "1.0.5"
 
 [dependencies.packery]
-path = "../packery"
+path = "../../src/packery"
 default-features = false
 features = ["std"]

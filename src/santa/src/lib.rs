@@ -262,6 +262,53 @@ impl<'a> Elf<'a> {
         None
     }
 
+    /// Load the elf, and map with user permission, and returns an entry point
+    ///
+    /// # Safety
+    /// this assume that the mapper, will take effect instantly (the memory became present
+    /// once it is mapped), method like with_inactive or with can't use this function
+    pub unsafe fn load_user(&self, mapper: &mut impl pager::Mapper) -> VirtAddr {
+        for section in self.reader.program_header_iter() {
+            if section.segment_type() != ProgramType::Load {
+                continue;
+            }
+            assert!(
+                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
+                "sections need to be page aligned"
+            );
+            let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
+            let virt_start = self.mem_min() + relative_offset;
+            let virt_end = virt_start + section.memsize() - 1;
+
+            log!(
+                Trace,
+                "Elf mapping [{virt_start:x}-{virt_end:x}] with {}",
+                EntryFlags::from(section.flags()) | EntryFlags::USER_ACCESSIBLE
+            );
+
+            let start_page = Page::containing_address(virt_start);
+            let end_page = Page::containing_address(virt_end);
+            mapper.map_range(start_page, end_page, EntryFlags::WRITABLE);
+
+            let src = self.reader.buffer().as_ptr() as u64 + section.offset();
+            let len = section.filesize();
+            let mem_sz = section.memsize();
+
+            unsafe {
+                core::ptr::write_bytes(virt_start.as_mut_ptr::<u8>(), 0, mem_sz as usize);
+                core::ptr::copy(src as *const u8, virt_start.as_mut_ptr(), len as usize);
+            }
+
+            unsafe {
+                mapper.change_flags_ranges(start_page, end_page, |_| {
+                    EntryFlags::from(section.flags()) | EntryFlags::USER_ACCESSIBLE
+                })
+            };
+        }
+
+        VirtAddr::new(self.reader.entry_point())
+    }
+
     /// Load the elf file into the program ptr. without mapping with correct perrmission
     ///
     /// # Safety
@@ -340,6 +387,12 @@ impl<'a> Elf<'a> {
 
     pub fn mem_max(&self) -> VirtAddr {
         self.mem_max
+    }
+
+    pub fn page_needed(&self) -> usize {
+        let padding = self.mem_min().as_u64() & 0x0fff;
+        let total_bytes = self.max_memory_needed() as u64 + padding;
+        (1 + (total_bytes >> 12)) as usize
     }
 
     pub fn max_memory_needed(&self) -> usize {

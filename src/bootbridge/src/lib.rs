@@ -361,7 +361,7 @@ impl BootBridge {
         &self.deref().kernel_elf
     }
 
-    pub fn packed_drivers(&mut self) -> Packed<'static> {
+    pub fn packed_programs(&mut self) -> Packed<'static> {
         self.deref_mut().packed.take().unwrap()
     }
 

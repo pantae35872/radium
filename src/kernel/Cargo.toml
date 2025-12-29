@@ -30,7 +30,6 @@ c_enum = { path = "../c_enum"}
 kernel_proc = { path = "../kernel_proc" }
 pager = { path = "../pager" }
 sentinel = { path = "../sentinel" }
-rstd = { path = "../rstd" }
 packery = { path = "../packery" }
 
 [dependencies.bincode]

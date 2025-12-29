@@ -12,7 +12,7 @@ PHDRS
 }
 
 SECTIONS {
-  . = 1M;
+  . = 100M;
 
   .rodata ALIGN(4K):
   {

@@ -9,7 +9,7 @@ use static_log::StaticLog;
 use crate::{
     initialization_context::{InitializationContext, Stage0},
     initialize_guard,
-    interrupt::{CORE_ID, IS_IN_ISR},
+    interrupt::{self, CORE_ID, IS_IN_ISR},
     print, serial_print,
     smp::cpu_local_avaiable,
     userland::pipeline::CURRENT_THREAD_ID,
@@ -125,7 +125,7 @@ impl LoggerBackend for MainLogger {
                     format_args!(
                         "<- [\x1b[93m{module_path}\x1b[0m] [C {core} : T {thread}] : {formatter}",
                         core = CORE_ID.id(),
-                        thread = *CURRENT_THREAD_ID.inner_mut().borrow_mut(),
+                        thread = interrupt::without_interrupts(|| { *CURRENT_THREAD_ID.borrow() }),
                     ),
                 );
             }

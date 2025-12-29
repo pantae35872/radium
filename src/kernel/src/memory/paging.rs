@@ -26,6 +26,7 @@ where
     let mut context = TableManipulationContext {
         temporary_page: &mut temporary_page,
         allocator,
+        temporary_page_mapper: None,
     };
 
     let new_table = |mapper: &mut mapper::Mapper<RecurseLevel4>, allocator: &mut A| {

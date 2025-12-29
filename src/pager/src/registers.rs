@@ -601,4 +601,9 @@ pub mod tlb {
             asm!("invlpg [{}]", in(reg) addr.as_u64(), options(nostack, preserves_flags));
         }
     }
+
+    /// Same as [Cr3::reload]
+    pub fn full_flush() {
+        Cr3::reload();
+    }
 }

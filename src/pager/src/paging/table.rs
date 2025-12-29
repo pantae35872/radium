@@ -5,6 +5,7 @@ use core::ptr::Unique;
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
 use crate::paging::{ActivePageTable, InactivePageTable, TableManipulationContext};
+use crate::registers::tlb;
 
 use super::{ENTRY_COUNT, Entry, EntryFlags};
 
@@ -131,7 +132,11 @@ where
                 "mapping code does not support huge pages"
             );
             let frame = allocator.allocate_frame().expect("no frames available");
-            self.entries[index as usize].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+            self.entries[index as usize].set(
+                frame,
+                // SUS: This might seem wrong, but if the p1 entry is not ua it will be fine right??
+                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
+            );
             self.next_table_mut(index).unwrap().zero();
         }
         self.next_table_mut(index).unwrap()
@@ -244,6 +249,8 @@ where
                     .copy_from_slice(&table[START as usize..END as usize])
             })
         };
+
+        tlb::full_flush();
 
         old_table
     }

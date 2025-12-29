@@ -1,9 +1,10 @@
 use std::{
     env,
-    fs::{read_dir, File},
+    fs::{File, read_dir},
     io::{Read, Write},
 };
 
+use is_executable::IsExecutable;
 use packery::Packery;
 
 fn main() {
@@ -17,11 +18,12 @@ fn main() {
         .expect("Target directory dosn't exists")
         .filter_map(|e| e.ok())
     {
-        if file.path().extension().is_some_and(|e| e == "so") {
-            let mut driver = File::open(file.path()).expect("Failed to open driver file");
-            driver
+        if file.path().is_executable() {
+            let mut executeable = File::open(file.path()).expect("Failed to open program file");
+
+            executeable
                 .read_to_end(&mut buf)
-                .expect("Failed to read driver file");
+                .expect("Failed to read program file");
 
             packery.push(
                 file.path()

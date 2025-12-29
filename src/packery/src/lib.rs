@@ -126,7 +126,7 @@ pub struct Packed<'a> {
 }
 
 #[derive(Debug)]
-pub struct DriverContainer<'a> {
+pub struct ProgramContainer<'a> {
     pub name: &'a str,
     pub data: &'a [u8],
 }
@@ -171,7 +171,7 @@ impl<'a> Packed<'a> {
             &self.buffer[header.string_offset as usize
                 ..header.string_offset as usize + header.string_length as usize],
         )
-        .expect("Invalid utf8 in driver pack")
+        .expect("Invalid utf8 in program pack")
     }
 
     fn get_data(&'a self, data: PackeryData) -> &'a [u8] {
@@ -182,14 +182,14 @@ impl<'a> Packed<'a> {
         &self.string_table()[string.offset as usize..(string.offset + string.size) as usize]
     }
 
-    pub fn iter(&'a self) -> DriverIter<'a> {
-        DriverIter {
+    pub fn iter(&'a self) -> ProgramIter<'a> {
+        ProgramIter {
             packed: self,
             index: 0,
         }
     }
 
-    pub fn get_driver(&'a self, index: usize) -> Result<DriverContainer<'a>, PackedError> {
+    pub fn get_program(&'a self, index: usize) -> Result<ProgramContainer<'a>, PackedError> {
         let header = self.header();
         if index >= header.entry_length as usize {
             return Err(PackedError::DriverIndexOutOfRange {
@@ -207,7 +207,7 @@ impl<'a> Packed<'a> {
                     .unwrap(),
             )
         };
-        Ok(DriverContainer {
+        Ok(ProgramContainer {
             name: self.get_string(entry.name),
             data: self.get_data(entry.data),
         })
@@ -215,18 +215,18 @@ impl<'a> Packed<'a> {
 }
 
 #[derive(Debug)]
-pub struct DriverIter<'a> {
+pub struct ProgramIter<'a> {
     packed: &'a Packed<'a>,
     index: usize,
 }
 
-impl<'a> Iterator for DriverIter<'a> {
-    type Item = DriverContainer<'a>;
+impl<'a> Iterator for ProgramIter<'a> {
+    type Item = ProgramContainer<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let before_index = self.index;
         self.index += 1;
-        self.packed.get_driver(before_index).ok()
+        self.packed.get_program(before_index).ok()
     }
 }
 

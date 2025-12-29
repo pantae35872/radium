@@ -61,7 +61,7 @@ use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
 use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
-use smp::{ALL_AP_INITIALIZED, cpu_local_avaiable};
+use smp::cpu_local_avaiable;
 use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
@@ -99,6 +99,8 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     userland::init(&mut stage4);
     pit::init(&mut stage4);
     smp::init_aps(stage4);
+
+    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     userland::pipeline::start_scheduling();
     hlt_loop();
@@ -173,12 +175,11 @@ fn panic(info: &PanicInfo) -> ! {
         _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
     };
     if cpu_local_avaiable() {
-        log!(
-            Critical,
-            "PANIC on core: {}, thread id: {}",
-            *CORE_ID,
-            *CURRENT_THREAD_ID.inner_mut().borrow_mut()
-        );
+        let id = match CURRENT_THREAD_ID.try_borrow() {
+            Ok(id) => *id,
+            Err(_) => 0,
+        };
+        log!(Critical, "PANIC on core: {}, thread id: {id}", *CORE_ID,);
     }
     log!(Critical, "{}", info);
 

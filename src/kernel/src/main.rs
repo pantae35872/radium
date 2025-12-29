@@ -17,7 +17,6 @@ use bootbridge::RawBootBridge;
 use radium::logger::LOGGER;
 use radium::memory::BUDDY_ALLOCATOR;
 use radium::{print, println, serial_print, serial_println};
-use rstd::drivcall::{DRIVCALL_ERR_VSYSCALL_FULL, DRIVCALL_VSYS_REQ};
 use sentinel::log;
 
 #[unsafe(no_mangle)]
