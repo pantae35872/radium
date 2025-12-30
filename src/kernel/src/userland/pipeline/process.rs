@@ -1,4 +1,7 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    num::NonZeroUsize,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use alloc::{sync::Arc, vec::Vec};
 use hashbrown::HashSet;
@@ -40,7 +43,7 @@ impl ProcessPipeline {
     pub(super) fn new(events: &mut Event) -> Self {
         events.begin(|_c, pipeline_context, _request_context| {
             if let Some(thread) = pipeline_context.interrupted_thread {
-                pipeline_context.interrupted_process = Some(find_by_id(&thread))
+                pipeline_context.interrupted_process = Some(find_by_thread(&thread))
             }
         });
 
@@ -53,7 +56,7 @@ impl ProcessPipeline {
 
     pub fn finalize(&mut self, context: &mut PipelineContext) {
         match (context.interrupted_task, context.scheduled_task) {
-            (Some(interrupted), Some(scheduled)) if interrupted != scheduled => {
+            (Some(interrupted), Some(scheduled)) if interrupted.process != scheduled.process => {
                 self.page_table_swap(interrupted.process, scheduled.process);
             }
             (None, Some(TaskBlock { process, .. })) => {
@@ -80,6 +83,7 @@ impl ProcessPipeline {
 
     fn check_ipp(&mut self) {
         ExpandSharedPacket::handle(|packet| {
+            // SAFETY: The mutable exclusivity of the page table is ensure by page_table_modification_lock
             self.page_tables.push(Some(unsafe {
                 copy_mappings(InactivePageCopyOption::lower_half(), &packet.table_template)
             }));
@@ -105,6 +109,9 @@ impl ProcessPipeline {
         f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
         process: Process,
     ) -> R {
+        let pg_mod = &shared(&process).page_table_modification_lock;
+        let _pg_mod = pg_mod.lock();
+
         if let Some(table) = self.page_tables[process.id].take() {
             let old = switch_lower_half(table);
 
@@ -125,10 +132,9 @@ impl ProcessPipeline {
         f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
         process: Process,
     ) -> R {
-        // If the table is present in the page_tables then it's not active, use that table as a
-        // mapper
-        // FIXME: RACECONDITION!!!!!!, if the table is active in the other cores, there might be
-        // a race condition
+        let pg_mod = &shared(&process).page_table_modification_lock;
+        let _pg_mod = pg_mod.lock();
+
         if let Some(mut table) = self.page_tables[process.id].take() {
             let r = unsafe {
                 mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table)
@@ -157,21 +163,21 @@ impl ProcessPipeline {
     }
 
     pub fn alloc_thread(&mut self, parent: Process, thread: Thread) {
-        shared(&parent).threads.lock().insert(thread);
+        shared(&parent).threads.lock().insert(thread.id());
     }
 
     pub fn free_thread(&mut self, thread: Thread) {
-        shared(&find_by_id(&thread)).threads.lock().remove(&thread);
+        shared(&find_by_thread(&thread))
+            .threads
+            .lock()
+            .remove(&thread.id());
     }
 
-    pub fn free(&mut self, thread_pipeline: &mut ThreadPipeline, process: Process) {
+    pub fn free(&mut self, _thread_pipeline: &mut ThreadPipeline, process: Process) {
         let shared = shared(&process);
-        for thread in shared.threads.lock().iter() {
-            assert!(
-                thread.valid(),
-                "Process pipeline didn't get notified when some thread got freed",
-            );
-            thread_pipeline.free(*thread);
+        for _thread in shared.threads.lock().iter() {
+            // FIXME: Notify thread pipeline on all cores about the thread freeing
+            //thread_pipeline.free( *thread);
         }
 
         shared.threads.lock().clear();
@@ -184,6 +190,7 @@ impl ProcessPipeline {
             // TODO: Clean up the page tables
             self.mapper(|_s, _mapper, _allocator| {}, process);
         } else {
+            // SAFETY: The mutable exclusivity of the page table is ensure by page_table_modification_lock
             let orignal_table = Arc::new(unsafe {
                 create_mappings_lower(
                     |mapper, alloc| {
@@ -198,6 +205,7 @@ impl ProcessPipeline {
             }
             .broadcast(false);
 
+            // SAFETY: The mutable exclusivity of the page table is ensure by page_table_modification_lock
             self.page_tables.push(Some(unsafe {
                 copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table)
             }));
@@ -229,7 +237,7 @@ fn sigature(process: &Process) -> usize {
     *shared(process).signature.lock()
 }
 
-fn find_by_id(thread: &Thread) -> Process {
+fn find_by_thread(thread: &Thread) -> Process {
     GLOBAL_PROCESS_DATA.read().find_by_id(thread)
 }
 
@@ -266,7 +274,7 @@ impl GlobalProcessDataPool {
         // TODO: probably use a map on the pool instead, but HashSet on the process threads is prob
         // enough
         for (id, shared) in self.pool.iter().enumerate() {
-            if shared.threads.lock().contains(thread) {
+            if shared.threads.lock().contains(&thread.id()) {
                 return Process {
                     id,
                     signature: *shared.signature.lock(),
@@ -303,8 +311,10 @@ impl GlobalProcessDataPool {
 
 struct ProcessShared {
     stacks: Mutex<StackAllocator>,
-    threads: Mutex<HashSet<Thread>>,
+    threads: Mutex<HashSet<NonZeroUsize>>,
     signature: Mutex<usize>,
+
+    page_table_modification_lock: Mutex<()>,
 }
 
 impl ProcessShared {
@@ -322,6 +332,8 @@ impl ProcessShared {
             .into(),
             threads: HashSet::new().into(),
             signature: sig().into(),
+
+            page_table_modification_lock: ().into(),
         }
     }
 }

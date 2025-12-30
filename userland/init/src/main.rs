@@ -12,7 +12,7 @@ fn add(n: u64) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() {
+pub extern "C" fn _start() -> ! {
     add(10);
 
     loop {}

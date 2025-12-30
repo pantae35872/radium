@@ -38,6 +38,10 @@ impl GlobalThreadIdPool {
         self.pool[global_id.get() - 1].local_id = new_local_id;
     }
 
+    fn invalidate(&mut self, global_id: NonZeroUsize) {
+        self.pool[global_id.get() - 1].signature = sig();
+    }
+
     fn signature(&self, global_id: NonZeroUsize) -> usize {
         self.pool[global_id.get() - 1].signature
     }
@@ -93,6 +97,10 @@ pub(super) fn alloc_thread(local_id: LocalThreadId) -> Thread {
 
 pub(super) fn free_thread(thread: Thread) {
     GLOBAL_THREAD_ID_MAP.write().free(thread.global_id);
+}
+
+pub(super) fn invalidate(thread: Thread) {
+    GLOBAL_THREAD_ID_MAP.write().invalidate(thread.global_id);
 }
 
 pub(super) fn migrate_thread(global_id: NonZeroUsize, local_id: LocalThreadId) {

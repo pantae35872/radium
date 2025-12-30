@@ -313,7 +313,7 @@ impl TableLevel4 for RecurseLevel4UpperHalf {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4UpperHalf => RecurseLevel3, RecurseHierarchicalLevelMarker<256, ENTRY_COUNT>);
+hierarchical_level!(RecurseLevel4UpperHalf => RecurseLevel3, RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
 
 pub enum RecurseLevel3 {}
 pub enum RecurseLevel2 {}

@@ -60,16 +60,21 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
                 CURRENT_THREAD_ID(0.into())
             );
         });
-        i.after_bsp(|| {
-            interrupt::without_interrupts(|| {
-                PIPELINE.borrow_mut().spawn_init();
-            })
-        });
     });
 }
 
 def_local!(static PIPELINE: RefCell<crate::userland::pipeline::ControlPipeline>);
 def_local!(pub static CURRENT_THREAD_ID: RefCell<usize>);
+
+pub fn timer_count() -> usize {
+    interrupt::without_interrupts(|| PIPELINE.borrow().timer_count())
+}
+
+pub fn spawn_init() {
+    interrupt::without_interrupts(|| {
+        PIPELINE.borrow_mut().spawn_init();
+    })
+}
 
 pub fn start_scheduling() {
     interrupt::without_interrupts(|| {
@@ -141,6 +146,10 @@ impl ControlPipeline {
         }
     }
 
+    pub fn timer_count(&self) -> usize {
+        self.scheduler.timer_count()
+    }
+
     fn spawn_init(&mut self) {
         let packed = PACKED_DATA.get().unwrap();
         let init_program = packed
@@ -161,7 +170,21 @@ impl ControlPipeline {
         log!(Debug, "Init program entry at 0x{entry:x}");
 
         self.scheduler
-            .add_init(self.thread.alloc(&mut self.process, process, entry));
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
     }
 
     pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {
@@ -248,7 +271,7 @@ impl ControlPipeline {
             return;
         }
 
-        self.scheduler.schedule(context);
+        self.scheduler.schedule(&mut self.thread, context);
     }
 }
 

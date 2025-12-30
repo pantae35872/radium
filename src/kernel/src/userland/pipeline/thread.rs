@@ -23,6 +23,7 @@ use crate::{
         CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock,
         TaskProcesserState,
         process::{Process, ProcessPipeline},
+        scheduler::SchedulerPipeline,
     },
 };
 
@@ -42,7 +43,7 @@ impl ThreadPipeline {
 
         event.finalize(|c, s| c.thread.finalize(s));
 
-        event.ipp_handler(|c| c.thread.handle_ipp());
+        event.ipp_handler(|c| c.thread.handle_ipp(&mut c.scheduler));
 
         Self {
             pool: Vec::new(),
@@ -73,24 +74,39 @@ impl ThreadPipeline {
         &self.thread_context(thread).processor_state
     }
 
-    fn handle_ipp(&mut self) {
-        ThreadMigratePacket::handle(|ThreadMigratePacket { context, global_id }| {
-            if let Some(unused) = self
-                .unused_thread
-                .iter()
-                .find(|e| matches!(self.pool[**e].state, ThreadState::Migrated))
-            {
-                let thread_ctx = &mut self.pool[*unused];
-                *thread_ctx = context;
-            } else {
-                let id = self.pool.len();
-                self.pool.push(context);
-                id::migrate_thread(global_id, LocalThreadId::new(id));
-            }
-        });
+    fn handle_ipp(&mut self, scheduler: &mut SchedulerPipeline) {
+        ThreadMigratePacket::handle(
+            |ThreadMigratePacket {
+                 context,
+                 process,
+                 global_id,
+             }| {
+                if let Some(unused) = self
+                    .unused_thread
+                    .iter()
+                    .find(|e| matches!(self.pool[**e].state, ThreadState::Migrated))
+                {
+                    let thread_ctx = &mut self.pool[*unused];
+                    *thread_ctx = context;
+
+                    id::migrate_thread(global_id, LocalThreadId::new(*unused));
+                } else {
+                    let id = self.pool.len();
+                    self.pool.push(context);
+
+                    id::migrate_thread(global_id, LocalThreadId::new(id));
+                }
+                let thread = Thread {
+                    global_id,
+                    signature: id::sigature(global_id),
+                };
+
+                scheduler.add_task(TaskBlock { process, thread });
+            },
+        );
     }
 
-    pub fn migrate(&mut self, destination: CoreId, thread: Thread) {
+    pub fn migrate(&mut self, destination: CoreId, TaskBlock { thread, process }: TaskBlock) {
         let id = thread.local_id().thread;
 
         let context = core::mem::replace(
@@ -105,9 +121,11 @@ impl ThreadPipeline {
         ThreadMigratePacket {
             context,
             global_id: thread.global_id,
+            process,
         }
         .send(destination, false);
 
+        id::invalidate(thread);
         self.unused_thread.push(id);
     }
 
@@ -205,6 +223,7 @@ impl ThreadPipeline {
 struct ThreadMigratePacket {
     context: ThreadContext,
     global_id: NonZeroUsize,
+    process: Process,
 }
 
 #[derive(Debug)]

@@ -100,23 +100,9 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     pit::init(&mut stage4);
     smp::init_aps(stage4);
 
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
-
+    userland::pipeline::spawn_init();
     userland::pipeline::start_scheduling();
     hlt_loop();
-    //LOCAL_SCHEDULER.inner_mut().spawn(|| {
-    //    while !ALL_AP_INITIALIZED.load(Ordering::Relaxed) {
-    //        sleep(1000);
-    //    }
-    //    sleep(1000);
-
-    //    // TODO: Redo this one i'm ready, currently i'm cleaning up the memory map, and this
-    //    // uefi_runtime pollutes the lower half address space
-    //    //uefi_runtime::init();
-
-    //    main_thread()
-    //});
-    //LOCAL_SCHEDULER.inner_mut().start_scheduling();
 }
 
 #[macro_export]
