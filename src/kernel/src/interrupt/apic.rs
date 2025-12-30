@@ -13,7 +13,7 @@ use crate::{
     inline_if,
     interrupt::TPMS,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    smp::{APIC_ID_TO_CPU_ID, CoreId, core_id_to_apic_id},
+    smp::{core_id_to_apic_id, CoreId, APIC_ID_TO_CPU_ID},
 };
 use sentinel::log;
 

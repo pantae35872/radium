@@ -35,7 +35,6 @@ use crate::{
     initialization_context::{InitializationContext, Stage4},
     interrupt::{self, ExtendedInterruptStackFrame, InterruptIndex},
     userland::{
-        PACKED_DATA,
         pipeline::{
             dispatch::Dispatcher,
             process::{Process, ProcessPipeline},
@@ -43,6 +42,7 @@ use crate::{
             thread::{Thread, ThreadPipeline},
         },
         syscall::SyscallId,
+        PACKED_DATA,
     },
 };
 
@@ -73,7 +73,7 @@ pub fn timer_count() -> usize {
 pub fn spawn_init() {
     interrupt::without_interrupts(|| {
         PIPELINE.borrow_mut().spawn_init();
-    })
+    });
 }
 
 pub fn start_scheduling() {
@@ -169,22 +169,10 @@ impl ControlPipeline {
 
         log!(Debug, "Init program entry at 0x{entry:x}");
 
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        for _ in 0..64 {
+            self.scheduler
+                .add_task(self.thread.alloc(&mut self.process, process, entry));
+        }
     }
 
     pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {
@@ -263,6 +251,7 @@ impl ControlPipeline {
             }
             self.events = Some(event);
         }
+
         context.should_schedule = false;
     }
 
@@ -324,7 +313,7 @@ pub fn handle_request<'b>(
             super::syscall::syscall_handle(&rq_context, &mut pipeline, &mut context, id)
         }
         RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
-            pipeline.handle_ipp(&mut context)
+            pipeline.handle_ipp(&mut context);
         }
         RequestReferer::HardwareInterrupt(i) => {
             pipeline.hardware_interrupt(i);

@@ -9,9 +9,9 @@ use kernel_proc::IPPacket;
 use pager::{
     address::Page,
     paging::{
-        InactivePageCopyOption, InactivePageTable,
         mapper::{Mapper, MapperWithAllocator},
         table::RecurseLevel4LowerHalf,
+        InactivePageCopyOption, InactivePageTable,
     },
 };
 use spin::{Mutex, RwLock};
@@ -26,8 +26,8 @@ use crate::{
     userland::{
         self,
         pipeline::{
-            Event, PipelineContext, TaskBlock,
             thread::{Thread, ThreadPipeline},
+            Event, PipelineContext, TaskBlock,
         },
     },
 };
@@ -68,9 +68,10 @@ impl ProcessPipeline {
                     self.hlt_page_table.is_none(),
                     "HLT page table didn't get swapped"
                 );
+
                 self.hlt_page_table = Some(switch_lower_half(with));
             }
-            (Some(TaskBlock { process, .. }), None) => {
+            (Some(TaskBlock { process, .. }), None) if context.should_schedule => {
                 let hlt_table = self
                     .hlt_page_table
                     .take()

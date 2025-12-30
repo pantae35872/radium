@@ -54,8 +54,8 @@ use driver::{
     acpi::{self},
     pit,
 };
-use graphics::BACKGROUND_COLOR;
 use graphics::color::Color;
+use graphics::BACKGROUND_COLOR;
 use initialization_context::{InitializationContext, Stage0};
 use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
@@ -63,7 +63,7 @@ use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
 use smp::cpu_local_avaiable;
 use spin::Mutex;
-use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
+use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
 
 use crate::interrupt::CORE_ID;
 use crate::userland::pipeline::CURRENT_THREAD_ID;
@@ -99,6 +99,8 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     userland::init(&mut stage4);
     pit::init(&mut stage4);
     smp::init_aps(stage4);
+
+    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     userland::pipeline::spawn_init();
     userland::pipeline::start_scheduling();

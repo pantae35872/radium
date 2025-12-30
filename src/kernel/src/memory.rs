@@ -5,27 +5,25 @@ use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
-    EntryFlags, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator, TopLevelP4, TopLevelRecurse},
         table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
         temporary_page::TemporaryPage,
+        ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
-    virt_addr_alloc,
+    virt_addr_alloc, EntryFlags, PAGE_SIZE,
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
 use stack_allocator::StackAllocator;
 
 use crate::{
-    DWARF_DATA,
     driver::acpi::Acpi,
-    initialization_context::{InitializationContext, Stage0, Stage1, Stage4, select_context},
-    initialize_guard, log,
+    initialization_context::{select_context, InitializationContext, Stage0, Stage1, Stage4},
+    initialize_guard, log, DWARF_DATA,
 };
 
 pub use self::paging::remap_the_kernel;
@@ -55,13 +53,16 @@ pub fn stack_allocator<R>(
 pub fn switch_lower_half(
     with: InactivePageTable<RecurseLevel4LowerHalf>,
 ) -> InactivePageTable<RecurseLevel4LowerHalf> {
+    let upper = &mut *ACTIVE_TABLE_UPPER.lock();
+    let allocator = &mut *BUDDY_ALLOCATOR.lock();
+    let temporary_page = &mut TEMPORARY_PAGE.lock();
     // SAFETY: Switching the user level4 is completely safe, i think
     unsafe {
         ACTIVE_TABLE_LOWER.borrow_mut().switch(
             &mut TableManipulationContext {
-                temporary_page: &mut TEMPORARY_PAGE.lock(),
-                allocator: &mut *BUDDY_ALLOCATOR.lock(),
-                temporary_page_mapper: Some(&mut *ACTIVE_TABLE_UPPER.lock()),
+                temporary_page,
+                allocator,
+                temporary_page_mapper: Some(upper),
             },
             with,
         )
@@ -76,12 +77,15 @@ pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
     options: InactivePageCopyOption,
     copy_from: &InactivePageTable<From>,
 ) -> InactivePageTable<To> {
+    let upper = &mut *ACTIVE_TABLE_UPPER.lock();
+    let allocator = &mut *BUDDY_ALLOCATOR.lock();
+    let temporary_page = &mut TEMPORARY_PAGE.lock();
     // SAFETY: This is just a helper function, the options contract are uphold by the caller
     unsafe {
-        ACTIVE_TABLE_UPPER.lock().copy_mappings_from(
+        upper.copy_mappings_from(
             &mut TableManipulationContext {
-                temporary_page: &mut TEMPORARY_PAGE.lock(),
-                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page,
+                allocator,
                 temporary_page_mapper: None,
             },
             options,
@@ -101,13 +105,16 @@ pub unsafe fn create_mappings_lower<F>(
 where
     F: FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator),
 {
+    let upper = &mut *ACTIVE_TABLE_UPPER.lock();
+    let allocator = &mut *BUDDY_ALLOCATOR.lock();
+    let temporary_page = &mut TEMPORARY_PAGE.lock();
     // SAFETY: This is just a helper function, the options contract are uphold by the caller
     unsafe {
-        ACTIVE_TABLE_UPPER.lock().create_mappings(
+        upper.create_mappings(
             f,
             &mut TableManipulationContext {
-                temporary_page: &mut TEMPORARY_PAGE.lock(),
-                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page,
+                allocator,
                 temporary_page_mapper: None,
             },
             options,
@@ -123,12 +130,15 @@ pub unsafe fn mapper_lower_with<R>(
     f: impl FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
     with: &mut InactivePageTable<RecurseLevel4LowerHalf>,
 ) -> R {
+    let upper = &mut *ACTIVE_TABLE_UPPER.lock();
+    let allocator = &mut *BUDDY_ALLOCATOR.lock();
+    let temporary_page = &mut TEMPORARY_PAGE.lock();
     unsafe {
-        ACTIVE_TABLE_UPPER.lock().with(
+        upper.with(
             with,
             &mut TableManipulationContext {
-                temporary_page: &mut TEMPORARY_PAGE.lock(),
-                allocator: &mut *BUDDY_ALLOCATOR.lock(),
+                temporary_page,
+                allocator,
                 temporary_page_mapper: None,
             },
             f,

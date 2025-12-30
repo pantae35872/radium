@@ -20,10 +20,10 @@ use crate::{
     memory::stack_allocator::Stack,
     smp::CoreId,
     userland::pipeline::{
-        CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock,
-        TaskProcesserState,
         process::{Process, ProcessPipeline},
         scheduler::SchedulerPipeline,
+        CommonRequestContext, Event, PipelineContext, TaskBlock, TaskProcesserState,
+        CURRENT_THREAD_ID,
     },
 };
 
@@ -63,6 +63,10 @@ impl ThreadPipeline {
     }
 
     fn finalize(&mut self, ctx: &mut PipelineContext) {
+        if !ctx.should_schedule {
+            return;
+        }
+
         if let Some(task) = ctx.scheduled_task {
             *CURRENT_THREAD_ID.borrow_mut() = task.thread.global_id.get();
         } else {

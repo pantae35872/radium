@@ -5,12 +5,11 @@ use core::{
 
 use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
 use derivative::Derivative;
-use sentinel::log;
 
 use crate::{
-    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS},
+    interrupt::{InterruptIndex, CORE_ID, LAPIC, TPMS},
     smp::{CoreId, MAX_CPU},
-    userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
+    userland::pipeline::{thread::ThreadPipeline, Event, PipelineContext, TaskBlock},
 };
 
 const MIGRATION_THRESHOLD: usize = 2;
@@ -27,6 +26,7 @@ struct SleepEntry {
 pub struct SchedulerPipeline {
     units: VecDeque<TaskBlock>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
+    scheduled_count: usize,
 
     timer_count: usize,
 }
@@ -39,7 +39,23 @@ impl SchedulerPipeline {
             }
         });
 
+        events.finalize(|c, cx| {
+            c.scheduler.finalize(cx);
+        });
+
         Self::default()
+    }
+
+    fn finalize(&mut self, context: &mut PipelineContext) {
+        match (context.interrupted_task, context.scheduled_task) {
+            (Some(interrupted), Some(scheduled)) if scheduled == interrupted => {}
+            (Some(interrupted), ..) => {
+                self.units.push_back(interrupted);
+            }
+            _ => {}
+        }
+
+        self.units.extend(&context.added_tasks);
     }
 
     pub fn timer_count(&self) -> usize {
@@ -99,26 +115,16 @@ impl SchedulerPipeline {
             let core = CoreId::new(target_core)
                 .expect("Unintialized core selected when calcuating thread migration");
 
-            log!(
-                Trace,
-                "Migrating thread {} to core {}",
-                task.thread.id(),
-                core
-            );
             thread.migrate(core, task);
 
             TASK_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
             TASK_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
+            break;
         }
     }
 
     pub fn schedule(&mut self, thread: &mut ThreadPipeline, context: &mut PipelineContext) {
         self.migrate(thread);
-
-        if let Some(task) = context.interrupted_task {
-            self.units.push_back(task);
-        }
-        self.units.extend(&context.added_tasks);
 
         if self
             .sleep_queue
