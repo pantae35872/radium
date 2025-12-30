@@ -109,7 +109,7 @@ $(DISK_FILE):
 	qemu-img create -f qcow2 $(DISK_FILE) 1G
 
 $(OVMF):
-	bash -c 'cd vendor/edk2 && source edksetup.sh && make -C BaseTools && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE'
+	bash -c 'cd vendor/edk2 && make -C BaseTools && source edksetup.sh && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE'
 	cp vendor/edk2/Build/OvmfX64/RELEASE_GCC5/FV/OVMF.fd $(OVMF)
 
 run: $(DISK_FILE) $(OVMF)
