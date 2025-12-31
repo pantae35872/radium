@@ -169,10 +169,8 @@ impl ControlPipeline {
 
         log!(Debug, "Init program entry at 0x{entry:x}");
 
-        for _ in 0..64 {
-            self.scheduler
-                .add_task(self.thread.alloc(&mut self.process, process, entry));
-        }
+        self.scheduler
+            .add_task(self.thread.alloc(&mut self.process, process, entry));
     }
 
     pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {
