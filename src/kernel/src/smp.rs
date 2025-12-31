@@ -1,6 +1,7 @@
 use core::{
     cell::RefCell,
     fmt::Display,
+    mem::offset_of,
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -9,32 +10,36 @@ use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
-    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable,
         table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
         temporary_page::TemporaryPage,
+        ActivePageTable,
     },
+    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
-    registers::{Cr3, GsBase, KernelGsBase},
+    registers::{Cr3, GsBase},
 };
 
 use crate::{
     hlt, hlt_loop,
-    initialization_context::{End, InitializationContext, Stage2, Stage3, Stage4, select_context},
+    initialization_context::{select_context, End, InitializationContext, Stage2, Stage3, Stage4},
     interrupt::{
-        self, APIC_ID, LAPIC,
-        apic::{ApicId, apic_id},
+        self,
+        apic::{apic_id, ApicId},
         io_apic::IoApicManager,
+        APIC_ID, LAPIC,
     },
     log,
     memory::{
-        self, WithMapper, allocator::buddy_allocator::BuddyAllocator, mapper_lower,
-        stack_allocator, stack_allocator::StackAllocator,
+        self,
+        allocator::buddy_allocator::BuddyAllocator,
+        mapper_lower, stack_allocator,
+        stack_allocator::{Stack, StackAllocator},
+        WithMapper,
     },
     userland::{self, pipeline},
 };
@@ -354,7 +359,12 @@ impl LocalInitializer {
             initializer(&mut cpu_local_builder, ctx, id);
         }
 
-        init_local(cpu_local_builder, id);
+        init_local(
+            cpu_local_builder,
+            ctx.stack_allocator(|mut stack| stack.alloc_stack(16))
+                .expect("Failed to allocate stack for syscall cpu local stack"),
+            id,
+        );
 
         // We enable the interrupts after we're sure that the local has been initialized
         interrupt::enable();
@@ -369,22 +379,66 @@ impl LocalInitializer {
     }
 }
 
-fn init_local(builder: CpuLocalBuilder, core_id: CoreId) {
+#[repr(C)]
+struct CpuLocalPointer {
+    syscall_rsp: u64,
+    syscall_user_rsp: u64,
+    cpu_local: *mut CpuLocal,
+}
+
+const _: () = assert!(
+    offset_of!(CpuLocalPointer, syscall_user_rsp) == 8,
+    "syscall user rsp not the field"
+);
+
+const _: () = assert!(
+    offset_of!(CpuLocalPointer, syscall_rsp) == 0,
+    "syscall rsp not the field"
+);
+
+const _: () = assert!(
+    offset_of!(CpuLocalPointer, cpu_local) == 16,
+    "syscall rsp not the field"
+);
+
+/// Get the cpu local
+///
+/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
+#[inline(always)]
+pub fn cpu_local() -> &'static mut CpuLocal {
+    let ptr: *mut CpuLocal;
+    if GsBase::read().is_null() || !GsBase::read().is_canonical_higher_half() {
+        panic!("Trying to access cpu local while, it's has not been initialized");
+    }
+    unsafe {
+        core::arch::asm!("mov {}, gs:16", out(reg) ptr);
+    }
+    unsafe { &mut *ptr }
+}
+
+fn init_local(builder: CpuLocalBuilder, syscall_rsp: Stack, core_id: CoreId) {
     let Some(cpu_local) = builder.build() else {
         panic!("Failed to initialize Core: {core_id}");
     };
-    let cpu_local = Box::leak(cpu_local.into());
+    let cpu_local = Box::leak(cpu_local.into()) as *mut CpuLocal;
     log!(
         Trace,
         "CORE {core_id} CpuLocal address at: {:#x}",
         cpu_local as *const CpuLocal as u64
     );
 
-    let ptr = Box::leak((cpu_local as *const CpuLocal as u64).into());
+    let ptr = Box::leak(
+        CpuLocalPointer {
+            syscall_rsp: syscall_rsp.top().as_u64(),
+            syscall_user_rsp: 0,
+            cpu_local,
+        }
+        .into(),
+    );
+
     // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
     unsafe {
-        KernelGsBase::write(VirtAddr::new(ptr as *const u64 as u64));
-        GsBase::write(VirtAddr::new(ptr as *const u64 as u64));
+        GsBase::write(VirtAddr::new(ptr as *const CpuLocalPointer as u64));
     }
 }
 
@@ -443,22 +497,7 @@ pub fn apic_id_to_core_id(apic_id: usize) -> usize {
 
 /// Check if the cpu local is initialized or not
 pub fn cpu_local_avaiable() -> bool {
-    !(KernelGsBase::read().is_null() || GsBase::read().is_null())
-}
-
-/// Get the cpu local
-///
-/// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
-#[inline(always)]
-pub fn cpu_local() -> &'static mut CpuLocal {
-    let ptr: *mut CpuLocal;
-    if KernelGsBase::read().is_null() || GsBase::read().is_null() {
-        panic!("Trying to access cpu local while, it's has not been initialized");
-    }
-    unsafe {
-        core::arch::asm!("mov {}, gs:0", out(reg) ptr);
-    }
-    unsafe { &mut *ptr }
+    !GsBase::read().is_null() && GsBase::read().is_canonical_higher_half()
 }
 
 select_context! {

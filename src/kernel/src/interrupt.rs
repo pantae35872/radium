@@ -41,6 +41,7 @@ use pager::address::VirtAddr;
 use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
+use pager::registers::GsBase;
 use pager::registers::RFlags;
 use sentinel::log;
 use spin::Mutex;
@@ -354,6 +355,9 @@ fn hlt_loop() {
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
+    if !GsBase::read().is_canonical_higher_half() {
+        unsafe { GsBase::swap() };
+    }
     if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
         eoi(idx);
         disable();
@@ -373,6 +377,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     };
 
     let mut c_stack_frame = CommonRequestStackFrame::from(&*stack_frame);
+    let mut swap_to_user_gs = false;
 
     userland::pipeline::handle_request(
         CommonRequestContext::new(&mut c_stack_frame, RequestReferer::HardwareInterrupt(idx)),
@@ -393,6 +398,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
                     stack_frame.code_segment = USER_CODE_SEG.0.into();
                     stack_frame.stack_segment = USER_DATA_SEG.0.into();
+                    swap_to_user_gs = true;
                 }
             })
         },
@@ -402,6 +408,10 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
     eoi(idx as u8);
     *IS_IN_ISR.inner_mut() = false;
+
+    if swap_to_user_gs && GsBase::read().is_canonical_higher_half() {
+        unsafe { GsBase::swap() };
+    }
 }
 
 generate_interrupt_handlers!();

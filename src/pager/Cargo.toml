@@ -8,3 +8,6 @@ description = "Contains x86 paging related stuff, and some x86_64 control regist
 bitflags = "2.4.1"
 bit_field = "0.10.2"
 sentinel = { path = "../sentinel" }
+
+[dependencies.smart-default]
+version = "0.7.1"

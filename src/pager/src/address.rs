@@ -299,6 +299,11 @@ impl VirtAddr {
         }
     }
 
+    /// Check if the address is within the canonical upper half
+    pub const fn is_canonical_higher_half(&self) -> bool {
+        self.0 >= Self::canonical_higher_half().0
+    }
+
     /// Create a virtual address containing the upper canonical half of 48-bit addressing
     /// (ffff_8000_0000_0000)
     pub const fn canonical_higher_half() -> Self {

@@ -1,19 +1,28 @@
 #![no_std]
 #![no_main]
 
-use core::panic::PanicInfo;
+use core::{arch::asm, panic::PanicInfo};
 
 fn add(n: u64) -> u64 {
     if n > 20 {
-        return 0;
+        return n;
     }
 
     add(n + 1)
 }
 
+fn syscall_test(n: u64) {
+    unsafe {
+        asm!("syscall", in("r9") n, options(nostack));
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    add(10);
+    syscall_test(add(10));
+    syscall_test(add(10));
+    syscall_test(add(10));
+    syscall_test(add(10));
 
     loop {}
 }

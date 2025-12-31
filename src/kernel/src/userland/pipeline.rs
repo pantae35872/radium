@@ -308,6 +308,7 @@ pub fn handle_request<'b>(
 }
 
 #[derive(Debug, SmartDefault)]
+#[repr(C)]
 pub struct CommonRequestStackFrame {
     pub r15: u64,
     pub r14: u64,

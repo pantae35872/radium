@@ -497,6 +497,7 @@ dependencies = [
  "bit_field",
  "bitflags 2.9.0",
  "sentinel",
+ "smart-default",
 ]
 
 [[package]]

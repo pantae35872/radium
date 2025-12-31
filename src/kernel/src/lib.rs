@@ -39,6 +39,7 @@ pub mod port;
 pub mod print;
 pub mod serial;
 pub mod sync;
+pub mod syscall;
 pub mod userland;
 pub mod utils;
 
@@ -98,6 +99,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     memory::init_local(&mut stage4);
     userland::init(&mut stage4);
     pit::init(&mut stage4);
+    syscall::init(&mut stage4);
     smp::init_aps(stage4);
 
     LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);

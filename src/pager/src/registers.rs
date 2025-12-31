@@ -3,11 +3,13 @@ use core::arch::{
     x86_64::{_xgetbv, _xsetbv},
 };
 
+use bit_field::BitField;
 use bitflags::bitflags;
+use smart_default::SmartDefault;
 
 use crate::{
-    PrivilegeLevel,
     address::{Frame, PhysAddr, VirtAddr},
+    PrivilegeLevel,
 };
 
 bitflags! {
@@ -21,22 +23,97 @@ bitflags! {
         /// Disable caching for the table.
         const PAGE_LEVEL_CACHE_DISABLE = 1 << 4;
     }
+}
 
+/// Derived from
+///
+/// https://www.felixcloutier.com/x86/syscall and
+/// https://www.felixcloutier.com/x86/sysret
+pub struct SystemCallLStar;
 
+impl SystemCallLStar {
+    /// Intel sdm vol 4, page 62
+    const IA32_LSTAR_MSR: Msr = Msr::new(0xc0000082);
+
+    /// Read from [Self::IA32_LSTAR_MSR] as [VirtAddr]
+    pub fn read() -> VirtAddr {
+        unsafe { VirtAddr::new(Self::IA32_LSTAR_MSR.read()) }
+    }
+
+    /// Write to the [Self::IA32_LSTAR_MSR] from the [`VirtAddr`]
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure that the provided virtual address is pointed to the executable syscall
+    /// function in ring 0
+    pub unsafe fn write(addr: VirtAddr) {
+        unsafe { Self::IA32_LSTAR_MSR.write(addr.as_u64()) };
+    }
+}
+
+/// Derived from
+///
+/// https://www.felixcloutier.com/x86/syscall and
+/// https://www.felixcloutier.com/x86/sysret
+#[derive(Debug, SmartDefault)]
+pub struct SystemCallStar {
+    /// the segment selector to be loaded when the syscall instruction is executed
+    /// The docs mentioned that the value of CS and SS are derived from
+    /// just one selector, and it assumes that the SS register is right above the CS in the gdt
+    #[default(SegmentSelector(0))]
+    pub syscall_selector: SegmentSelector,
+    /// the segment selector to be loaded when the sysret instruction is executed
+    /// The docs mentioned that the value of CS and SS are derived from
+    /// just one selector, and it just assumes that the SS register is right above the CS in the gdt
+    #[default(SegmentSelector(0))]
+    pub sysret_selector: SegmentSelector,
+}
+
+impl SystemCallStar {
+    /// Intel sdm vol 4, page 62
+    const IA32_STAR_MSR: Msr = Msr::new(0xc0000081);
+
+    /// Read from the [Self::IA32_STAR_MSR] as [`SystemCallStar`]
+    pub fn read() -> Self {
+        // The lower half of IA32_STAR_MSR doesn't get mentioned in the documentation
+        let msr = unsafe { Self::IA32_STAR_MSR.read() };
+        Self {
+            // From https://www.felixcloutier.com/x86/syscall
+            syscall_selector: SegmentSelector(msr.get_bits(32..48) as u16),
+            // From https://www.felixcloutier.com/x86/sysret
+            sysret_selector: SegmentSelector(msr.get_bits(48..64) as u16),
+        }
+    }
+
+    /// Write to the [Self::IA32_STAR_MSR], value are derived from the fields of this struct
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the segment following either [Self::syscall_selector] or [Self::sysret_selector]
+    /// is a valid segment
+    pub unsafe fn write(self) {
+        let mut value = 0;
+        // The lower half of IA32_STAR_MSR doesn't get mentioned in the documentation
+        value.set_bits(32..48, self.syscall_selector.0.into());
+        value.set_bits(48..64, self.sysret_selector.0.into());
+
+        unsafe { Self::IA32_STAR_MSR.write(value) };
+    }
 }
 
 pub struct KernelGsBase;
 pub struct GsBase;
 
 impl KernelGsBase {
+    /// Intel sdm vol 4, page 62
     const IA32_KERNEL_GS_MSR: Msr = Msr::new(0xc0000102);
 
-    /// Read from the kernel gs base msr as [`VirtAddr`]
+    /// Read from the [Self::IA32_KERNEL_GS_MSR] msr as [`VirtAddr`]
     pub fn read() -> VirtAddr {
         unsafe { VirtAddr::new(Self::IA32_KERNEL_GS_MSR.read()) }
     }
 
-    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    /// Write to the [Self::IA32_KERNEL_GS_MSR] from the [`VirtAddr`]
     ///
     /// # Safety
     ///
@@ -48,14 +125,15 @@ impl KernelGsBase {
 }
 
 impl GsBase {
+    /// Intel sdm vol 4, page 62
     const IA32_GS_MSR: Msr = Msr::new(0xc0000101);
 
-    /// Read from the kernel gs base msr as [`VirtAddr`]
+    /// Read from the [Self::IA32_GS_MSR] as [`VirtAddr`]
     pub fn read() -> VirtAddr {
         unsafe { VirtAddr::new(Self::IA32_GS_MSR.read()) }
     }
 
-    /// Write to the kernel gs base msr from the [`VirtAddr`]
+    /// Write to the [Self::IA32_GS_MSR] from the [`VirtAddr`]
     ///
     /// # Safety
     ///
@@ -63,6 +141,17 @@ impl GsBase {
     /// memory and mapped
     pub unsafe fn write(addr: VirtAddr) {
         unsafe { Self::IA32_GS_MSR.write(addr.as_u64()) };
+    }
+
+    /// Swap the [GsBase] with [KernelGsBase], using swapgs insruction.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that any use of the gs base after this called, act correspondingly
+    pub unsafe fn swap() {
+        unsafe {
+            asm!("swapgs", options(nostack, preserves_flags));
+        }
     }
 }
 
