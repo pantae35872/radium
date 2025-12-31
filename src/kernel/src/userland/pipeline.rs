@@ -97,7 +97,7 @@ pub struct ControlPipeline {
 #[derive(Debug, Default)]
 struct Event {
     hw_interrupts: Vec<fn(&mut ControlPipeline, InterruptIndex)>,
-    ipp_handlers: Vec<fn(&mut ControlPipeline)>,
+    ipp_handlers: Vec<fn(&mut ControlPipeline, &mut PipelineContext)>,
     finalize: Vec<fn(&mut ControlPipeline, &mut PipelineContext)>,
     begin: Vec<fn(&mut ControlPipeline, &mut PipelineContext, &CommonRequestContext)>,
 }
@@ -118,7 +118,7 @@ impl Event {
         self.hw_interrupts.push(handler);
     }
 
-    fn ipp_handler(&mut self, handler: fn(&mut ControlPipeline)) {
+    fn ipp_handler(&mut self, handler: fn(&mut ControlPipeline, &mut PipelineContext)) {
         self.ipp_handlers.push(handler);
     }
 }
@@ -130,6 +130,8 @@ pub struct PipelineContext {
     pub interrupted_task: Option<TaskBlock>,
     pub added_tasks: Vec<TaskBlock>,
     pub should_schedule: bool,
+    pub should_hlt: bool,
+    pub interrupted_slept: bool,
     pub scheduled_task: Option<TaskBlock>,
 }
 
@@ -137,23 +139,10 @@ impl ControlPipeline {
     fn new() -> Self {
         let mut events = Event::default();
 
-        let thread = ThreadPipeline::new(&mut events);
-        let process = ProcessPipeline::new(&mut events);
-
-        events.begin(|_, ctx, _| {
-            ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
-                Some(TaskBlock {
-                    thread,
-                    process: ctx.interrupted_process?,
-                })
-            });
-        });
-        let scheduler = SchedulerPipeline::new(&mut events);
-
         Self {
-            thread,
-            process,
-            scheduler,
+            thread: ThreadPipeline::new(&mut events),
+            process: ProcessPipeline::new(&mut events),
+            scheduler: SchedulerPipeline::new(&mut events),
             events: Some(events),
             should_schedule: false,
         }
@@ -186,8 +175,8 @@ impl ControlPipeline {
             .add_task(self.thread.alloc(&mut self.process, process, entry));
     }
 
-    pub fn sleep_task(&mut self, task: TaskBlock, millis: usize) {
-        self.scheduler.sleep_task(task, millis);
+    pub fn sleep_interrupted(&mut self, context: &mut PipelineContext, millis: usize) {
+        self.scheduler.sleep_interrupted(context, millis);
     }
 
     pub fn free_thread(&mut self, thread: Thread) {
@@ -196,7 +185,7 @@ impl ControlPipeline {
     }
 
     pub fn free_process(&mut self, process: Process) {
-        self.process.free(&mut self.thread, process);
+        self.process.free(process);
     }
 
     pub fn alloc_thread(
@@ -204,10 +193,14 @@ impl ControlPipeline {
         context: &mut PipelineContext,
         parent_process: Process,
         start: VirtAddr,
-    ) -> TaskBlock {
+    ) -> Option<TaskBlock> {
+        if start.is_canonical_higher_half() {
+            return None;
+        }
+
         let task = self.thread.alloc(&mut self.process, parent_process, start);
         context.added_tasks.push(task);
-        task
+        Some(task)
     }
 
     pub fn alloc_process(&mut self) -> Process {
@@ -226,6 +219,13 @@ impl ControlPipeline {
             }
             self.events = Some(event);
         }
+
+        ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
+            Some(TaskBlock {
+                thread,
+                process: ctx.interrupted_process?,
+            })
+        });
 
         ctx
     }
@@ -249,14 +249,14 @@ impl ControlPipeline {
     }
 
     fn handle_ipp(&mut self, context: &mut PipelineContext) {
+        context.should_schedule = false;
+
         if let Some(event) = self.events.take() {
             for handler in event.ipp_handlers.iter() {
-                handler(self)
+                handler(self, context)
             }
             self.events = Some(event);
         }
-
-        context.should_schedule = false;
     }
 
     fn schedule(&mut self, context: &mut PipelineContext) {
@@ -270,7 +270,7 @@ impl ControlPipeline {
 
 /// A lightweight struct to store just enough data to know which process or thread, we're talking
 /// about (an indirect reference)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TaskBlock {
     pub thread: Thread,
     pub process: Process,

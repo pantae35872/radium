@@ -7,9 +7,16 @@ use pager::{
 
 use crate::{
     gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_DATA_SEG},
+    hlt_loop,
     initialization_context::{InitializationContext, Stage4},
-    serial_println,
-    userland::pipeline::CommonRequestStackFrame,
+    interrupt,
+    userland::{
+        self,
+        pipeline::{
+            dispatch::DispatchAction, CommonRequestContext, CommonRequestStackFrame, RequestReferer,
+        },
+        syscall::SyscallId,
+    },
 };
 
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
@@ -41,7 +48,29 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
 
 #[unsafe(no_mangle)]
 extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
-    serial_println!("Syscall test number {}", stack_frame.r9);
+    let id = SyscallId(stack_frame.rax as u32);
+    let mut should_hlt = false;
+    userland::pipeline::handle_request(
+        CommonRequestContext::new(stack_frame, RequestReferer::SyscallRequest(id)),
+        |CommonRequestContext { stack_frame, .. }, dispatcher| {
+            dispatcher.dispatch(|action| match action {
+                DispatchAction::HltLoop => {
+                    should_hlt = true;
+                }
+                DispatchAction::ReplaceState(state) => {
+                    stack_frame.replace_with(state);
+                }
+            })
+        },
+    );
+
+    if should_hlt {
+        // We can directly do hlt loop here since theres no requirement to return from,
+        // the syscall instruction, and the stack will reset to a default value, when
+        // the next syscall instruction is executed
+        interrupt::enable();
+        hlt_loop();
+    }
 }
 
 #[unsafe(no_mangle)]

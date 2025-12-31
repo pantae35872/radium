@@ -3,28 +3,54 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-fn add(n: u64) -> u64 {
-    if n > 20 {
-        return n;
+pub fn spawn(f: fn()) {
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") 2,
+            in("rdx") f as *const () as u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
     }
-
-    add(n + 1)
 }
 
-fn syscall_test(n: u64) {
+fn syscall_sleep(amount_ms: usize) {
     unsafe {
-        asm!("syscall", in("r9") n, options(nostack));
+        asm!(
+            "syscall",
+            in("rax") 1,
+            in("rdx") amount_ms,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
     }
+}
+
+fn syscall_exit() -> ! {
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") 0,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
+    }
+
+    unreachable!("Sys exit doesn't work");
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    syscall_test(add(10));
-    syscall_test(add(10));
-    syscall_test(add(10));
-    syscall_test(add(10));
-
-    loop {}
+    syscall_sleep(5000);
+    for _ in 0..128 {
+        spawn(|| loop {});
+    }
+    syscall_sleep(5000);
+    syscall_exit();
 }
 
 #[panic_handler]

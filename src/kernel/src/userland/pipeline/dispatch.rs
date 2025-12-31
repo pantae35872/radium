@@ -1,4 +1,4 @@
-use crate::userland::pipeline::{PipelineContext, TaskProcesserState, thread::ThreadPipeline};
+use crate::userland::pipeline::{thread::ThreadPipeline, PipelineContext, TaskProcesserState};
 
 #[derive(Debug)]
 pub struct Dispatcher<'a> {
@@ -21,7 +21,7 @@ impl<'a> Dispatcher<'a> {
             state: context
                 .scheduled_task
                 .map(|e| thread.task_processor_state(e.thread)),
-            hlt: context.should_schedule && context.scheduled_task.is_none(),
+            hlt: context.should_hlt,
         }
     }
 

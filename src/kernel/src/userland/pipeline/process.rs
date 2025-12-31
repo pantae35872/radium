@@ -25,10 +25,7 @@ use crate::{
     },
     userland::{
         self,
-        pipeline::{
-            thread::{Thread, ThreadPipeline},
-            Event, PipelineContext, TaskBlock,
-        },
+        pipeline::{thread::Thread, Event, PipelineContext, TaskBlock},
     },
 };
 
@@ -41,15 +38,19 @@ pub struct ProcessPipeline {
 
 impl ProcessPipeline {
     pub(super) fn new(events: &mut Event) -> Self {
-        events.begin(|_c, pipeline_context, _request_context| {
+        events.begin(|c, pipeline_context, _request_context| {
             if let Some(thread) = pipeline_context.interrupted_thread {
-                pipeline_context.interrupted_process = Some(find_by_thread(&thread))
+                if let Some(process) = find_by_thread(&thread) {
+                    pipeline_context.interrupted_process = Some(process);
+                } else {
+                    c.thread.free(thread);
+                }
             }
         });
 
         events.finalize(|c, s| c.process.finalize(s));
 
-        events.ipp_handler(|c| c.process.check_ipp());
+        events.ipp_handler(|c, _| c.process.check_ipp());
 
         Self::default()
     }
@@ -168,18 +169,15 @@ impl ProcessPipeline {
     }
 
     pub fn free_thread(&mut self, thread: Thread) {
-        shared(&find_by_thread(&thread))
-            .threads
-            .lock()
-            .remove(&thread.id());
+        if let Some(process) = find_by_thread(&thread) {
+            shared(&process).threads.lock().remove(&thread.id());
+        }
     }
 
-    pub fn free(&mut self, thread_pipeline: &mut ThreadPipeline, process: Process) {
+    pub fn free(&mut self, process: Process) {
         let shared = shared(&process);
-        for thread in shared.threads.lock().iter() {
-            thread_pipeline.free_global(*thread);
-        }
-
+        // TODO: For now we'll just wait for the threads to yield and free them, in the begin event,
+        // since that thread doesn't belong to any process it'll get killed in the begin event
         shared.threads.lock().clear();
         free(process);
     }
@@ -215,7 +213,7 @@ impl ProcessPipeline {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Process {
     id: usize,
 
@@ -237,7 +235,7 @@ fn sigature(process: &Process) -> usize {
     *shared(process).signature.lock()
 }
 
-fn find_by_thread(thread: &Thread) -> Process {
+fn find_by_thread(thread: &Thread) -> Option<Process> {
     GLOBAL_PROCESS_DATA.read().find_by_id(thread)
 }
 
@@ -270,18 +268,18 @@ impl GlobalProcessDataPool {
         Arc::clone(&self.pool[process.id])
     }
 
-    fn find_by_id(&self, thread: &Thread) -> Process {
+    fn find_by_id(&self, thread: &Thread) -> Option<Process> {
         // TODO: probably use a map on the pool instead, but HashSet on the process threads is prob
         // enough
         for (id, shared) in self.pool.iter().enumerate() {
             if shared.threads.lock().contains(&thread.id()) {
-                return Process {
+                return Some(Process {
                     id,
                     signature: *shared.signature.lock(),
-                };
+                });
             }
         }
-        panic!("thread id {} doesn't belong to any processes", thread.id());
+        None
     }
 
     fn free(&mut self, process: Process) {

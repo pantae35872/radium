@@ -43,7 +43,7 @@ impl ThreadPipeline {
 
         event.finalize(|c, s| c.thread.finalize(s));
 
-        event.ipp_handler(|c| c.thread.handle_ipp(&mut c.scheduler));
+        event.ipp_handler(|c, cx| c.thread.handle_ipp(cx, &mut c.scheduler));
 
         Self {
             pool: Vec::new(),
@@ -78,7 +78,7 @@ impl ThreadPipeline {
         &self.thread_context(thread).processor_state
     }
 
-    fn handle_ipp(&mut self, scheduler: &mut SchedulerPipeline) {
+    fn handle_ipp(&mut self, _context: &mut PipelineContext, scheduler: &mut SchedulerPipeline) {
         ThreadMigratePacket::handle(
             |ThreadMigratePacket {
                  context,
@@ -131,18 +131,6 @@ impl ThreadPipeline {
 
         id::invalidate(thread);
         self.unused_thread.push(id);
-    }
-
-    pub fn free_global(&mut self, global_id: NonZeroUsize) {
-        let thread = Thread {
-            global_id,
-            signature: id::sigature(global_id),
-        };
-        if thread.local_id().core == *CORE_ID {
-            self.free(thread);
-        } else {
-            ThreadFreePacket { thread }.send(thread.local_id().core, false);
-        }
     }
 
     pub fn free(&mut self, thread: Thread) {
@@ -233,11 +221,6 @@ impl ThreadPipeline {
     fn thread_context_mut(&mut self, thread: Thread) -> &mut ThreadContext {
         &mut self.pool[thread.local_id().thread]
     }
-}
-
-#[derive(Debug, IPPacket)]
-struct ThreadFreePacket {
-    thread: Thread,
 }
 
 #[derive(Debug, IPPacket)]

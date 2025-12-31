@@ -102,7 +102,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     syscall::init(&mut stage4);
     smp::init_aps(stage4);
 
-    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
+    //LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     userland::pipeline::spawn_init();
     userland::pipeline::start_scheduling();

@@ -7,9 +7,7 @@ use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
 use derivative::Derivative;
 
 use crate::{
-    interrupt::{InterruptIndex, CORE_ID, LAPIC, TPMS},
-    smp::{CoreId, MAX_CPU},
-    userland::pipeline::{thread::ThreadPipeline, Event, PipelineContext, TaskBlock},
+    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS}, smp::{CoreId, MAX_CPU}, userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline}
 };
 
 const MIGRATION_THRESHOLD: usize = 2;
@@ -26,7 +24,6 @@ struct SleepEntry {
 pub struct SchedulerPipeline {
     units: VecDeque<TaskBlock>,
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
-    scheduled_count: usize,
 
     timer_count: usize,
 }
@@ -43,17 +40,13 @@ impl SchedulerPipeline {
             c.scheduler.finalize(cx);
         });
 
-        events.begin(|c, pc, _rqc| {
-            if let Some(task) = pc.interrupted_task {
-                c.scheduler.units.push_back(task);
-            }
-        });
-
         Self::default()
     }
 
     fn finalize(&mut self, context: &mut PipelineContext) {
         self.units.extend(&context.added_tasks);
+
+        context.should_hlt = (context.should_schedule || context.interrupted_slept) && context.scheduled_task.is_none();
     }
 
     pub fn timer_count(&self) -> usize {
@@ -66,13 +59,15 @@ impl SchedulerPipeline {
         LAPIC.inner_mut().reset_timer(tpms * 10);
     }
 
-    pub fn sleep_task(&mut self, task: TaskBlock, amount_millis: usize) {
+    pub fn sleep_interrupted(&mut self, context: &mut PipelineContext, amount_millis: usize) {
+        assert!(context.interrupted_task.is_some(), "sleep interrupted called with no interrupted task");
         let sleep_entry = SleepEntry {
             wakeup_time: self.timer_count + amount_millis,
-            task,
+            task: context.interrupted_task.unwrap(),
         };
 
         self.sleep_queue.push(Reverse(sleep_entry));
+        context.interrupted_slept = true;
     }
 
     pub(super) fn add_task(&mut self, init: TaskBlock) {
@@ -105,7 +100,7 @@ impl SchedulerPipeline {
             return;
         }
 
-        while let Some(task) = self.units.pop_front() {
+        while let Some(task) = self.units.pop_back() {
             if !task.valid() {
                 continue;
             }
@@ -122,6 +117,10 @@ impl SchedulerPipeline {
     }
 
     pub fn schedule(&mut self, thread: &mut ThreadPipeline, context: &mut PipelineContext) {
+        if let Some(interrupted_task) = context.interrupted_task && !context.interrupted_slept {
+            self.units.push_back(interrupted_task);
+        }
+
         self.migrate(thread);
 
         if self
@@ -129,8 +128,8 @@ impl SchedulerPipeline {
             .peek()
             .is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time)
         {
-            self.units
-                .push_front(self.sleep_queue.pop().unwrap().0.task);
+            let task = self.sleep_queue.pop().unwrap().0.task;
+            self.units.push_front(task);
         }
 
         while let Some(task) = self.units.pop_front() {

@@ -1,11 +1,14 @@
+use pager::address::VirtAddr;
+
 use crate::userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext};
 
 #[derive(Debug, Clone, Copy)]
-pub struct SyscallId(u32);
+pub struct SyscallId(pub u32);
 
 enum Syscall {
     Exit,
     Sleep,
+    Spawn,
 }
 
 impl TryFrom<SyscallId> for Syscall {
@@ -15,6 +18,7 @@ impl TryFrom<SyscallId> for Syscall {
         match value {
             SyscallId(0) => Ok(Self::Exit),
             SyscallId(1) => Ok(Self::Sleep),
+            SyscallId(2) => Ok(Self::Spawn),
             SyscallId(unknown) => Err(unknown),
         }
     }
@@ -31,6 +35,17 @@ pub(super) fn syscall_handle(
 
     match syscall {
         Syscall::Exit => pipeline.free_process(calling_task.process),
-        Syscall::Sleep => pipeline.sleep_task(calling_task, rq_context.stack_frame.rax as usize),
+        Syscall::Sleep => {
+            pipeline.sleep_interrupted(pipeline_context, rq_context.stack_frame.rdx as usize)
+        }
+        Syscall::Spawn => {
+            let start = VirtAddr::new(rq_context.stack_frame.rdx);
+            if pipeline
+                .alloc_thread(pipeline_context, calling_task.process, start)
+                .is_none()
+            {
+                pipeline.free_process(calling_task.process);
+            }
+        }
     }
 }
