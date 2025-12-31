@@ -174,11 +174,10 @@ impl ProcessPipeline {
             .remove(&thread.id());
     }
 
-    pub fn free(&mut self, _thread_pipeline: &mut ThreadPipeline, process: Process) {
+    pub fn free(&mut self, thread_pipeline: &mut ThreadPipeline, process: Process) {
         let shared = shared(&process);
-        for _thread in shared.threads.lock().iter() {
-            // FIXME: Notify thread pipeline on all cores about the thread freeing
-            //thread_pipeline.free( *thread);
+        for thread in shared.threads.lock().iter() {
+            thread_pipeline.free_global(*thread);
         }
 
         shared.threads.lock().clear();

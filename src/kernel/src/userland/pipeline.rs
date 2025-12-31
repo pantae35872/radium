@@ -33,7 +33,7 @@ use smart_default::SmartDefault;
 
 use crate::{
     initialization_context::{InitializationContext, Stage4},
-    interrupt::{self, ExtendedInterruptStackFrame, InterruptIndex},
+    interrupt::{self, InterruptIndex},
     userland::{
         pipeline::{
             dispatch::Dispatcher,
@@ -137,10 +137,23 @@ impl ControlPipeline {
     fn new() -> Self {
         let mut events = Event::default();
 
+        let thread = ThreadPipeline::new(&mut events);
+        let process = ProcessPipeline::new(&mut events);
+
+        events.begin(|_, ctx, _| {
+            ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
+                Some(TaskBlock {
+                    thread,
+                    process: ctx.interrupted_process?,
+                })
+            });
+        });
+        let scheduler = SchedulerPipeline::new(&mut events);
+
         Self {
-            thread: ThreadPipeline::new(&mut events),
-            process: ProcessPipeline::new(&mut events),
-            scheduler: SchedulerPipeline::new(&mut events),
+            thread,
+            process,
+            scheduler,
             events: Some(events),
             should_schedule: false,
         }
@@ -214,13 +227,6 @@ impl ControlPipeline {
             self.events = Some(event);
         }
 
-        ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
-            Some(TaskBlock {
-                thread,
-                process: ctx.interrupted_process?,
-            })
-        });
-
         ctx
     }
 
@@ -277,27 +283,6 @@ impl TaskBlock {
     }
 }
 
-/// A structure describing the context of the requester.
-pub struct CommonRequestContext<'a> {
-    pub stack_frame: &'a mut ExtendedInterruptStackFrame,
-    pub referer: RequestReferer,
-}
-
-impl<'a> CommonRequestContext<'a> {
-    pub fn new(stack_frame: &'a mut ExtendedInterruptStackFrame, referer: RequestReferer) -> Self {
-        Self {
-            stack_frame,
-            referer,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum RequestReferer {
-    HardwareInterrupt(InterruptIndex),
-    SyscallRequest(SyscallId),
-}
-
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
 /// [`Dispatcher`] that must be used to operate the right following actions.
 pub fn handle_request<'b>(
@@ -320,6 +305,80 @@ pub fn handle_request<'b>(
     pipeline.schedule(&mut context);
     pipeline.finalize(&mut context);
     dispatch(rq_context, Dispatcher::new(context, &pipeline.thread))
+}
+
+#[derive(Debug, SmartDefault)]
+pub struct CommonRequestStackFrame {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rsi: u64,
+    pub rdi: u64,
+    pub rbp: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+
+    #[default(VirtAddr::null())]
+    pub instruction_pointer: VirtAddr,
+    #[default(RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable)]
+    pub cpu_flags: RFlags,
+    #[default(VirtAddr::null())]
+    pub stack_pointer: VirtAddr,
+}
+
+impl CommonRequestStackFrame {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn replace_with(&mut self, task: &TaskProcesserState) {
+        self.r15 = task.r15;
+        self.r14 = task.r14;
+        self.r13 = task.r13;
+        self.r12 = task.r12;
+        self.r11 = task.r11;
+        self.r10 = task.r10;
+        self.r9 = task.r9;
+        self.r8 = task.r8;
+        self.rsi = task.rsi;
+        self.rdi = task.rdi;
+        self.rbp = task.rbp;
+        self.rdx = task.rdx;
+        self.rcx = task.rcx;
+        self.rbx = task.rbx;
+        self.rax = task.rax;
+        self.instruction_pointer = task.instruction_pointer;
+        self.cpu_flags = task.cpu_flags;
+        self.stack_pointer = task.stack_pointer;
+    }
+}
+
+/// A structure describing the context of the requester.
+pub struct CommonRequestContext<'a> {
+    pub stack_frame: &'a mut CommonRequestStackFrame,
+    pub referer: RequestReferer,
+}
+
+impl<'a> CommonRequestContext<'a> {
+    pub fn new(stack_frame: &'a mut CommonRequestStackFrame, referer: RequestReferer) -> Self {
+        Self {
+            stack_frame,
+            referer,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RequestReferer {
+    HardwareInterrupt(InterruptIndex),
+    SyscallRequest(SyscallId),
 }
 
 #[derive(Debug, Clone, SmartDefault, PartialEq, Eq)]

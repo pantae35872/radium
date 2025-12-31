@@ -1,7 +1,3 @@
-use pager::address::VirtAddr;
-use santa::SymbolResolver;
-use sentinel::{get_logger, LoggerBackend};
-
 use crate::initialization_context::{InitializationContext, Stage4};
 
 pub mod acpi;

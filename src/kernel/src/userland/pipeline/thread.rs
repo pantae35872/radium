@@ -133,6 +133,18 @@ impl ThreadPipeline {
         self.unused_thread.push(id);
     }
 
+    pub fn free_global(&mut self, global_id: NonZeroUsize) {
+        let thread = Thread {
+            global_id,
+            signature: id::sigature(global_id),
+        };
+        if thread.local_id().core == *CORE_ID {
+            self.free(thread);
+        } else {
+            ThreadFreePacket { thread }.send(thread.local_id().core, false);
+        }
+    }
+
     pub fn free(&mut self, thread: Thread) {
         assert!(
             thread.local_id().core == *CORE_ID,
@@ -221,6 +233,11 @@ impl ThreadPipeline {
     fn thread_context_mut(&mut self, thread: Thread) -> &mut ThreadContext {
         &mut self.pool[thread.local_id().thread]
     }
+}
+
+#[derive(Debug, IPPacket)]
+struct ThreadFreePacket {
+    thread: Thread,
 }
 
 #[derive(Debug, IPPacket)]

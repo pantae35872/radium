@@ -43,18 +43,16 @@ impl SchedulerPipeline {
             c.scheduler.finalize(cx);
         });
 
+        events.begin(|c, pc, _rqc| {
+            if let Some(task) = pc.interrupted_task {
+                c.scheduler.units.push_back(task);
+            }
+        });
+
         Self::default()
     }
 
     fn finalize(&mut self, context: &mut PipelineContext) {
-        match (context.interrupted_task, context.scheduled_task) {
-            (Some(interrupted), Some(scheduled)) if scheduled == interrupted => {}
-            (Some(interrupted), ..) => {
-                self.units.push_back(interrupted);
-            }
-            _ => {}
-        }
-
         self.units.extend(&context.added_tasks);
     }
 

@@ -22,8 +22,8 @@ use crate::smp::CpuLocalBuilder;
 use crate::userland;
 use crate::userland::pipeline::dispatch::DispatchAction;
 use crate::userland::pipeline::CommonRequestContext;
+use crate::userland::pipeline::CommonRequestStackFrame;
 use crate::userland::pipeline::RequestReferer;
-use crate::userland::pipeline::TaskProcesserState;
 use crate::PANIC_COUNT;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
@@ -209,6 +209,31 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
     ctx.next(io_apic_manager)
 }
 
+impl From<&ExtendedInterruptStackFrame> for CommonRequestStackFrame {
+    fn from(value: &ExtendedInterruptStackFrame) -> Self {
+        Self {
+            r15: value.r15,
+            r14: value.r14,
+            r13: value.r13,
+            r12: value.r12,
+            r11: value.r11,
+            r10: value.r10,
+            r9: value.r9,
+            r8: value.r8,
+            rsi: value.rsi,
+            rdi: value.rdi,
+            rbp: value.rbp,
+            rdx: value.rdx,
+            rcx: value.rcx,
+            rbx: value.rbx,
+            rax: value.rax,
+            instruction_pointer: value.instruction_pointer,
+            cpu_flags: value.cpu_flags,
+            stack_pointer: value.stack_pointer,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone)]
 pub struct ExtendedInterruptStackFrame {
@@ -235,28 +260,25 @@ pub struct ExtendedInterruptStackFrame {
 }
 
 impl ExtendedInterruptStackFrame {
-    fn replace_with(&mut self, task: &TaskProcesserState) {
-        self.r15 = task.r15;
-        self.r14 = task.r14;
-        self.r13 = task.r13;
-        self.r12 = task.r12;
-        self.r11 = task.r11;
-        self.r10 = task.r10;
-        self.r9 = task.r9;
-        self.r8 = task.r8;
-        self.rsi = task.rsi;
-        self.rdi = task.rdi;
-        self.rbp = task.rbp;
-        self.rdx = task.rdx;
-        self.rcx = task.rcx;
-        self.rbx = task.rbx;
-        self.rax = task.rax;
-        self.instruction_pointer = task.instruction_pointer;
-        self.cpu_flags = task.cpu_flags;
-        self.stack_pointer = task.stack_pointer;
-
-        self.code_segment = USER_CODE_SEG.0.into();
-        self.stack_segment = USER_DATA_SEG.0.into();
+    fn replace_with(&mut self, c_stack: &CommonRequestStackFrame) {
+        self.r15 = c_stack.r15;
+        self.r14 = c_stack.r14;
+        self.r13 = c_stack.r13;
+        self.r12 = c_stack.r12;
+        self.r11 = c_stack.r11;
+        self.r10 = c_stack.r10;
+        self.r9 = c_stack.r9;
+        self.r8 = c_stack.r8;
+        self.rsi = c_stack.rsi;
+        self.rdi = c_stack.rdi;
+        self.rbp = c_stack.rbp;
+        self.rdx = c_stack.rdx;
+        self.rcx = c_stack.rcx;
+        self.rbx = c_stack.rbx;
+        self.rax = c_stack.rax;
+        self.instruction_pointer = c_stack.instruction_pointer;
+        self.cpu_flags = c_stack.cpu_flags;
+        self.stack_pointer = c_stack.stack_pointer;
     }
 }
 
@@ -349,21 +371,34 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
             return;
         }
     };
+
+    let mut c_stack_frame = CommonRequestStackFrame::from(&*stack_frame);
+
     userland::pipeline::handle_request(
-        CommonRequestContext::new(stack_frame, RequestReferer::HardwareInterrupt(idx)),
-        |CommonRequestContext { stack_frame, .. }, dispatcher| {
+        CommonRequestContext::new(&mut c_stack_frame, RequestReferer::HardwareInterrupt(idx)),
+        |CommonRequestContext {
+             stack_frame: c_stack_frame,
+             ..
+         },
+         dispatcher| {
             dispatcher.dispatch(|action| match action {
                 DispatchAction::HltLoop => {
-                    stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
+                    c_stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
+
                     stack_frame.code_segment = KERNEL_CODE_SEG.0.into();
                     stack_frame.stack_segment = KERNEL_DATA_SEG.0.into();
                 }
                 DispatchAction::ReplaceState(state) => {
-                    stack_frame.replace_with(state);
+                    c_stack_frame.replace_with(state);
+
+                    stack_frame.code_segment = USER_CODE_SEG.0.into();
+                    stack_frame.stack_segment = USER_DATA_SEG.0.into();
                 }
             })
         },
     );
+
+    stack_frame.replace_with(&c_stack_frame);
 
     eoi(idx as u8);
     *IS_IN_ISR.inner_mut() = false;
