@@ -9,6 +9,7 @@ enum Syscall {
     Exit,
     Sleep,
     Spawn,
+    ExitThread,
 }
 
 impl TryFrom<SyscallId> for Syscall {
@@ -19,6 +20,7 @@ impl TryFrom<SyscallId> for Syscall {
             SyscallId(0) => Ok(Self::Exit),
             SyscallId(1) => Ok(Self::Sleep),
             SyscallId(2) => Ok(Self::Spawn),
+            SyscallId(3) => Ok(Self::ExitThread),
             SyscallId(unknown) => Err(unknown),
         }
     }
@@ -50,6 +52,9 @@ pub(super) fn syscall_handle(
             {
                 pipeline.free_process(calling_task.process);
             }
+        }
+        Syscall::ExitThread => {
+            pipeline.free_thread(calling_task.thread);
         }
     }
 }

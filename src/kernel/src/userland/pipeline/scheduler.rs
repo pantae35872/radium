@@ -1,13 +1,13 @@
 use core::{
     cmp::Reverse,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering}, 
 };
 
 use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
 use derivative::Derivative;
 
 use crate::{
-    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS}, smp::{CoreId, MAX_CPU}, userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline}
+    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS}, serial_print, serial_println, smp::{CoreId, MAX_CPU}, userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline}
 };
 
 const MIGRATION_THRESHOLD: usize = 2;
@@ -130,6 +130,14 @@ impl SchedulerPipeline {
         {
             let task = self.sleep_queue.pop().unwrap().0.task;
             self.units.push_front(task);
+        }
+
+        if CORE_ID.is_bsp() {
+            TASK_COUNT_EACH_CORE.iter().filter_map(|t| match t.load(Ordering::Relaxed) {
+                usize::MAX => None,
+                t => Some(t),
+            }).enumerate().for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
+            serial_println!();
         }
 
         while let Some(task) = self.units.pop_front() {

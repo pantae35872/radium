@@ -3,7 +3,7 @@
 
 use core::{arch::asm, panic::PanicInfo};
 
-pub fn spawn(f: fn()) {
+pub fn spawn(f: fn() -> !) {
     unsafe {
         asm!(
             "syscall",
@@ -29,6 +29,20 @@ fn syscall_sleep(amount_ms: usize) {
     }
 }
 
+fn syscall_exit_thread() -> ! {
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") 3,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
+    }
+
+    unreachable!("Sys exit thread doesn't work");
+}
+
 fn syscall_exit() -> ! {
     unsafe {
         asm!(
@@ -46,11 +60,11 @@ fn syscall_exit() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     syscall_sleep(5000);
-    for _ in 0..128 {
-        spawn(|| loop {
-            syscall_sleep(100);
-        });
-    }
+    //for _ in 0..128 {
+    //    spawn(|| {
+    //        syscall_exit_thread();
+    //    });
+    //}
     syscall_sleep(5000);
     syscall_exit();
 }
