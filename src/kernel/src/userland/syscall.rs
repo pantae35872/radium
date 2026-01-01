@@ -33,6 +33,10 @@ pub(super) fn syscall_handle(
     let syscall = Syscall::try_from(syscall).unwrap_or(Syscall::Exit);
     let calling_task = pipeline_context.interrupted_task.unwrap();
 
+    if !calling_task.valid() {
+        return;
+    }
+
     match syscall {
         Syscall::Exit => pipeline.free_process(calling_task.process),
         Syscall::Sleep => {

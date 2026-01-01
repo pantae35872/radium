@@ -47,7 +47,9 @@ fn syscall_exit() -> ! {
 pub extern "C" fn _start() -> ! {
     syscall_sleep(5000);
     for _ in 0..128 {
-        spawn(|| loop {});
+        spawn(|| loop {
+            syscall_sleep(100);
+        });
     }
     syscall_sleep(5000);
     syscall_exit();
