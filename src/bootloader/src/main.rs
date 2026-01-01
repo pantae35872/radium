@@ -48,12 +48,7 @@ fn any_key_boot(system_table: &mut SystemTable<Boot>) {
 struct BasicUEFILogger;
 
 impl LoggerBackend for BasicUEFILogger {
-    fn log(
-        &self,
-        module_path: &'static str,
-        level: sentinel::LogLevel,
-        formatter: core::fmt::Arguments,
-    ) {
+    fn log(&self, module_path: &'static str, level: sentinel::LogLevel, formatter: core::fmt::Arguments) {
         print!(
             "[{}] <- [{module_path}] : {formatter}",
             match level {

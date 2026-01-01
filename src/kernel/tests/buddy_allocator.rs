@@ -38,11 +38,7 @@ fn simple_alloc() {
 
     let large_size = BUDDY_ALLOCATOR.lock().max_mem() * 8;
     let ptr = BUDDY_ALLOCATOR.lock().allocate(large_size);
-    assert!(
-        ptr.is_none(),
-        "Allocation should fail for size: {}",
-        large_size
-    );
+    assert!(ptr.is_none(), "Allocation should fail for size: {}", large_size);
 
     for i in 0..allocation_ranges.len() {
         for j in i + 1..allocation_ranges.len() {
@@ -79,10 +75,6 @@ fn alloc_free() {
     for (i, &size) in sizes.iter().enumerate() {
         let ptr = BUDDY_ALLOCATOR.lock().allocate(size);
         assert!(ptr.is_some(), "Reallocation failed for size: {}", size);
-        assert_eq!(
-            ptr.unwrap(),
-            allocations[i].0,
-            "Reallocated pointer does not match original"
-        );
+        assert_eq!(ptr.unwrap(), allocations[i].0, "Reallocated pointer does not match original");
     }
 }

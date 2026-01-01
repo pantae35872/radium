@@ -47,14 +47,8 @@ pub struct Print {
 }
 
 impl Print {
-    pub fn new(
-        ctx: &mut InitializationContext<Stage2>,
-        foreground: Color,
-        background: Color,
-    ) -> Self {
-        Self {
-            renderer: TtfRenderer::new(ctx, foreground, background),
-        }
+    pub fn new(ctx: &mut InitializationContext<Stage2>, foreground: Color, background: Color) -> Self {
+        Self { renderer: TtfRenderer::new(ctx, foreground, background) }
     }
 
     pub fn set_color(&mut self, foreground: Color) {

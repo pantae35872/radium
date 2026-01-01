@@ -99,9 +99,7 @@ impl Frame {
     /// if the address is not aligned this will create a frame contatining the frame that covers
     /// that address
     pub const fn containing_address(address: PhysAddr) -> Frame {
-        Frame {
-            number: address.as_u64() / PAGE_SIZE,
-        }
+        Frame { number: address.as_u64() / PAGE_SIZE }
     }
 
     pub const fn null() -> Frame {
@@ -136,9 +134,7 @@ impl Page {
     /// if the address is not aligned this will create a page contatining the frame that covers
     /// that address
     pub const fn containing_address(address: VirtAddr) -> Page {
-        Page {
-            number: address.0 / PAGE_SIZE,
-        }
+        Page { number: address.0 / PAGE_SIZE }
     }
 
     /// Just a dummy page if anyone needs it
@@ -324,10 +320,7 @@ impl VirtAddr {
     pub fn align_to(&self, phys: PhysAddr) -> Self {
         let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
         // add it on to the virtual base
-        let raw = self
-            .as_u64()
-            .checked_add(misalignment)
-            .expect("VirtAddr overflow in align_to");
+        let raw = self.as_u64().checked_add(misalignment).expect("VirtAddr overflow in align_to");
         // we know that (self + misalignment) stays canonical if self was
         unsafe { VirtAddr::new_unchecked(raw) }
     }

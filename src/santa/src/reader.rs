@@ -13,9 +13,7 @@ pub struct ElfReader<'a> {
 
 impl<'a> ElfReader<'a> {
     pub fn new(buffer: &'a [u8]) -> Self {
-        Self {
-            buffer: DataBuffer::new(buffer),
-        }
+        Self { buffer: DataBuffer::new(buffer) }
     }
 
     pub fn buffer(&self) -> &DataBuffer<'a> {
@@ -25,10 +23,7 @@ impl<'a> ElfReader<'a> {
     pub fn header(&self) -> ElfHeader {
         unsafe {
             core::mem::transmute(
-                TryInto::<[u8; size_of::<ElfHeader>()]>::try_into(
-                    &self.buffer[0..size_of::<ElfHeader>()],
-                )
-                .unwrap(),
+                TryInto::<[u8; size_of::<ElfHeader>()]>::try_into(&self.buffer[0..size_of::<ElfHeader>()]).unwrap(),
             )
         }
     }
@@ -38,8 +33,7 @@ impl<'a> ElfReader<'a> {
     }
 
     pub fn section_by_name(&self, name: &str) -> Option<SectionHeader> {
-        self.section_header_iter()
-            .find(|e| self.section_name(e).is_ok_and(|e| e == name) && e.typ != SectionType::NULL)
+        self.section_header_iter().find(|e| self.section_name(e).is_ok_and(|e| e == name) && e.typ != SectionType::NULL)
     }
 
     pub fn section_buffer(&self, section: &SectionHeader) -> Option<&[u8]> {
@@ -60,24 +54,18 @@ impl<'a> ElfReader<'a> {
         if index >= header.section_entries_len as usize {
             return None;
         }
-        let offset = header.section_header_table_offset as usize
-            + index * header.section_entry_size as usize;
-        self.buffer
-            .get(offset..(offset + header.section_entry_size as usize))
-            .and_then(|buf| unsafe {
-                Some(core::mem::transmute::<
-                    [u8; size_of::<SectionHeader>()],
-                    SectionHeader,
-                >(
-                    // We slice the buf just in case that the program_entry_size is larger than
-                    TryInto::<[u8; size_of::<SectionHeader>()]>::try_into(
-                        buf.get(0..size_of::<SectionHeader>())?, // Use get bc if somehow the
-                                                                 // program_entry_size is less
-                                                                 // size_of::<ElfProgramHeader>()
-                    )
-                    .unwrap(),
-                ))
-            })
+        let offset = header.section_header_table_offset as usize + index * header.section_entry_size as usize;
+        self.buffer.get(offset..(offset + header.section_entry_size as usize)).and_then(|buf| unsafe {
+            Some(core::mem::transmute::<[u8; size_of::<SectionHeader>()], SectionHeader>(
+                // We slice the buf just in case that the program_entry_size is larger than
+                TryInto::<[u8; size_of::<SectionHeader>()]>::try_into(
+                    buf.get(0..size_of::<SectionHeader>())?, // Use get bc if somehow the
+                                                             // program_entry_size is less
+                                                             // size_of::<ElfProgramHeader>()
+                )
+                .unwrap(),
+            ))
+        })
     }
 
     pub fn program_entry(&self, index: usize) -> Option<ProgramHeader> {
@@ -85,57 +73,37 @@ impl<'a> ElfReader<'a> {
         if index >= header.program_entries_len as usize {
             return None;
         }
-        let offset = header.program_header_table_offset as usize
-            + index * header.program_entry_size as usize;
-        self.buffer
-            .get(offset..(offset + header.program_entry_size as usize))
-            .and_then(|buf| unsafe {
-                Some(core::mem::transmute::<
-                    [u8; size_of::<ProgramHeader>()],
-                    ProgramHeader,
-                >(
-                    // We slice the buf just in case that the program_entry_size is larger than
-                    TryInto::<[u8; size_of::<ProgramHeader>()]>::try_into(
-                        buf.get(0..size_of::<ProgramHeader>())?, // Use get bc if somehow the
-                                                                 // program_entry_size is less
-                                                                 // size_of::<ElfProgramHeader>()
-                    )
-                    .unwrap(),
-                ))
-            })
+        let offset = header.program_header_table_offset as usize + index * header.program_entry_size as usize;
+        self.buffer.get(offset..(offset + header.program_entry_size as usize)).and_then(|buf| unsafe {
+            Some(core::mem::transmute::<[u8; size_of::<ProgramHeader>()], ProgramHeader>(
+                // We slice the buf just in case that the program_entry_size is larger than
+                TryInto::<[u8; size_of::<ProgramHeader>()]>::try_into(
+                    buf.get(0..size_of::<ProgramHeader>())?, // Use get bc if somehow the
+                                                             // program_entry_size is less
+                                                             // size_of::<ElfProgramHeader>()
+                )
+                .unwrap(),
+            ))
+        })
     }
 
     pub fn string_table_offset(&'a self, offset: usize) -> Result<&'a str, ElfError<'a>> {
         let header = self.header();
         let string_table = self
             .section_entry(header.string_table_index as usize)
-            .ok_or(ElfError::InvalidStringTableIndex(
-                header.string_table_index as usize,
-            ))?;
+            .ok_or(ElfError::InvalidStringTableIndex(header.string_table_index as usize))?;
         let string_table = self
             .buffer
-            .get(
-                string_table.offset as usize
-                    ..string_table.offset as usize + string_table.size as usize,
-            )
+            .get(string_table.offset as usize..string_table.offset as usize + string_table.size as usize)
             .ok_or(ElfError::InvalidStringTable)?;
         let null_terminated = &string_table[offset..];
-        let end = null_terminated
-            .iter()
-            .position(|&b| b == 0)
-            .ok_or(ElfError::InvalidStringTable)?;
+        let end = null_terminated.iter().position(|&b| b == 0).ok_or(ElfError::InvalidStringTable)?;
         str::from_utf8(&null_terminated[..end]).map_err(|_| ElfError::InvalidStringTable)
     }
 
     pub fn symbol_index<T>(&self, section: &SectionHeader, index: usize) -> Option<T> {
-        assert!(
-            section.entry_size() != 0,
-            "Section header dons't have entry size, cann't look up symbol"
-        );
-        assert!(
-            section.entry_size() as usize >= size_of::<T>(),
-            "Symbol must be less than or equal to entrysize"
-        );
+        assert!(section.entry_size() != 0, "Section header dons't have entry size, cann't look up symbol");
+        assert!(section.entry_size() as usize >= size_of::<T>(), "Symbol must be less than or equal to entrysize");
 
         let entry_count = section.size() / section.entry_size();
         if index >= entry_count as usize {
@@ -156,17 +124,11 @@ impl<'a> ElfReader<'a> {
     }
 
     pub fn program_header_iter(&self) -> ProgramHeaderIter<'_> {
-        ProgramHeaderIter {
-            reader: self,
-            index: 0,
-        }
+        ProgramHeaderIter { reader: self, index: 0 }
     }
 
     pub fn section_header_iter(&self) -> SectionHeaderIter<'_> {
-        SectionHeaderIter {
-            reader: self,
-            index: 0,
-        }
+        SectionHeaderIter { reader: self, index: 0 }
     }
 
     pub fn entry_point(&self) -> u64 {
@@ -175,10 +137,7 @@ impl<'a> ElfReader<'a> {
 }
 
 unsafe impl IdentityReplaceable for ElfReader<'_> {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         self.buffer.identity_replace(mapper);
     }
 }

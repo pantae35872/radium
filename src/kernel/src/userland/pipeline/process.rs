@@ -9,9 +9,9 @@ use kernel_proc::IPPacket;
 use pager::{
     address::Page,
     paging::{
+        InactivePageCopyOption, InactivePageTable,
         mapper::{Mapper, MapperWithAllocator},
         table::RecurseLevel4LowerHalf,
-        InactivePageCopyOption, InactivePageTable,
     },
 };
 use spin::{Mutex, RwLock};
@@ -25,7 +25,7 @@ use crate::{
     },
     userland::{
         self,
-        pipeline::{thread::Thread, Event, PipelineContext, TaskBlock},
+        pipeline::{Event, PipelineContext, TaskBlock, thread::Thread},
     },
 };
 
@@ -61,22 +61,14 @@ impl ProcessPipeline {
                 self.page_table_swap(interrupted.process, scheduled.process);
             }
             (None, Some(TaskBlock { process, .. })) => {
-                let with = self.page_tables[process.id]
-                    .take()
-                    .expect("Some one forgot to put back their page table");
+                let with = self.page_tables[process.id].take().expect("Some one forgot to put back their page table");
 
-                assert!(
-                    self.hlt_page_table.is_none(),
-                    "HLT page table didn't get swapped"
-                );
+                assert!(self.hlt_page_table.is_none(), "HLT page table didn't get swapped");
 
                 self.hlt_page_table = Some(switch_lower_half(with));
             }
             (Some(TaskBlock { process, .. }), None) if context.should_schedule => {
-                let hlt_table = self
-                    .hlt_page_table
-                    .take()
-                    .expect("HLT Page table stolen or uninitialized");
+                let hlt_table = self.hlt_page_table.take().expect("HLT Page table stolen or uninitialized");
                 self.page_tables[process.id] = Some(switch_lower_half(hlt_table));
             }
             _ => {}
@@ -86,23 +78,17 @@ impl ProcessPipeline {
     fn check_ipp(&mut self) {
         ExpandSharedPacket::handle(|packet| {
             // SAFETY: The mutable exclusivity of the page table is ensure by page_table_modification_lock
-            self.page_tables.push(Some(unsafe {
-                copy_mappings(InactivePageCopyOption::lower_half(), &packet.table_template)
-            }));
+            self.page_tables
+                .push(Some(unsafe { copy_mappings(InactivePageCopyOption::lower_half(), &packet.table_template) }));
         });
     }
 
     pub fn page_table_swap(&mut self, from: Process, with: Process) {
         assert_ne!(from, with);
 
-        let with = self.page_tables[with.id]
-            .take()
-            .expect("Page table scheduled two times");
+        let with = self.page_tables[with.id].take().expect("Page table scheduled two times");
 
-        assert!(
-            self.page_tables[from.id].is_none(),
-            "Page table scheduled two times"
-        );
+        assert!(self.page_tables[from.id].is_none(), "Page table scheduled two times");
         self.page_tables[from.id] = Some(switch_lower_half(with));
     }
 
@@ -117,9 +103,7 @@ impl ProcessPipeline {
         if let Some(table) = self.page_tables[process.id].take() {
             let old = switch_lower_half(table);
 
-            let r = mapper_lower(|MapperWithAllocator { mapper, allocator }| {
-                f(self, mapper, allocator)
-            });
+            let r = mapper_lower(|MapperWithAllocator { mapper, allocator }| f(self, mapper, allocator));
 
             let table = switch_lower_half(old);
             self.page_tables[process.id] = Some(table);
@@ -138,9 +122,7 @@ impl ProcessPipeline {
         let _pg_mod = pg_mod.lock();
 
         if let Some(mut table) = self.page_tables[process.id].take() {
-            let r = unsafe {
-                mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table)
-            };
+            let r = unsafe { mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table) };
             self.page_tables[process.id] = Some(table);
             r
         } else {
@@ -150,18 +132,8 @@ impl ProcessPipeline {
     }
 
     pub fn alloc_stack(&mut self, process: Process) -> Stack {
-        self.mapper(
-            |_s, mapper, allocator| {
-                shared(&process)
-                    .stacks
-                    .lock()
-                    .alloc_stack(mapper, allocator, 16)
-            },
-            process,
-        )
-        .expect(
-            "Can't allocate new stack for process, uhh deal with this, maybe kill the user process",
-        )
+        self.mapper(|_s, mapper, allocator| shared(&process).stacks.lock().alloc_stack(mapper, allocator, 16), process)
+            .expect("Can't allocate new stack for process, uhh deal with this, maybe kill the user process")
     }
 
     pub fn alloc_thread(&mut self, parent: Process, thread: Thread) {
@@ -198,15 +170,10 @@ impl ProcessPipeline {
                 )
             });
 
-            ExpandSharedPacket {
-                table_template: Arc::clone(&orignal_table),
-            }
-            .broadcast(false);
+            ExpandSharedPacket { table_template: Arc::clone(&orignal_table) }.broadcast(false);
 
             // SAFETY: The mutable exclusivity of the page table is ensure by page_table_modification_lock
-            self.page_tables.push(Some(unsafe {
-                copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table)
-            }));
+            self.page_tables.push(Some(unsafe { copy_mappings(InactivePageCopyOption::lower_half(), &orignal_table) }));
         }
 
         process
@@ -247,8 +214,7 @@ fn shared(process: &Process) -> Arc<ProcessShared> {
     GLOBAL_PROCESS_DATA.read().shared(process)
 }
 
-static GLOBAL_PROCESS_DATA: RwLock<GlobalProcessDataPool> =
-    RwLock::new(GlobalProcessDataPool::new());
+static GLOBAL_PROCESS_DATA: RwLock<GlobalProcessDataPool> = RwLock::new(GlobalProcessDataPool::new());
 
 #[derive(Default)]
 struct GlobalProcessDataPool {
@@ -258,10 +224,7 @@ struct GlobalProcessDataPool {
 
 impl GlobalProcessDataPool {
     const fn new() -> Self {
-        GlobalProcessDataPool {
-            pool: Vec::new(),
-            free_id: Vec::new(),
-        }
+        GlobalProcessDataPool { pool: Vec::new(), free_id: Vec::new() }
     }
 
     fn shared(&self, process: &Process) -> Arc<ProcessShared> {
@@ -273,10 +236,7 @@ impl GlobalProcessDataPool {
         // enough
         for (id, shared) in self.pool.iter().enumerate() {
             if shared.threads.lock().contains(&thread.id()) {
-                return Some(Process {
-                    id,
-                    signature: *shared.signature.lock(),
-                });
+                return Some(Process { id, signature: *shared.signature.lock() });
             }
         }
         None

@@ -57,10 +57,7 @@ impl Graphic {
     /// Performs a backbuffer swap
     pub fn swap(&mut self) {
         let min_pos = self.backbuffer_tracker.frame_buffer_min();
-        let max_pos = self
-            .backbuffer_tracker
-            .frame_buffer_max()
-            .min(self.real_buffer.len() - 1);
+        let max_pos = self.backbuffer_tracker.frame_buffer_max().min(self.real_buffer.len() - 1);
         unsafe {
             let src = &self.frame_buffer[min_pos..=max_pos];
             let dst = &mut self.real_buffer[min_pos..=max_pos];
@@ -103,10 +100,7 @@ impl Graphic {
             log!(Error, "Invalid glyph id");
             return;
         };
-        let glyph = match self
-            .glyphs
-            .get(glyph_data.start..(glyph_data.start + glyph_data.size))
-        {
+        let glyph = match self.glyphs.get(glyph_data.start..(glyph_data.start + glyph_data.size)) {
             Some(glyph) => glyph,
             None => {
                 log!(Error, "Invalid glyph data");
@@ -128,17 +122,11 @@ impl Graphic {
             unsafe {
                 let dest = self.frame_buffer.as_mut_ptr().add(fb_offset);
                 let src = glyph.as_ptr().add(glyph_offset);
-                Self::memmove_selected(
-                    self.memmove_selected,
-                    dest as *mut u8,
-                    src as *const u8,
-                    glyph_data.width * 4,
-                );
+                Self::memmove_selected(self.memmove_selected, dest as *mut u8, src as *const u8, glyph_data.width * 4);
             }
         }
         self.backbuffer_tracker.track(x, y);
-        self.backbuffer_tracker
-            .track(x + glyph_data.width, y + glyph_data.height);
+        self.backbuffer_tracker.track(x + glyph_data.width, y + glyph_data.height);
     }
 
     pub fn plot(&mut self, x: usize, y: usize, color: Color) {
@@ -301,31 +289,23 @@ impl Graphic {
             );
         }
 
-        self.frame_buffer[(self.mode.stride() * (height - scroll_amount))..].fill(
-            match self.mode.pixel_format() {
-                PixelFormat::Rgb => BACKGROUND_COLOR.as_u32() << 8,
-                PixelFormat::Bgr => BACKGROUND_COLOR.as_u32(),
-                PixelFormat::Bitmask(bitmask) => {
-                    BACKGROUND_COLOR.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue)
-                }
-                PixelFormat::BltOnly => unimplemented!("Not support"),
-            },
-        );
+        self.frame_buffer[(self.mode.stride() * (height - scroll_amount))..].fill(match self.mode.pixel_format() {
+            PixelFormat::Rgb => BACKGROUND_COLOR.as_u32() << 8,
+            PixelFormat::Bgr => BACKGROUND_COLOR.as_u32(),
+            PixelFormat::Bitmask(bitmask) => BACKGROUND_COLOR.apply_bitmask(bitmask.red, bitmask.green, bitmask.blue),
+            PixelFormat::BltOnly => unimplemented!("Not support"),
+        });
     }
 
     unsafe fn plot_rgb(&mut self, color: Color, y: usize, x: usize) {
         unsafe {
-            *self
-                .frame_buffer
-                .get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32() << 8;
+            *self.frame_buffer.get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32() << 8;
         }
     }
 
     unsafe fn plot_bgr(&mut self, color: Color, y: usize, x: usize) {
         unsafe {
-            *self
-                .frame_buffer
-                .get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32();
+            *self.frame_buffer.get_unchecked_mut(y * self.mode.stride() + x) = color.as_u32();
         }
     }
 
@@ -338,38 +318,24 @@ impl Graphic {
 
     fn get_pixel_rgb(&self, y: usize, x: usize) -> Color {
         let color = self.frame_buffer[y * self.mode.stride() + x];
-        Color::new(
-            color.get_bits(24..32) as u8,
-            color.get_bits(16..24) as u8,
-            color.get_bits(8..16) as u8,
-        )
+        Color::new(color.get_bits(24..32) as u8, color.get_bits(16..24) as u8, color.get_bits(8..16) as u8)
     }
 
     fn get_pixel_bgr(&self, y: usize, x: usize) -> Color {
         let color = self.frame_buffer[y * self.mode.stride() + x];
-        Color::new(
-            color.get_bits(16..24) as u8,
-            color.get_bits(8..16) as u8,
-            color.get_bits(0..8) as u8,
-        )
+        Color::new(color.get_bits(16..24) as u8, color.get_bits(8..16) as u8, color.get_bits(0..8) as u8)
     }
 
     fn get_pixel_bitmask(&self, y: usize, x: usize) -> Color {
         match self.mode.pixel_format() {
             PixelFormat::Bitmask(bitmask) => {
                 let color = self.frame_buffer[y * self.mode.stride() + x];
-                let red = color.get_bits(
-                    (bitmask.red.trailing_zeros() - 8) as usize
-                        ..bitmask.red.trailing_zeros() as usize,
-                );
-                let green = color.get_bits(
-                    (bitmask.green.trailing_zeros() - 8) as usize
-                        ..bitmask.green.trailing_zeros() as usize,
-                );
-                let blue = color.get_bits(
-                    (bitmask.blue.trailing_zeros() - 8) as usize
-                        ..bitmask.blue.trailing_zeros() as usize,
-                );
+                let red =
+                    color.get_bits((bitmask.red.trailing_zeros() - 8) as usize..bitmask.red.trailing_zeros() as usize);
+                let green = color
+                    .get_bits((bitmask.green.trailing_zeros() - 8) as usize..bitmask.green.trailing_zeros() as usize);
+                let blue = color
+                    .get_bits((bitmask.blue.trailing_zeros() - 8) as usize..bitmask.blue.trailing_zeros() as usize);
                 Color::new(red as u8, green as u8, blue as u8)
             }
             _ => Color::new(0, 0, 0),
@@ -410,9 +376,7 @@ impl MMIODevice<(&'static mut [u32], GraphicsInfo)> for Graphic {
             flags if flags.contains(Xcr0::ZMM_HIGH256) => MemMoveSelected::AVX512,
             flags if flags.contains(Xcr0::AVX) => MemMoveSelected::AVX256,
             flags if flags.contains(Xcr0::SEE) => MemMoveSelected::MMX,
-            _ => panic!(
-                "CPU With no vector instruction is not supported, Need any of MMX, AVX256, AVX512"
-            ),
+            _ => panic!("CPU With no vector instruction is not supported, Need any of MMX, AVX256, AVX512"),
         };
         let mut va = Self {
             mode,
@@ -440,9 +404,7 @@ pub fn init(ctx: &mut InitializationContext<Stage2>) {
     initialize_guard!();
     log!(Trace, "Registering graphic");
     let graphics_info = ctx.context().boot_bridge().graphics_info();
-    let start = virt_addr_alloc(
-        ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE + 1,
-    );
+    let start = virt_addr_alloc(ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE + 1);
     let frame_buffer_data = ctx.context().boot_bridge().framebuffer_data();
     ctx.mapper().map_range(
         start,

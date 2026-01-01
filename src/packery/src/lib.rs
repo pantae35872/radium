@@ -26,12 +26,7 @@ pub struct Packery {
 
 impl Packery {
     pub fn new() -> Self {
-        Self {
-            entry_buffer: Vec::new(),
-            entry_length: 0,
-            string_buffer: String::new(),
-            data_buffer: Vec::new(),
-        }
+        Self { entry_buffer: Vec::new(), entry_length: 0, string_buffer: String::new(), data_buffer: Vec::new() }
     }
 
     pub fn push(&mut self, name: &str, data: &[u8]) {
@@ -41,14 +36,8 @@ impl Packery {
         self.data_buffer.extend_from_slice(data);
         self.entry_buffer.extend_from_slice(&unsafe {
             core::mem::transmute::<PackeryEntry, [u8; size_of::<PackeryEntry>()]>(PackeryEntry {
-                data: PackeryData {
-                    offset: data_offset as u64,
-                    size: data.len() as u64,
-                },
-                name: PackeryString {
-                    offset: name_offset as u64,
-                    size: name.len() as u64,
-                },
+                data: PackeryData { offset: data_offset as u64, size: data.len() as u64 },
+                name: PackeryString { offset: name_offset as u64, size: name.len() as u64 },
             })
         });
         self.entry_length += 1;
@@ -144,32 +133,26 @@ impl<'a> Packed<'a> {
         if buffer[0..4] != MAGIC.to_le_bytes() {
             return Err(PackedError::InvalidMagic);
         }
-        Ok(Self {
-            buffer: DataBuffer::new(buffer),
-        })
+        Ok(Self { buffer: DataBuffer::new(buffer) })
     }
 
     fn header(&self) -> PackeryHeader {
         unsafe {
             core::mem::transmute::<[u8; size_of::<PackeryHeader>()], PackeryHeader>(
-                self.buffer[..size_of::<PackeryHeader>()]
-                    .try_into()
-                    .unwrap(),
+                self.buffer[..size_of::<PackeryHeader>()].try_into().unwrap(),
             )
         }
     }
 
     pub fn data_table(&'a self) -> &'a [u8] {
         let header = self.header();
-        &self.buffer
-            [header.data_offset as usize..header.data_offset as usize + header.data_length as usize]
+        &self.buffer[header.data_offset as usize..header.data_offset as usize + header.data_length as usize]
     }
 
     pub fn string_table(&'a self) -> &'a str {
         let header = self.header();
         str::from_utf8(
-            &self.buffer[header.string_offset as usize
-                ..header.string_offset as usize + header.string_length as usize],
+            &self.buffer[header.string_offset as usize..header.string_offset as usize + header.string_length as usize],
         )
         .expect("Invalid utf8 in program pack")
     }
@@ -183,34 +166,23 @@ impl<'a> Packed<'a> {
     }
 
     pub fn iter(&'a self) -> ProgramIter<'a> {
-        ProgramIter {
-            packed: self,
-            index: 0,
-        }
+        ProgramIter { packed: self, index: 0 }
     }
 
     pub fn get_program(&'a self, index: usize) -> Result<ProgramContainer<'a>, PackedError> {
         let header = self.header();
         if index >= header.entry_length as usize {
-            return Err(PackedError::DriverIndexOutOfRange {
-                index,
-                length: header.entry_length as usize,
-            });
+            return Err(PackedError::DriverIndexOutOfRange { index, length: header.entry_length as usize });
         }
 
         let offset = header.entry_offset as usize + index * size_of::<PackeryEntry>();
 
         let entry = unsafe {
             core::mem::transmute::<[u8; size_of::<PackeryEntry>()], PackeryEntry>(
-                self.buffer[offset..offset + size_of::<PackeryEntry>()]
-                    .try_into()
-                    .unwrap(),
+                self.buffer[offset..offset + size_of::<PackeryEntry>()].try_into().unwrap(),
             )
         };
-        Ok(ProgramContainer {
-            name: self.get_string(entry.name),
-            data: self.get_data(entry.data),
-        })
+        Ok(ProgramContainer { name: self.get_string(entry.name), data: self.get_data(entry.data) })
     }
 }
 
@@ -237,10 +209,7 @@ unsafe impl IdentityMappable for Packed<'_> {
 }
 
 unsafe impl IdentityReplaceable for Packed<'_> {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         self.buffer.identity_replace(mapper);
     }
 }

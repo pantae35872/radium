@@ -17,11 +17,7 @@ pub struct VirtualAllocator {
 impl VirtualAllocator {
     /// Create a new virtual allocator
     pub const fn new(start: VirtAddr, size: usize) -> Self {
-        Self {
-            orginal_start: start,
-            current: AtomicU64::new(start.as_u64()),
-            size,
-        }
+        Self { orginal_start: start, current: AtomicU64::new(start.as_u64()), size }
     }
 
     pub fn range_frame(&self) -> FrameIter {
@@ -54,9 +50,7 @@ impl VirtualAllocator {
     pub fn allocate(&self, size_in_pages: usize) -> Option<Page> {
         assert_ne!(size_in_pages, 0);
         // + 1 for the guard page, in case i messed up
-        let current = self
-            .current
-            .fetch_add(PAGE_SIZE * (size_in_pages + 1) as u64, Ordering::SeqCst);
+        let current = self.current.fetch_add(PAGE_SIZE * (size_in_pages + 1) as u64, Ordering::SeqCst);
         if current >= self.end().as_u64() {
             return None;
         }

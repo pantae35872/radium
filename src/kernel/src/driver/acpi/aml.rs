@@ -1,6 +1,6 @@
 use alloc::boxed::Box;
 use namespace::{AmlName, Namespace};
-use parser::{term_object::term_list, Parser, Propagate};
+use parser::{Parser, Propagate, term_object::term_list};
 use sentinel::log;
 
 pub mod namespace;
@@ -34,11 +34,7 @@ pub struct AmlContext {
 
 impl AmlContext {
     pub fn new(handle: impl AmlHandle + 'static) -> Self {
-        Self {
-            namespace: Namespace::new(),
-            current_scope: AmlName::root(),
-            handle: Box::new(handle),
-        }
+        Self { namespace: Namespace::new(), current_scope: AmlName::root(), handle: Box::new(handle) }
     }
 }
 

@@ -14,7 +14,11 @@ use convert_case::{Case, Casing};
 use proc_macro::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Expr, Ident, ItemStruct, Token, Type, parenthesized, parse::{Parse, ParseStream}, parse_macro_input, punctuated::Punctuated, token::Paren
+    Expr, Ident, ItemStruct, Token, Type, parenthesized,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+    punctuated::Punctuated,
+    token::Paren,
 };
 
 #[proc_macro]
@@ -99,18 +103,9 @@ pub fn generate_interrupt_handlers(_item: TokenStream) -> TokenStream {
 pub fn local_gen(_input: TokenStream) -> TokenStream {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let local_path = out_dir.join("local_gen_struct.rs").display().to_string();
-    let builder_struct = out_dir
-        .join("local_gen_builder_struct.rs")
-        .display()
-        .to_string();
-    let builder_build = out_dir
-        .join("local_gen_builder_build.rs")
-        .display()
-        .to_string();
-    let builder_set = out_dir
-        .join("local_gen_builder_set.rs")
-        .display()
-        .to_string();
+    let builder_struct = out_dir.join("local_gen_builder_struct.rs").display().to_string();
+    let builder_build = out_dir.join("local_gen_builder_build.rs").display().to_string();
+    let builder_set = out_dir.join("local_gen_builder_set.rs").display().to_string();
 
     quote! {
         include!(#local_path);
@@ -146,11 +141,7 @@ struct BuilderBuild {
 impl Parse for BuilderBuild {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let create_expr;
-        Ok(Self {
-            name: input.parse()?,
-            _paren: parenthesized!(create_expr in input),
-            create: create_expr.parse()?,
-        })
+        Ok(Self { name: input.parse()?, _paren: parenthesized!(create_expr in input), create: create_expr.parse()? })
     }
 }
 
@@ -167,11 +158,7 @@ impl ToTokens for BuilderBuild {
 
 #[proc_macro]
 pub fn local_builder(input: TokenStream) -> TokenStream {
-    let Builder {
-        builder,
-        mut builds,
-        ..
-    } = parse_macro_input!(input as Builder);
+    let Builder { builder, mut builds, .. } = parse_macro_input!(input as Builder);
     let module = Span::call_site().file().replace("/", "_");
     let module = module.trim_suffix(".rs");
     for build in builds.iter_mut() {
@@ -207,12 +194,7 @@ fn tracked_write_file(
         ok.read_to_string(&mut wrote).unwrap();
     }
 
-    if wrote
-        .lines()
-        .next()
-        .is_some_and(|e| e.strip_prefix("//").is_some_and(|e| e != build_uuid))
-        || length == 0
-    {
+    if wrote.lines().next().is_some_and(|e| e.strip_prefix("//").is_some_and(|e| e != build_uuid)) || length == 0 {
         if path.exists() {
             remove_file(&path).unwrap();
         }
@@ -239,9 +221,7 @@ fn tracked_write_file(
     let mut hasher = DefaultHasher::new();
     hash(&mut hasher);
     let hash = hasher.finish().to_string();
-    let should_write = !wrote
-        .lines()
-        .any(|e| e.trim().strip_prefix("//").is_some_and(|e| e == hash));
+    let should_write = !wrote.lines().any(|e| e.trim().strip_prefix("//").is_some_and(|e| e == hash));
 
     if should_write {
         OpenOptions::new()
@@ -249,11 +229,7 @@ fn tracked_write_file(
             .open(&path)
             .unwrap()
             .write_all_at(
-                format!(
-                    "//{hash}\n{append}\n{}",
-                    &wrote[wrote.len() - append_index as usize..]
-                )
-                .as_bytes(),
+                format!("//{hash}\n{append}\n{}", &wrote[wrote.len() - append_index as usize..]).as_bytes(),
                 length - append_index,
             )
             .unwrap();
@@ -310,9 +286,7 @@ pub fn def_local(input: TokenStream) -> TokenStream {
         "local_gen_builder_set",
         hasher,
         "#[allow(non_snake_case)]\nimpl CpuLocalBuilder { pub fn new() -> Self {Self::default()}\n\n}",
-        &format!(
-            "pub fn {full_name}(&mut self, value: {str_type}) {{ self.{full_name} = Some(value); }}"
-        ),
+        &format!("pub fn {full_name}(&mut self, value: {str_type}) {{ self.{full_name} = Some(value); }}"),
         1,
     );
 
@@ -346,10 +320,7 @@ pub fn def_local(input: TokenStream) -> TokenStream {
 pub fn gen_ipp(_item: TokenStream) -> TokenStream {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let constants_path = out_dir.join("ipp_gen_constants.rs").display().to_string();
-    let pipeline_path = out_dir
-        .join("ipp_gen_packet_pipeline.rs")
-        .display()
-        .to_string();
+    let pipeline_path = out_dir.join("ipp_gen_packet_pipeline.rs").display().to_string();
 
     let packets_path = out_dir.join("ipp_gen_packets.rs").display().to_string();
     let impl_path = out_dir.join("ipp_gen_packet_impl.rs").display().to_string();
@@ -374,7 +345,7 @@ pub fn ipp_packet(input: TokenStream) -> TokenStream {
     quote! {
         static #static_packet_name: [crate::sync::spin_mpsc::SpinMPSC<#ty, 256>; crate::smp::MAX_CPU] = [
             const { crate::sync::spin_mpsc::SpinMPSC::new() }; crate::smp::MAX_CPU];
-        static #static_handled_flags_name: [core::sync::atomic::AtomicBool; crate::smp::MAX_CPU] = 
+        static #static_handled_flags_name: [core::sync::atomic::AtomicBool; crate::smp::MAX_CPU] =
             [const { core::sync::atomic::AtomicBool::new(false) }; crate::smp::MAX_CPU];
 
         impl #ty {
@@ -386,7 +357,7 @@ pub fn ipp_packet(input: TokenStream) -> TokenStream {
                     flag.store(false, core::sync::atomic::Ordering::Release);
                 }
 
-                for (core, packet) in #static_packet_name 
+                for (core, packet) in #static_packet_name
                     .iter()
                     .enumerate()
                     .filter(|(core, ..)| crate::interrupt::CORE_ID.id() != *core && *core < *crate::smp::CORE_COUNT)

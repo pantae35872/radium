@@ -125,47 +125,25 @@ select_context! {
 
 impl IoApicManager {
     pub fn new() -> Self {
-        Self {
-            io_apics: Vec::new(),
-            sources_override: [const { None }; u8::MAX as usize],
-        }
+        Self { io_apics: Vec::new(), sources_override: [const { None }; u8::MAX as usize] }
     }
 
-    pub fn add_io_apic(
-        &mut self,
-        base: MMIOBufferInfo,
-        gsi_base: usize,
-        ctx: &mut InitializationContext<Stage3>,
-    ) {
+    pub fn add_io_apic(&mut self, base: MMIOBufferInfo, gsi_base: usize, ctx: &mut InitializationContext<Stage3>) {
         log!(Debug, "Found IoApic at: {:#x}", base.addr());
-        let io_apic = ctx
-            .mmio_device::<IoApic, _>(gsi_base, Some(base))
-            .expect("Failed to create some io apic");
+        let io_apic = ctx.mmio_device::<IoApic, _>(gsi_base, Some(base)).expect("Failed to create some io apic");
         let io_apic_max = io_apic.registers.max_redirection_entry();
         let io_apic_gsi_ranges = gsi_base..io_apic_max;
-        log!(
-            Debug,
-            "IoApic GSI Ranges [{}-{}]",
-            io_apic_gsi_ranges.start,
-            io_apic_gsi_ranges.end
-        );
+        log!(Debug, "IoApic GSI Ranges [{}-{}]", io_apic_gsi_ranges.start, io_apic_gsi_ranges.end);
         self.io_apics.push(io_apic);
     }
 
-    pub fn add_source_override(
-        &mut self,
-        source_override: &acpi::madt::IoApicInterruptSourceOverride,
-    ) {
+    pub fn add_source_override(&mut self, source_override: &acpi::madt::IoApicInterruptSourceOverride) {
         self.sources_override[source_override.irq_source() as usize] = Some(source_override.into());
     }
 
     pub fn redirect_legacy_irqs(&mut self, legacy_irq: u8, mut entry: RedirectionTableEntry) {
         let Some(source_override) = &self.sources_override[legacy_irq as usize] else {
-            log!(
-                Error,
-                "Couldn't redirect legacy irq {legacy_irq}, to vector {:?}",
-                entry.vector
-            );
+            log!(Error, "Couldn't redirect legacy irq {legacy_irq}, to vector {:?}", entry.vector);
             return;
         };
         log!(
@@ -179,9 +157,7 @@ impl IoApicManager {
             .binary_search_by(|item| {
                 if source_override.gsi < item.gsi_base {
                     Ordering::Greater
-                } else if source_override.gsi
-                    >= item.gsi_base + item.registers.max_redirection_entry()
-                {
+                } else if source_override.gsi >= item.gsi_base + item.registers.max_redirection_entry() {
                     Ordering::Less
                 } else {
                     Ordering::Equal
@@ -230,10 +206,7 @@ impl From<MpsINTIFlags> for PinPolarity {
 
 impl IoApic {
     fn new(base: MMIOBuffer, gsi_base: usize) -> Self {
-        Self {
-            gsi_base,
-            registers: unsafe { IoApicRegisters::new(base.base()) },
-        }
+        Self { gsi_base, registers: unsafe { IoApicRegisters::new(base.base()) } }
     }
 
     /// Provide the abslute index of the gsi not the, reletive index to this IoApic
@@ -253,15 +226,13 @@ impl IoApicRegister {
     }
 
     pub fn write(&mut self, value: u32) {
-        let io_apic =
-            unsafe { core::slice::from_raw_parts_mut(self.base as *mut VolatileCell<u32>, 5) };
+        let io_apic = unsafe { core::slice::from_raw_parts_mut(self.base as *mut VolatileCell<u32>, 5) };
         io_apic[0].set(self.reg & 0xFF);
         io_apic[4].set(value);
     }
 
     pub fn read(&self) -> u32 {
-        let io_apic =
-            unsafe { core::slice::from_raw_parts_mut(self.base as *mut VolatileCell<u32>, 5) };
+        let io_apic = unsafe { core::slice::from_raw_parts_mut(self.base as *mut VolatileCell<u32>, 5) };
         io_apic[0].set(self.reg & 0xFF);
         return io_apic[4].get();
     }

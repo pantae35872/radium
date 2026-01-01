@@ -100,9 +100,7 @@ pub struct Port<S: PortSize, P: PortPermission> {
 
 impl PortAllocator {
     pub const fn new() -> Self {
-        Self {
-            bitmap: [0; X86_PORT_BITMAP_SIZE],
-        }
+        Self { bitmap: [0; X86_PORT_BITMAP_SIZE] }
     }
 
     pub fn allocate<P: PortPermission, S: PortSize>(&mut self, address: u16) -> Option<Port<S, P>> {
@@ -130,10 +128,7 @@ impl Default for PortAllocator {
 
 impl<S: PortSize, P: PortPermission> Port<S, P> {
     fn new(port_address: u16) -> Self {
-        Self {
-            port_address,
-            phantom: PhantomData,
-        }
+        Self { port_address, phantom: PhantomData }
     }
 }
 
@@ -197,13 +192,7 @@ mod tests {
     impl Tester {
         fn alloc_and_check<P: PortPermission, S: PortSize>(&mut self, number: u16) -> Port<S, P> {
             let port = self.0.allocate(number).expect("Failed to allocate port");
-            assert_eq!(
-                port,
-                Port {
-                    port_address: number,
-                    phantom: PhantomData
-                }
-            );
+            assert_eq!(port, Port { port_address: number, phantom: PhantomData });
             port
         }
 

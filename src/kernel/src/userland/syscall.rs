@@ -41,15 +41,10 @@ pub(super) fn syscall_handle(
 
     match syscall {
         Syscall::Exit => pipeline.free_process(calling_task.process),
-        Syscall::Sleep => {
-            pipeline.sleep_interrupted(pipeline_context, rq_context.stack_frame.rdx as usize)
-        }
+        Syscall::Sleep => pipeline.sleep_interrupted(pipeline_context, rq_context.stack_frame.rdx as usize),
         Syscall::Spawn => {
             let start = VirtAddr::new(rq_context.stack_frame.rdx);
-            if pipeline
-                .alloc_thread(pipeline_context, calling_task.process, start)
-                .is_none()
-            {
+            if pipeline.alloc_thread(pipeline_context, calling_task.process, start).is_none() {
                 pipeline.free_process(calling_task.process);
             }
         }

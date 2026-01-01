@@ -20,10 +20,7 @@ impl Default for TemporaryPage {
 
 impl TemporaryPage {
     pub fn new() -> Self {
-        TemporaryPage {
-            mapped: false,
-            page: virt_addr_alloc(1),
-        }
+        TemporaryPage { mapped: false, page: virt_addr_alloc(1) }
     }
 
     /// Map the temporary page
@@ -43,10 +40,7 @@ impl TemporaryPage {
     where
         P4: TopLevelP4,
     {
-        assert!(
-            active_table.translate_page(self.page).is_none() || self.mapped,
-            "temporary page is already mapped"
-        );
+        assert!(active_table.translate_page(self.page).is_none() || self.mapped, "temporary page is already mapped");
 
         // SAFETY: The frame contact is uphold by the caller
         unsafe { active_table.map_to(self.page, frame, EntryFlags::WRITABLE, allocator) };
@@ -66,10 +60,7 @@ impl TemporaryPage {
     where
         P4: TopLevelP4,
     {
-        assert!(
-            self.mapped,
-            "Trying to unmap a temporary page that is not map"
-        );
+        assert!(self.mapped, "Trying to unmap a temporary page that is not map");
         // SAFETY: function above use map_to and we have assertion above, so the first contact is uphold,
         // the second contact is uphold by the caller
         unsafe { active_table.unmap_addr(self.page) };
@@ -94,10 +85,6 @@ impl TemporaryPage {
         // SAFETY: The contact is uphold by the caller, and taking a reference of a frame as a
         // table is safe because the PAGE_SIZE (which is a size of a frame) is equal to size of
         // Table<RecurseLevel1>, gurentee by const assert above
-        unsafe {
-            &mut *(self
-                .map(frame, active_table, allocator)
-                .as_mut_ptr::<Table<RecurseLevel1>>())
-        }
+        unsafe { &mut *(self.map(frame, active_table, allocator).as_mut_ptr::<Table<RecurseLevel1>>()) }
     }
 }

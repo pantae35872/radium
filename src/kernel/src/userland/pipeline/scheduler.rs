@@ -1,13 +1,16 @@
 use core::{
     cmp::Reverse,
-    sync::atomic::{AtomicUsize, Ordering}, 
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
 use derivative::Derivative;
 
 use crate::{
-    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS}, serial_print, serial_println, smp::{CoreId, MAX_CPU}, userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline}
+    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS},
+    serial_print, serial_println,
+    smp::{CoreId, MAX_CPU},
+    userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
 };
 
 const MIGRATION_THRESHOLD: usize = 2;
@@ -61,10 +64,8 @@ impl SchedulerPipeline {
 
     pub fn sleep_interrupted(&mut self, context: &mut PipelineContext, amount_millis: usize) {
         assert!(context.interrupted_task.is_some(), "sleep interrupted called with no interrupted task");
-        let sleep_entry = SleepEntry {
-            wakeup_time: self.timer_count + amount_millis,
-            task: context.interrupted_task.unwrap(),
-        };
+        let sleep_entry =
+            SleepEntry { wakeup_time: self.timer_count + amount_millis, task: context.interrupted_task.unwrap() };
 
         self.sleep_queue.push(Reverse(sleep_entry));
         context.interrupted_slept = true;
@@ -105,8 +106,7 @@ impl SchedulerPipeline {
                 continue;
             }
 
-            let core = CoreId::new(target_core)
-                .expect("Unintialized core selected when calcuating thread migration");
+            let core = CoreId::new(target_core).expect("Unintialized core selected when calcuating thread migration");
 
             thread.migrate(core, task);
 
@@ -117,26 +117,28 @@ impl SchedulerPipeline {
     }
 
     pub fn schedule(&mut self, thread: &mut ThreadPipeline, context: &mut PipelineContext) {
-        if let Some(interrupted_task) = context.interrupted_task && !context.interrupted_slept {
+        if let Some(interrupted_task) = context.interrupted_task
+            && !context.interrupted_slept
+        {
             self.units.push_back(interrupted_task);
         }
 
         self.migrate(thread);
 
-        if self
-            .sleep_queue
-            .peek()
-            .is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time)
-        {
+        if self.sleep_queue.peek().is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time) {
             let task = self.sleep_queue.pop().unwrap().0.task;
             self.units.push_front(task);
         }
 
         if CORE_ID.is_bsp() {
-            TASK_COUNT_EACH_CORE.iter().filter_map(|t| match t.load(Ordering::Relaxed) {
-                usize::MAX => None,
-                t => Some(t),
-            }).enumerate().for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
+            TASK_COUNT_EACH_CORE
+                .iter()
+                .filter_map(|t| match t.load(Ordering::Relaxed) {
+                    usize::MAX => None,
+                    t => Some(t),
+                })
+                .enumerate()
+                .for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
             serial_println!();
         }
 
@@ -149,5 +151,4 @@ impl SchedulerPipeline {
     }
 }
 
-static TASK_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] =
-    [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];
+static TASK_COUNT_EACH_CORE: [AtomicUsize; MAX_CPU] = [const { AtomicUsize::new(usize::MAX) }; MAX_CPU];

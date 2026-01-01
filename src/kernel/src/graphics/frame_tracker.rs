@@ -10,15 +10,7 @@ pub struct FrameTracker {
 
 impl FrameTracker {
     pub fn new(width: usize, height: usize, stride: usize) -> Self {
-        Self {
-            min_x: width - 1,
-            min_y: height - 1,
-            max_x: 0,
-            max_y: 0,
-            stride,
-            width,
-            height,
-        }
+        Self { min_x: width - 1, min_y: height - 1, max_x: 0, max_y: 0, stride, width, height }
     }
 
     pub fn track(&mut self, x: usize, y: usize) {

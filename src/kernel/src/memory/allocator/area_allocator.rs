@@ -25,15 +25,9 @@ impl<'a> AreaAllocator<'a, ()> {
     ///
     /// and the [`FrameAllocator`] require that the allocated address is valid, and is the only
     /// owner ship of the frame
-    pub unsafe fn new(
-        areas: &'a MemoryMap,
-    ) -> AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>> {
+    pub unsafe fn new(areas: &'a MemoryMap) -> AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>> {
         let areas = areas.entries().filter(|e| e.ty == MemoryType::CONVENTIONAL);
-        AreaAllocator {
-            areas,
-            current_area: None,
-            _phantom: PhantomData,
-        }
+        AreaAllocator { areas, current_area: None, _phantom: PhantomData }
     }
 }
 
@@ -50,9 +44,8 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
             }
         }
         // SAFETY: This is safe because the memory map is valid, and is gurenntee by uefi and the bootloader
-        self.current_area = Some(unsafe {
-            LinearAllocator::new(area.phys_start, (area.page_count * PAGE_SIZE) as usize)
-        });
+        self.current_area =
+            Some(unsafe { LinearAllocator::new(area.phys_start, (area.page_count * PAGE_SIZE) as usize) });
     }
 
     pub fn allocate_entire_buffer(&mut self) -> Option<(PhysAddr, usize)> {
@@ -64,9 +57,7 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
 
         let result = (
             current_area.current(),
-            current_area.size()
-                - (current_area.current().as_u64() - current_area.original_start().as_u64())
-                    as usize,
+            current_area.size() - (current_area.current().as_u64() - current_area.original_start().as_u64()) as usize,
         );
         self.current_area = None;
         Some(result)
@@ -88,10 +79,6 @@ unsafe impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for Are
     }
 
     fn deallocate_frame(&mut self, frame: Frame) {
-        log!(
-            Warning,
-            "deallocate called on area allocator with frame: {:#x}",
-            frame.start_address()
-        );
+        log!(Warning, "deallocate called on area allocator with frame: {:#x}", frame.start_address());
     }
 }

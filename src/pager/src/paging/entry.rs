@@ -29,9 +29,7 @@ impl Entry {
     pub fn pointed_frame(&self) -> Option<Frame> {
         if self.flags().contains(EntryFlags::PRESENT) {
             // SAFETY: We already mask the 52-63 (inclusive) bits
-            Some(Frame::containing_address(unsafe {
-                PhysAddr::new_unchecked(self.0 & 0x000fffff_fffff000)
-            }))
+            Some(Frame::containing_address(unsafe { PhysAddr::new_unchecked(self.0 & 0x000fffff_fffff000) }))
         } else {
             None
         }
@@ -44,12 +42,7 @@ impl Entry {
 
 impl Debug for Entry {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{frame} : {flags:?}",
-            flags = self.flags(),
-            frame = self.mask_flags()
-        )?;
+        write!(f, "{frame} : {flags:?}", flags = self.flags(), frame = self.mask_flags())?;
         Ok(())
     }
 }

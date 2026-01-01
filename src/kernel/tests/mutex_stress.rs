@@ -41,8 +41,5 @@ fn mutex_increment() {
 
     let result = *counter.lock();
 
-    assert_eq!(
-        result, expected,
-        "Mutex did not protect the counter properly!"
-    );
+    assert_eq!(result, expected, "Mutex did not protect the counter properly!");
 }

@@ -37,10 +37,7 @@ impl Display for TomlLexerError {
                 write!(f, "Expected end single quote, found: {:?}", found)
             }
             Self::FloatNumberNotSupport => write!(f, "float nuber are not support in this parser"),
-            Self::EndOfBuffer => write!(
-                f,
-                "trying to read next token but already at the end of the buffer"
-            ),
+            Self::EndOfBuffer => write!(f, "trying to read next token but already at the end of the buffer"),
         }
     }
 }
@@ -72,10 +69,7 @@ impl<'a> TomlLexer<'a> {
         while let Some(value) = self.peek(0) {
             if value.is_alphabetic() {
                 buffer.push(self.consume().unwrap());
-                while self
-                    .peek(0)
-                    .is_some_and(|e| e.is_alphanumeric() || e == '_' || e == '-')
-                {
+                while self.peek(0).is_some_and(|e| e.is_alphanumeric() || e == '_' || e == '-') {
                     buffer.push(self.consume().unwrap());
                 }
 
@@ -113,16 +107,11 @@ impl<'a> TomlLexer<'a> {
             if value == '\"' {
                 self.consume();
                 loop {
-                    while self
-                        .peek(0)
-                        .is_some_and(|e| e != '\\' && e != '\"' && e != '\n')
-                    {
+                    while self.peek(0).is_some_and(|e| e != '\\' && e != '\"' && e != '\n') {
                         buffer.push(self.consume().unwrap());
                     }
 
-                    if self.peek(0).is_some_and(|e| e == '\"')
-                        && self.peek(1).is_some_and(|e| e == '\"')
-                    {
+                    if self.peek(0).is_some_and(|e| e == '\"') && self.peek(1).is_some_and(|e| e == '\"') {
                         self.consume();
                         self.consume();
 
@@ -163,10 +152,7 @@ impl<'a> TomlLexer<'a> {
                                     '\"' => buffer.push('\u{22}'),
                                     '\\' => buffer.push('\u{5C}'),
                                     _ => {
-                                        while self
-                                            .peek(0)
-                                            .is_some_and(|e| e.is_whitespace() || e == '\n')
-                                        {
+                                        while self.peek(0).is_some_and(|e| e.is_whitespace() || e == '\n') {
                                             self.consume();
                                         }
                                     }
@@ -174,12 +160,8 @@ impl<'a> TomlLexer<'a> {
                                 continue;
                             }
 
-                            if self.peek(0).is_some_and(|e| e == '\"')
-                                || self.peek(1).is_some_and(|e| e == '\"')
-                            {
-                                if self.peek(0).is_some_and(|e| e == '\"')
-                                    && self.peek(1).is_some_and(|e| e == '\"')
-                                {
+                            if self.peek(0).is_some_and(|e| e == '\"') || self.peek(1).is_some_and(|e| e == '\"') {
+                                if self.peek(0).is_some_and(|e| e == '\"') && self.peek(1).is_some_and(|e| e == '\"') {
                                     buffer.push(self.consume().unwrap());
                                 }
                                 buffer.push(self.consume().unwrap());
@@ -205,10 +187,7 @@ impl<'a> TomlLexer<'a> {
                             '"' => buffer.push('\u{22}'),
                             '\\' => buffer.push('\u{5C}'),
                             invalid_escape => {
-                                return Err(TomlLexerError::InvalidEscapeSequence(format!(
-                                    "\\{}",
-                                    invalid_escape
-                                )))
+                                return Err(TomlLexerError::InvalidEscapeSequence(format!("\\{}", invalid_escape)));
                             }
                         }
                         continue;
@@ -232,9 +211,7 @@ impl<'a> TomlLexer<'a> {
                         buffer.push(self.consume().unwrap());
                     }
 
-                    if self.peek(0).is_some_and(|e| e == '\'')
-                        && self.peek(1).is_some_and(|e| e == '\'')
-                    {
+                    if self.peek(0).is_some_and(|e| e == '\'') && self.peek(1).is_some_and(|e| e == '\'') {
                         self.consume();
                         self.consume();
 
@@ -263,12 +240,8 @@ impl<'a> TomlLexer<'a> {
                                 self.consume();
                                 break;
                             }
-                            if self.peek(0).is_some_and(|e| e == '\'')
-                                || self.peek(1).is_some_and(|e| e == '\'')
-                            {
-                                if self.peek(0).is_some_and(|e| e == '\'')
-                                    && self.peek(1).is_some_and(|e| e == '\'')
-                                {
+                            if self.peek(0).is_some_and(|e| e == '\'') || self.peek(1).is_some_and(|e| e == '\'') {
+                                if self.peek(0).is_some_and(|e| e == '\'') && self.peek(1).is_some_and(|e| e == '\'') {
                                     buffer.push(self.consume().unwrap());
                                 }
                                 buffer.push(self.consume().unwrap());
@@ -306,8 +279,7 @@ impl<'a> TomlLexer<'a> {
                     }
 
                     tokens.push(TomlToken::Interger(
-                        i64::from_str_radix(&buffer, 16)
-                            .map_err(TomlLexerError::InvalidInterger)?,
+                        i64::from_str_radix(&buffer, 16).map_err(TomlLexerError::InvalidInterger)?,
                     ));
                     buffer.clear();
                     continue;
@@ -364,11 +336,7 @@ impl<'a> TomlLexer<'a> {
                 if self.peek(0).is_some_and(|e| e == '.') {
                     return Err(TomlLexerError::FloatNumberNotSupport);
                 }
-                tokens.push(TomlToken::Interger(
-                    buffer
-                        .parse::<i64>()
-                        .map_err(TomlLexerError::InvalidInterger)?,
-                ));
+                tokens.push(TomlToken::Interger(buffer.parse::<i64>().map_err(TomlLexerError::InvalidInterger)?));
                 buffer.clear();
                 continue;
             }

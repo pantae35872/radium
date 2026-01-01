@@ -107,28 +107,20 @@ where
     }
 
     pub fn next_table(&self, index: u64) -> Option<&Table<L::NextLevel>> {
-        self.next_table_address(index)
-            .map(|address| unsafe { &*(address as *const _) })
+        self.next_table_address(index).map(|address| unsafe { &*(address as *const _) })
     }
 
     pub fn next_table_mut(&mut self, index: u64) -> Option<&mut Table<L::NextLevel>> {
-        self.next_table_address(index)
-            .map(|address| unsafe { &mut *(address as *mut _) })
+        self.next_table_address(index).map(|address| unsafe { &mut *(address as *mut _) })
     }
 
-    pub fn next_table_create<A>(
-        &mut self,
-        index: u64,
-        allocator: &mut A,
-    ) -> &mut Table<L::NextLevel>
+    pub fn next_table_create<A>(&mut self, index: u64, allocator: &mut A) -> &mut Table<L::NextLevel>
     where
         A: FrameAllocator,
     {
         if self.next_table(index).is_none() {
             assert!(
-                !self.entries[index as usize]
-                    .flags()
-                    .contains(EntryFlags::HUGE_PAGE),
+                !self.entries[index as usize].flags().contains(EntryFlags::HUGE_PAGE),
                 "mapping code does not support huge pages"
             );
             let frame = allocator.allocate_frame().expect("no frames available");
@@ -214,8 +206,7 @@ pub trait TableSwitch<P4: TopLevelP4> {
 
 pub struct RecurseHierarchicalLevelMarker<const START: u64, const END: u64>;
 
-impl<const START: u64, const END: u64, P4> TableSwitch<P4>
-    for RecurseHierarchicalLevelMarker<START, END>
+impl<const START: u64, const END: u64, P4> TableSwitch<P4> for RecurseHierarchicalLevelMarker<START, END>
 where
     P4: TopLevelP4<Marker = RecurseHierarchicalLevelMarker<START, END>>,
 {
@@ -256,20 +247,14 @@ where
     }
 }
 
-impl<const START: u64, const END: u64> NextTableAddress
-    for RecurseHierarchicalLevelMarker<START, END>
-{
+impl<const START: u64, const END: u64> NextTableAddress for RecurseHierarchicalLevelMarker<START, END> {
     fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
     where
         L: TableLevel,
     {
-        assert!(
-            index >= START && index < END,
-            "Page table index out of the accessable bounds"
-        );
+        assert!(index >= START && index < END, "Page table index out of the accessable bounds");
         let entry_flags = table[index as usize].flags();
-        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE)
-        {
+        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE) {
             let table_address = table as *const _ as u64;
             Some((table_address << 9) | (index << 12))
         } else {
@@ -323,20 +308,14 @@ impl_level_recurse!(RecurseLevel3 => RecurseLevel2 => RecurseLevel1);
 
 pub struct DirectHierarchicalLevelMarker<const START: u64, const END: u64>;
 
-impl<const START: u64, const END: u64> NextTableAddress
-    for DirectHierarchicalLevelMarker<START, END>
-{
+impl<const START: u64, const END: u64> NextTableAddress for DirectHierarchicalLevelMarker<START, END> {
     fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
     where
         L: TableLevel,
     {
-        assert!(
-            index >= START && index < END,
-            "Page table index out of the accessable bounds"
-        );
+        assert!(index >= START && index < END, "Page table index out of the accessable bounds");
         let entry_flags = table[index as usize].flags();
-        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE)
-        {
+        if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE) {
             Some(table[index as usize].0 & 0x000fffff_fffff000)
         } else {
             None

@@ -35,6 +35,7 @@ use crate::{
     initialization_context::{InitializationContext, Stage4},
     interrupt::{self, InterruptIndex},
     userland::{
+        PACKED_DATA,
         pipeline::{
             dispatch::Dispatcher,
             process::{Process, ProcessPipeline},
@@ -42,7 +43,6 @@ use crate::{
             thread::{Thread, ThreadPipeline},
         },
         syscall::SyscallId,
-        PACKED_DATA,
     },
 };
 
@@ -54,11 +54,7 @@ mod thread;
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|i| {
         i.register(|builder, _ctx, _id| {
-            local_builder!(
-                builder,
-                PIPELINE(ControlPipeline::new().into()),
-                CURRENT_THREAD_ID(0.into())
-            );
+            local_builder!(builder, PIPELINE(ControlPipeline::new().into()), CURRENT_THREAD_ID(0.into()));
         });
     });
 }
@@ -103,10 +99,7 @@ struct Event {
 }
 
 impl Event {
-    fn begin(
-        &mut self,
-        handler: fn(&mut ControlPipeline, &mut PipelineContext, &CommonRequestContext),
-    ) {
+    fn begin(&mut self, handler: fn(&mut ControlPipeline, &mut PipelineContext, &CommonRequestContext)) {
         self.begin.push(handler);
     }
 
@@ -154,10 +147,7 @@ impl ControlPipeline {
 
     fn spawn_init(&mut self) {
         let packed = PACKED_DATA.get().unwrap();
-        let init_program = packed
-            .iter()
-            .find(|e| e.name == "init")
-            .expect("Can't find init!");
+        let init_program = packed.iter().find(|e| e.name == "init").expect("Can't find init!");
 
         let init_program = Elf::new(init_program.data).expect("Init is not a valid elf");
         let process = self.alloc_process();
@@ -171,8 +161,7 @@ impl ControlPipeline {
 
         log!(Debug, "Init program entry at 0x{entry:x}");
 
-        self.scheduler
-            .add_task(self.thread.alloc(&mut self.process, process, entry));
+        self.scheduler.add_task(self.thread.alloc(&mut self.process, process, entry));
     }
 
     pub fn sleep_interrupted(&mut self, context: &mut PipelineContext, millis: usize) {
@@ -208,10 +197,7 @@ impl ControlPipeline {
     }
 
     fn create_context(&mut self, context: &CommonRequestContext<'_>) -> PipelineContext {
-        let mut ctx = PipelineContext {
-            should_schedule: self.should_schedule,
-            ..Default::default()
-        };
+        let mut ctx = PipelineContext { should_schedule: self.should_schedule, ..Default::default() };
 
         if let Some(event) = self.events.take() {
             for handler in event.begin.iter() {
@@ -220,12 +206,8 @@ impl ControlPipeline {
             self.events = Some(event);
         }
 
-        ctx.interrupted_task = ctx.interrupted_thread.and_then(|thread| {
-            Some(TaskBlock {
-                thread,
-                process: ctx.interrupted_process?,
-            })
-        });
+        ctx.interrupted_task =
+            ctx.interrupted_thread.and_then(|thread| Some(TaskBlock { thread, process: ctx.interrupted_process? }));
 
         ctx
     }
@@ -369,10 +351,7 @@ pub struct CommonRequestContext<'a> {
 
 impl<'a> CommonRequestContext<'a> {
     pub fn new(stack_frame: &'a mut CommonRequestStackFrame, referer: RequestReferer) -> Self {
-        Self {
-            stack_frame,
-            referer,
-        }
+        Self { stack_frame, referer }
     }
 }
 

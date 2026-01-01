@@ -20,11 +20,7 @@ pub struct StackAllocator {
 impl StackAllocator {
     /// Create a new stack allocator
     pub fn new(page_range: PageIter, ua: bool) -> StackAllocator {
-        StackAllocator {
-            range: page_range.clone(),
-            original_range: page_range,
-            ua,
-        }
+        StackAllocator { range: page_range.clone(), original_range: page_range, ua }
     }
 
     pub fn original_range(&self) -> PageIter {
@@ -45,11 +41,7 @@ impl StackAllocator {
 
         let guard_page = range.next();
         let stack_start = range.next();
-        let stack_end = if size_in_pages == 1 {
-            stack_start
-        } else {
-            range.nth(size_in_pages - 2)
-        };
+        let stack_end = if size_in_pages == 1 { stack_start } else { range.nth(size_in_pages - 2) };
 
         match (guard_page, stack_start, stack_end) {
             (Some(_guard), Some(start), Some(end)) => {
@@ -60,11 +52,7 @@ impl StackAllocator {
                         page,
                         EntryFlags::WRITABLE
                             | EntryFlags::NO_EXECUTE
-                            | if self.ua {
-                                EntryFlags::USER_ACCESSIBLE
-                            } else {
-                                EntryFlags::empty()
-                            },
+                            | if self.ua { EntryFlags::USER_ACCESSIBLE } else { EntryFlags::empty() },
                         frame_allocator,
                     );
                 }
@@ -89,18 +77,13 @@ impl StackAllocator {
         active_table: &'a mut ActivePageTable<P4>,
         allocator: &'a mut A,
     ) -> WithMapper<'a, Self, A, P4> {
-        WithMapper {
-            table: active_table,
-            with_table: self,
-            allocator,
-        }
+        WithMapper { table: active_table, with_table: self, allocator }
     }
 }
 
 impl<A: FrameAllocator, P4: TopLevelP4> WithMapper<'_, StackAllocator, A, P4> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.with_table
-            .alloc_stack(self.table, self.allocator, size_in_pages)
+        self.with_table.alloc_stack(self.table, self.allocator, size_in_pages)
     }
 }
 
@@ -120,11 +103,7 @@ impl Stack {
     /// and marked as **writeable and non executeable**
     pub unsafe fn new(top: VirtAddr, bottom: VirtAddr) -> Stack {
         assert!(top > bottom);
-        assert!(
-            top.as_u64().is_multiple_of(16),
-            "stack top must be 16-byte aligned (got {:#x})",
-            top.as_u64()
-        );
+        assert!(top.as_u64().is_multiple_of(16), "stack top must be 16-byte aligned (got {:#x})", top.as_u64());
         assert!(
             bottom.as_u64().is_multiple_of(16),
             "stack bottom must be 16-byte aligned (got {:#x})",

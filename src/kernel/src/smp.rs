@@ -10,14 +10,14 @@ use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
+        ActivePageTable,
         table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
         temporary_page::TemporaryPage,
-        ActivePageTable,
     },
-    EntryFlags, Mapper, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
@@ -26,20 +26,18 @@ use pager::{
 
 use crate::{
     hlt, hlt_loop,
-    initialization_context::{select_context, End, InitializationContext, Stage2, Stage3, Stage4},
+    initialization_context::{End, InitializationContext, Stage2, Stage3, Stage4, select_context},
     interrupt::{
-        self,
-        apic::{apic_id, ApicId},
+        self, APIC_ID, LAPIC,
+        apic::{ApicId, apic_id},
         io_apic::IoApicManager,
-        APIC_ID, LAPIC,
     },
     log,
     memory::{
-        self,
+        self, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,
         mapper_lower, stack_allocator,
         stack_allocator::{Stack, StackAllocator},
-        WithMapper,
     },
     userland::{self, pipeline},
 };
@@ -77,30 +75,20 @@ pub struct ApInitializer {
 
 impl ApInitializer {
     fn new(ctx: &mut InitializationContext<Stage4>) -> Self {
-        let trampoline_size = unsafe {
-            &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize
-        };
+        let trampoline_size =
+            unsafe { &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize };
 
         // Safety we already allocted this at the bootloader
-        let mut boot_alloc =
-            unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
+        let mut boot_alloc = unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
 
         unsafe { ctx.mapper().identity_map_object(&boot_alloc.mappings()) };
         unsafe {
-            core::ptr::write_bytes(
-                boot_alloc.original_start().as_u64() as *mut u8,
-                0,
-                boot_alloc.size(),
-            );
+            core::ptr::write_bytes(boot_alloc.original_start().as_u64() as *mut u8, 0, boot_alloc.size());
         }
 
-        let p4_table = boot_alloc
-            .allocate_frame()
-            .expect("Failed to allocate frame for temporary early boot");
+        let p4_table = boot_alloc.allocate_frame().expect("Failed to allocate frame for temporary early boot");
         let mut bootstrap_table = unsafe {
-            ActivePageTable::<DirectLevel4>::new_custom(
-                p4_table.start_address().as_u64() as *mut Table<DirectLevel4>
-            )
+            ActivePageTable::<DirectLevel4>::new_custom(p4_table.start_address().as_u64() as *mut Table<DirectLevel4>)
         };
 
         unsafe {
@@ -112,13 +100,11 @@ impl ApInitializer {
         };
 
         unsafe {
-            bootstrap_table
-                .mapper_with_allocator(&mut boot_alloc)
-                .identity_map_by_size(
-                    PhysAddr::new(0x7000).into(),
-                    (PAGE_SIZE * 4) as usize,
-                    EntryFlags::WRITABLE,
-                )
+            bootstrap_table.mapper_with_allocator(&mut boot_alloc).identity_map_by_size(
+                PhysAddr::new(0x7000).into(),
+                (PAGE_SIZE * 4) as usize,
+                EntryFlags::WRITABLE,
+            )
         };
 
         unsafe {
@@ -129,16 +115,12 @@ impl ApInitializer {
             )
         };
 
-        Self {
-            ap_bootstrap_page_table: p4_table,
-            boot_alloc,
-        }
+        Self { ap_bootstrap_page_table: p4_table, boot_alloc }
     }
 
     fn prepare_stack_and_info(&self, ctx: Arc<ApInitializationContext>) {
         let ctx_ap = Arc::clone(&ctx);
-        let stack =
-            stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for ap");
+        let stack = stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
             page_table: self.ap_bootstrap_page_table.start_address().as_u64() as u32,
@@ -150,12 +132,7 @@ impl ApInitializer {
         };
 
         log!(Trace, "AP Bootstrap page table at {:#x}", data.page_table);
-        log!(
-            Trace,
-            "AP Bootstrap stack, Top: {:#x}, Bottom: {:#x}",
-            data.stack,
-            data.stack_bottom
-        );
+        log!(Trace, "AP Bootstrap stack, Top: {:#x}, Bottom: {:#x}", data.stack, data.stack_bottom);
 
         unsafe {
             core::ptr::copy(
@@ -335,19 +312,14 @@ impl LocalInitializer {
     }
 
     fn convert_ctx(self, mut ctx: InitializationContext<End>) -> ApInitializationContext {
-        log!(
-            Trace,
-            "Transforming initialization context into ap initialization context"
-        );
+        log!(Trace, "Transforming initialization context into ap initialization context");
         let mut builder = ApInitializationContextBuilder::new();
         for transformer in self.context_transformer.iter() {
             transformer(&mut builder, &mut ctx);
         }
 
         builder.initializer(self.into());
-        builder
-            .build()
-            .expect("Failed to build ap initialization context")
+        builder.build().expect("Failed to build ap initialization context")
     }
 
     fn initialize_current(&mut self, ctx: &ApInitializationContext) {
@@ -386,20 +358,11 @@ struct CpuLocalPointer {
     cpu_local: *mut CpuLocal,
 }
 
-const _: () = assert!(
-    offset_of!(CpuLocalPointer, syscall_user_rsp) == 8,
-    "syscall user rsp not the field"
-);
+const _: () = assert!(offset_of!(CpuLocalPointer, syscall_user_rsp) == 8, "syscall user rsp not the field");
 
-const _: () = assert!(
-    offset_of!(CpuLocalPointer, syscall_rsp) == 0,
-    "syscall rsp not the field"
-);
+const _: () = assert!(offset_of!(CpuLocalPointer, syscall_rsp) == 0, "syscall rsp not the field");
 
-const _: () = assert!(
-    offset_of!(CpuLocalPointer, cpu_local) == 16,
-    "syscall rsp not the field"
-);
+const _: () = assert!(offset_of!(CpuLocalPointer, cpu_local) == 16, "syscall rsp not the field");
 
 /// Get the cpu local
 ///
@@ -421,20 +384,10 @@ fn init_local(builder: CpuLocalBuilder, syscall_rsp: Stack, core_id: CoreId) {
         panic!("Failed to initialize Core: {core_id}");
     };
     let cpu_local = Box::leak(cpu_local.into()) as *mut CpuLocal;
-    log!(
-        Trace,
-        "CORE {core_id} CpuLocal address at: {:#x}",
-        cpu_local as *const CpuLocal as u64
-    );
+    log!(Trace, "CORE {core_id} CpuLocal address at: {:#x}", cpu_local as *const CpuLocal as u64);
 
-    let ptr = Box::leak(
-        CpuLocalPointer {
-            syscall_rsp: syscall_rsp.top().as_u64(),
-            syscall_user_rsp: 0,
-            cpu_local,
-        }
-        .into(),
-    );
+    let ptr =
+        Box::leak(CpuLocalPointer { syscall_rsp: syscall_rsp.top().as_u64(), syscall_user_rsp: 0, cpu_local }.into());
 
     // SAFETY: This is safe beacuse we correctly allocated the ptr on the line above
     unsafe {
@@ -448,10 +401,7 @@ pub struct CoreId(usize);
 
 impl CoreId {
     pub fn new(id: usize) -> Option<Self> {
-        CPU_ID_TO_APIC_ID
-            .get()
-            .expect("CPU ID to APIC ID mapping must be initialized core initialization")
-            .get(id)?;
+        CPU_ID_TO_APIC_ID.get().expect("CPU ID to APIC ID mapping must be initialized core initialization").get(id)?;
         Some(Self(id))
     }
 
@@ -520,10 +470,7 @@ pub fn init(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3>
         let mut current_id = 0;
         let bsp_apic_id = apic_id();
         processors.iter().copied().for_each(|apic_id| {
-            log!(
-                Info,
-                "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}"
-            );
+            log!(Info, "Found Processor with apic: {apic_id}, Mapping it to CPU ID: {current_id}");
             if apic_id == bsp_apic_id {
                 BSP_CORE_ID.init_once(|| CoreId(current_id));
             }
@@ -553,11 +500,7 @@ pub fn init_aps(mut ctx: InitializationContext<Stage4>) {
         builder.processors(ctx.context.take_processors().unwrap());
     });
     local_initializer.register(move |builder, ctx, _id| {
-        local_builder!(
-            builder,
-            CORE_COUNT(ctx.processors.len()),
-            PROCESSORS(ctx.processors.clone())
-        );
+        local_builder!(builder, CORE_COUNT(ctx.processors.len()), PROCESSORS(ctx.processors.clone()));
     });
     let ctx = Arc::new(local_initializer.convert_ctx(ctx));
     ctx.initializer.lock().initialize_current(&ctx);

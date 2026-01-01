@@ -55,8 +55,8 @@ use driver::{
     acpi::{self},
     pit,
 };
-use graphics::color::Color;
 use graphics::BACKGROUND_COLOR;
+use graphics::color::Color;
 use initialization_context::{InitializationContext, Stage0};
 use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
@@ -64,7 +64,7 @@ use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
 use smp::cpu_local_avaiable;
 use spin::Mutex;
-use unwinding::abi::{UnwindContext, UnwindReasonCode, _Unwind_Backtrace, _Unwind_GetIP};
+use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
 use crate::interrupt::CORE_ID;
 use crate::userland::pipeline::CURRENT_THREAD_ID;
@@ -182,9 +182,7 @@ fn panic(info: &PanicInfo) -> ! {
         data.counter += 1;
         let ip = _Unwind_GetIP(unwind_ctx);
         if let Some(dwarf) = DWARF_DATA.get() {
-            let (line_num, name, location) = dwarf
-                .by_addr(ip as u64)
-                .unwrap_or((0, "unknown", "unknown"));
+            let (line_num, name, location) = dwarf.by_addr(ip as u64).unwrap_or((0, "unknown", "unknown"));
             log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
             log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
             if name == "start" || name == "ap_startup" || name.contains("thread_trampoline") {
@@ -247,11 +245,7 @@ static QEMU_EXIT_PORT: OnceCell<Mutex<Port<Port32Bit, PortWrite>>> = OnceCell::u
 
 fn qemu_init(ctx: &mut InitializationContext<Stage0>) {
     QEMU_EXIT_PORT.init_once(|| {
-        ctx.context_mut()
-            .port_allocator
-            .allocate(0xf4)
-            .expect("FAILED TO ALLOCATE QEMU EXIT PORT")
-            .into()
+        ctx.context_mut().port_allocator.allocate(0xf4).expect("FAILED TO ALLOCATE QEMU EXIT PORT").into()
     });
 }
 

@@ -27,18 +27,11 @@ impl LinearAllocator {
     /// The caller must ensure that the provide start and size are valid and not overlap with other
     /// allocator or is being used
     pub unsafe fn new(start: PhysAddr, size: usize) -> Self {
-        Self {
-            orginal_start: start,
-            current: start,
-            size,
-        }
+        Self { orginal_start: start, current: start, size }
     }
 
     pub fn mappings(&self) -> LinearAllocatorMappings {
-        LinearAllocatorMappings {
-            start: self.orginal_start,
-            size: self.size,
-        }
+        LinearAllocatorMappings { start: self.orginal_start, size: self.size }
     }
 
     pub fn range(&self) -> FrameIter {
@@ -106,8 +99,6 @@ unsafe impl FrameAllocator for LinearAllocator {
 
 unsafe impl IdentityMappable for LinearAllocatorMappings {
     fn map(&self, mapper: &mut impl Mapper) {
-        unsafe {
-            mapper.identity_map_range(self.start().into(), self.end().into(), EntryFlags::WRITABLE)
-        };
+        unsafe { mapper.identity_map_range(self.start().into(), self.end().into(), EntryFlags::WRITABLE) };
     }
 }

@@ -13,7 +13,7 @@ use crate::{
     inline_if,
     interrupt::TPMS,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    smp::{core_id_to_apic_id, CoreId, APIC_ID_TO_CPU_ID},
+    smp::{APIC_ID_TO_CPU_ID, CoreId, core_id_to_apic_id},
 };
 use sentinel::log;
 
@@ -113,11 +113,7 @@ pub struct LocalApicArguments {
 
 impl LocalApic {
     pub fn id(&self) -> ApicId {
-        inline_if!(
-            self.x2apic,
-            ApicId(self.registers.id.read()),
-            ApicId(self.registers.id.read_bits(24..32))
-        )
+        inline_if!(self.x2apic, ApicId(self.registers.id.read()), ApicId(self.registers.id.read_bits(24..32)))
     }
 
     pub fn current_count(&mut self) -> usize {
@@ -129,19 +125,11 @@ impl LocalApic {
         self.start_timer(initial_count, TimerDivide::Div16, TimerMode::OneShot);
         self.enable_timer();
 
-        log!(
-            Debug,
-            "APIC Timer Count Before PIT 10 ms: {}",
-            self.current_count()
-        );
+        log!(Debug, "APIC Timer Count Before PIT 10 ms: {}", self.current_count());
 
         PIT.get().unwrap().lock().dumb_wait_10ms();
 
-        log!(
-            Debug,
-            "APIC Timer Count After PIT 10 ms: {}",
-            self.current_count()
-        );
+        log!(Debug, "APIC Timer Count After PIT 10 ms: {}", self.current_count());
         let ticks_per_ms = (initial_count - self.current_count()) / 10;
         *TPMS.inner_mut() = ticks_per_ms;
         log!(Debug, "Calibrated APIC Timer, TPMS: {ticks_per_ms}");
@@ -171,9 +159,7 @@ impl LocalApic {
         );
         self.registers.lvt_timer.write_bits(0..8, timer_vector);
         self.registers.lvt_error.write_bits(0..8, error_vector);
-        self.registers
-            .spurious_interrupt
-            .write_bits(0..8, spurious_vector);
+        self.registers.spurious_interrupt.write_bits(0..8, spurious_vector);
 
         self.disable_local_interrupt_pins();
 
@@ -185,12 +171,8 @@ impl LocalApic {
     }
 
     pub fn start_timer(&mut self, initial_count: usize, divide: TimerDivide, mode: TimerMode) {
-        self.registers
-            .divide_configuration
-            .write_bits(0..4, divide as u8 as usize);
-        self.registers
-            .lvt_timer
-            .write_bits(17..19, mode as u8 as usize);
+        self.registers.divide_configuration.write_bits(0..4, divide as u8 as usize);
+        self.registers.lvt_timer.write_bits(17..19, mode as u8 as usize);
         self.registers.initial_count.write(initial_count);
     }
 
@@ -210,9 +192,7 @@ impl LocalApic {
         if self.x2apic {
             unsafe { Msr::new(0x830).write(value) };
         } else {
-            self.registers
-                .icr_high
-                .write((value as usize >> 32) & 0xFFFFFFFF);
+            self.registers.icr_high.write((value as usize >> 32) & 0xFFFFFFFF);
             self.registers.icr_low.write(value as usize & 0xFFFFFFFF);
             while self.registers.icr_low.read_bit(12) {
                 core::hint::spin_loop();
@@ -249,11 +229,7 @@ impl LocalApic {
         self.write_icr(builder.build().expect("This should be valid"));
     }
 
-    pub fn send_fixed_ipi(
-        &mut self,
-        destination: impl Into<ApicId>,
-        destination_vector: InterruptIndex,
-    ) {
+    pub fn send_fixed_ipi(&mut self, destination: impl Into<ApicId>, destination_vector: InterruptIndex) {
         let mut builder = IcrBuilder::new(self.x2apic);
         builder
             .vector(destination_vector)
@@ -263,11 +239,7 @@ impl LocalApic {
     }
 
     fn disable_local_interrupt_pins(&mut self) {
-        log!(
-            Trace,
-            "Disabling local interrupt pins for apic id: {}",
-            self.id()
-        );
+        log!(Trace, "Disabling local interrupt pins for apic id: {}", self.id());
         self.registers.lvt_lint0.write(0);
         self.registers.lvt_lint1.write(0);
     }
@@ -291,12 +263,7 @@ impl Clone for LocalApic {
 }
 
 pub fn apic_id() -> ApicId {
-    ApicId(
-        CpuId::new()
-            .get_feature_info()
-            .unwrap()
-            .initial_local_apic_id() as usize,
-    )
+    ApicId(CpuId::new().get_feature_info().unwrap().initial_local_apic_id() as usize)
 }
 
 fn lapic_base() -> PhysAddr {
@@ -309,27 +276,10 @@ impl MMIODevice<LocalApicArguments> for LocalApic {
     }
 
     fn new(buffer: MMIOBuffer, args: LocalApicArguments) -> Self {
-        let LocalApicArguments {
-            timer_vector,
-            error_vector,
-            spurious_vector,
-        } = args;
+        let LocalApicArguments { timer_vector, error_vector, spurious_vector } = args;
         let x2apic = CpuId::new().get_feature_info().unwrap().has_x2apic();
 
-        let mode = inline_if!(
-            x2apic,
-            ApicMode::X2Apic,
-            ApicMode::Apic {
-                base: buffer.base()
-            }
-        );
-        Self {
-            error_vector,
-            spurious_vector,
-            timer_vector,
-            x2apic,
-            registers: ApicRegisters::new(&mode),
-            mode,
-        }
+        let mode = inline_if!(x2apic, ApicMode::X2Apic, ApicMode::Apic { base: buffer.base() });
+        Self { error_vector, spurious_vector, timer_vector, x2apic, registers: ApicRegisters::new(&mode), mode }
     }
 }

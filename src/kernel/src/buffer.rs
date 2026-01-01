@@ -32,9 +32,7 @@ impl<'a> Reader for BufferReader<'a> {
     fn read(&mut self, bytes: &mut [u8]) -> Result<(), bincode::error::DecodeError> {
         let read_bytes = self
             .read_bytes(bytes.len())
-            .map_err(|_e| DecodeError::UnexpectedEnd {
-                additional: bytes.len() - self.len(),
-            })?;
+            .map_err(|_e| DecodeError::UnexpectedEnd { additional: bytes.len() - self.len() })?;
         bytes.copy_from_slice(read_bytes);
         Ok(())
     }
@@ -42,11 +40,8 @@ impl<'a> Reader for BufferReader<'a> {
 
 impl<'storage> BorrowReader<'storage> for BufferReader<'storage> {
     fn take_bytes(&mut self, length: usize) -> Result<&'storage [u8], DecodeError> {
-        let read_bytes = self
-            .read_bytes(length)
-            .map_err(|_e| DecodeError::UnexpectedEnd {
-                additional: length - self.len(),
-            })?;
+        let read_bytes =
+            self.read_bytes(length).map_err(|_e| DecodeError::UnexpectedEnd { additional: length - self.len() })?;
         Ok(read_bytes)
     }
 }

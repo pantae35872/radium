@@ -46,10 +46,7 @@ pub struct MainLogger {
 
 impl MainLogger {
     pub const fn new() -> Self {
-        Self {
-            logger: StaticLog::new(),
-            level: SyncUnsafeCell::new(LogLevel::Trace),
-        }
+        Self { logger: StaticLog::new(), level: SyncUnsafeCell::new(LogLevel::Trace) }
     }
 
     /// Set the log level unatomically
@@ -81,18 +78,13 @@ impl MainLogger {
             let _ = CallbackFormatter::new(|s| {
                 displays.iter().for_each(|d| (d)(s));
             })
-            .write_fmt(format_args!(
-                "\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes"
-            ));
+            .write_fmt(format_args!("\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes"));
         }
     }
 
     pub fn flush_select(&self) {
         self.flush_all(if crate::print::DRIVER.get().is_none() {
-            log!(
-                Warning,
-                "Screen print not avaiable logging into serial ports"
-            );
+            log!(Warning, "Screen print not avaiable logging into serial ports");
             &[|s| serial_print!("{s}")]
         } else if crate::TESTING {
             &[|s| serial_print!("{s}")]
@@ -130,10 +122,7 @@ impl LoggerBackend for MainLogger {
                 );
             }
         } else {
-            self.write(
-                level,
-                format_args!("<- [\x1b[93m{module_path}\x1b[0m] [C ? : T ?] : {formatter}",),
-            );
+            self.write(level, format_args!("<- [\x1b[93m{module_path}\x1b[0m] [C ? : T ?] : {formatter}",));
         };
     }
 }

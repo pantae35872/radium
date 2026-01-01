@@ -7,11 +7,7 @@ pub mod singlethreaded {
 
     impl<T, const N: usize> CircularRingBuffer<T, N> {
         pub const fn new() -> Self {
-            Self {
-                buffer: [const { None }; N],
-                head: 0,
-                tail: 0,
-            }
+            Self { buffer: [const { None }; N], head: 0, tail: 0 }
         }
 
         pub fn write(&mut self, value: T) {
@@ -136,11 +132,7 @@ pub mod lockfree {
 
     impl<T, const N: usize> CircularRingBuffer<T, N> {
         pub const fn new() -> Self {
-            Self {
-                buffer: [const { Slot::new() }; N],
-                head: AtomicUsize::new(0),
-                tail: AtomicUsize::new(0),
-            }
+            Self { buffer: [const { Slot::new() }; N], head: AtomicUsize::new(0), tail: AtomicUsize::new(0) }
         }
 
         pub fn write(&self, value: T) {
@@ -149,24 +141,14 @@ pub mod lockfree {
             loop {
                 new_head = (head + 1) % N;
 
-                match self.head.compare_exchange(
-                    head,
-                    new_head,
-                    Ordering::Acquire,
-                    Ordering::Relaxed,
-                ) {
+                match self.head.compare_exchange(head, new_head, Ordering::Acquire, Ordering::Relaxed) {
                     Ok(head) => {
                         if self.buffer[head].is_some() {
                             let mut tail = self.tail.load(Ordering::Acquire);
                             let mut new_tail;
                             loop {
                                 new_tail = (tail + 1) % N;
-                                match self.tail.compare_exchange(
-                                    tail,
-                                    new_tail,
-                                    Ordering::Acquire,
-                                    Ordering::Relaxed,
-                                ) {
+                                match self.tail.compare_exchange(tail, new_tail, Ordering::Acquire, Ordering::Relaxed) {
                                     Ok(_) => break,
                                     Err(updated) => tail = updated,
                                 }
@@ -184,17 +166,8 @@ pub mod lockfree {
             let mut tail = self.tail.load(Ordering::Acquire);
             let mut new_tail;
             loop {
-                new_tail = if self.buffer[tail].is_some() {
-                    (tail + 1) % N
-                } else {
-                    tail
-                };
-                match self.tail.compare_exchange_weak(
-                    tail,
-                    new_tail,
-                    Ordering::Release,
-                    Ordering::Acquire,
-                ) {
+                new_tail = if self.buffer[tail].is_some() { (tail + 1) % N } else { tail };
+                match self.tail.compare_exchange_weak(tail, new_tail, Ordering::Release, Ordering::Acquire) {
                     Ok(tail) => {
                         if tail != new_tail {
                             return self.buffer[tail].take();
@@ -223,19 +196,13 @@ pub mod lockfree {
 
     impl<T> Slot<T> {
         const fn new() -> Self {
-            Self {
-                state: AtomicUsize::new(0),
-                data: UnsafeCell::new(None),
-            }
+            Self { state: AtomicUsize::new(0), data: UnsafeCell::new(None) }
         }
 
         fn write(&self, value: T) {
             interrupt::without_interrupts(|| {
                 loop {
-                    match self
-                        .state
-                        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
-                    {
+                    match self.state.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed) {
                         Ok(..) => {
                             let data = unsafe { &mut *self.data.get() };
                             *data = Some(value);
@@ -262,10 +229,7 @@ pub mod lockfree {
         fn take(&self) -> Option<T> {
             interrupt::without_interrupts(|| {
                 loop {
-                    match self
-                        .state
-                        .compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed)
-                    {
+                    match self.state.compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed) {
                         Ok(..) => {
                             let data = unsafe { &mut *self.data.get() };
                             let result = data.take();
@@ -288,10 +252,7 @@ pub mod lockfree {
             // Special cases this does not change the state of the slot, so this dosn't needs interrupt
             // disables
             loop {
-                match self
-                    .state
-                    .compare_exchange(2, 2, Ordering::Acquire, Ordering::Relaxed)
-                {
+                match self.state.compare_exchange(2, 2, Ordering::Acquire, Ordering::Relaxed) {
                     Ok(..) => {
                         return true;
                     }

@@ -23,20 +23,21 @@ pub struct BootConfig<'a> {
 impl<'a> BootConfig<'a> {
     // TODO: Change the kernel config format to something else that is not toml
     pub fn parse(toml: &'a TomlValue) -> Self {
-        let file_root: &str = toml
-            .get("file_root")
-            .expect("file root not found in the info file")
-            .as_string()
-            .expect("kernel");
+        let file_root: &str =
+            toml.get("file_root").expect("file root not found in the info file").as_string().expect("kernel");
         let kernel_file: &str = toml
             .get("kernel_file")
             .expect("No kernel file found in the info file")
             .as_string()
             .expect("Kernel file is not a string value in file info");
-        let early_boot_kernel_page_table_page_count = toml.get("early_boot_kernel_page_table_page_count")
-            .expect("early_boot_kernel_page_table_page_count no found in the config file (required for kernel page tables)")
+        let early_boot_kernel_page_table_page_count = toml
+            .get("early_boot_kernel_page_table_page_count")
+            .expect(
+                "early_boot_kernel_page_table_page_count no found in the config file (required for kernel page tables)",
+            )
             .as_integer()
-            .expect("early_boot_kernel_page_table_page_count is not an interger") as usize;
+            .expect("early_boot_kernel_page_table_page_count is not an interger")
+            as usize;
         let font_file: &str = toml
             .get("font_file")
             .expect("No font file found in the info file")
@@ -52,9 +53,7 @@ impl<'a> BootConfig<'a> {
             .expect("No packed file found in the info file")
             .as_string()
             .expect("Packed file is not a string value in file info");
-        let resolution = toml
-            .get("screen_resolution")
-            .expect("screen_resolution not found in the config file");
+        let resolution = toml.get("screen_resolution").expect("screen_resolution not found in the config file");
         let width = resolution
             .get("width")
             .expect("width not found in the config file")
@@ -96,35 +95,19 @@ impl<'a> BootConfig<'a> {
     }
 
     pub fn kernel_file(&self) -> LoaderFile {
-        LoaderFile::new(&format!(
-            "{root}\\{file}",
-            root = self.file_root,
-            file = self.kernel_file
-        ))
+        LoaderFile::new(&format!("{root}\\{file}", root = self.file_root, file = self.kernel_file))
     }
 
     pub fn font_file(&self) -> LoaderFile {
-        LoaderFile::new(&format!(
-            "{root}\\{file}",
-            root = self.file_root,
-            file = self.font_file
-        ))
+        LoaderFile::new(&format!("{root}\\{file}", root = self.file_root, file = self.font_file))
     }
 
     pub fn packed_file(&self) -> LoaderFile {
-        LoaderFile::new(&format!(
-            "{root}\\{file}",
-            root = self.file_root,
-            file = self.packed_file
-        ))
+        LoaderFile::new(&format!("{root}\\{file}", root = self.file_root, file = self.packed_file))
     }
 
     pub fn dwarf_file(&self) -> LoaderFile {
-        LoaderFile::new(&format!(
-            "{root}\\{file}",
-            root = self.file_root,
-            file = self.dwarf_file
-        ))
+        LoaderFile::new(&format!("{root}\\{file}", root = self.file_root, file = self.dwarf_file))
     }
 
     pub fn screen_resolution(&self) -> (usize, usize) {
@@ -136,10 +119,7 @@ impl<'a> BootConfig<'a> {
     }
 
     pub fn kernel_config(&self) -> KernelConfig {
-        KernelConfig {
-            font_pixel_size: self.font_size,
-            log_level: self.log_level,
-        }
+        KernelConfig { font_pixel_size: self.font_size, log_level: self.log_level }
     }
 
     pub fn early_boot_kernel_page_table_byte_count(&self) -> usize {

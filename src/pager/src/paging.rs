@@ -2,8 +2,8 @@ use crate::address::Frame;
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::{TopLevelP4, TopLevelRecurse};
 use crate::paging::table::{
-    DirectP4Create, RecurseLevel1, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf,
-    RecurseP4Create, TableSwitch,
+    DirectP4Create, RecurseLevel1, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RecurseP4Create,
+    TableSwitch,
 };
 use crate::registers::{Cr3, Cr3Flags};
 use crate::{EntryFlags, PAGE_SIZE};
@@ -44,12 +44,7 @@ where
     /// this can be done through a lock.
     pub unsafe fn new() -> ActivePageTable<P4> {
         // SAFETY: we've already tell the require preconditions above
-        unsafe {
-            ActivePageTable {
-                p4: P4::CreateMarker::create(),
-                mapper: Mapper::new(),
-            }
-        }
+        unsafe { ActivePageTable { p4: P4::CreateMarker::create(), mapper: Mapper::new() } }
     }
 }
 
@@ -65,12 +60,7 @@ where
     /// and is the only mutable reference to the page table
     pub unsafe fn new_custom(p4: *mut Table<P4>) -> ActivePageTable<P4> {
         // SAFETY: we've already tell the require preconditions above
-        unsafe {
-            ActivePageTable {
-                p4: P4::CreateMarker::create(p4),
-                mapper: Mapper::new_custom(p4),
-            }
-        }
+        unsafe { ActivePageTable { p4: P4::CreateMarker::create(p4), mapper: Mapper::new_custom(p4) } }
     }
 }
 
@@ -113,14 +103,8 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
         (
             unsafe {
                 match self.temporary_page_mapper.as_mut() {
-                    Some(mapper) => {
-                        self.temporary_page
-                            .map_table_frame(frame, mapper, self.allocator)
-                    }
-                    None => {
-                        self.temporary_page
-                            .map_table_frame(frame, active_table, self.allocator)
-                    }
+                    Some(mapper) => self.temporary_page.map_table_frame(frame, mapper, self.allocator),
+                    None => self.temporary_page.map_table_frame(frame, active_table, self.allocator),
                 }
             },
             &mut self.allocator,
@@ -131,10 +115,7 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
     ///
     /// # Safety
     /// [`temporary_page::TemporaryPage::unmap`] Safety section
-    pub unsafe fn unmap_temporary_page<P4: TopLevelP4>(
-        &mut self,
-        active_table: &mut ActivePageTable<P4>,
-    ) {
+    pub unsafe fn unmap_temporary_page<P4: TopLevelP4>(&mut self, active_table: &mut ActivePageTable<P4>) {
         unsafe {
             match self.temporary_page_mapper.as_mut() {
                 Some(mapper) => self.temporary_page.unmap(mapper),
@@ -145,23 +126,13 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
 }
 
 impl ActivePageTable<RecurseLevel4> {
-    pub fn split(
-        self,
-    ) -> (
-        ActivePageTable<RecurseLevel4LowerHalf>,
-        ActivePageTable<RecurseLevel4UpperHalf>,
-    ) {
+    pub fn split(self) -> (ActivePageTable<RecurseLevel4LowerHalf>, ActivePageTable<RecurseLevel4UpperHalf>) {
         // SAFETY: This is safe because by our model, there should only be one ActivePageTable at a
         // time, BUT. we're spliting the active page table in 2 halves, so there couldn't be a reference
         // to the same entry in the p4 level. if we're not doing some weird tricks like having the
         // p4 entry on the lower half pointing to the same p3 entry that was pointed by the upper
         // halfs, which we're not.... hopefully
-        unsafe {
-            (
-                ActivePageTable::<RecurseLevel4LowerHalf>::new(),
-                ActivePageTable::<RecurseLevel4UpperHalf>::new(),
-            )
-        }
+        unsafe { (ActivePageTable::<RecurseLevel4LowerHalf>::new(), ActivePageTable::<RecurseLevel4UpperHalf>::new()) }
     }
 }
 
@@ -174,15 +145,9 @@ impl ActivePageTable<RecurseLevel4UpperHalf> {
     pub unsafe fn switch_split(
         &mut self,
         new_table: InactivePageTable<RecurseLevel4>,
-    ) -> (
-        InactivePageTable<RecurseLevel4UpperHalf>,
-        ActivePageTable<RecurseLevel4LowerHalf>,
-    ) {
+    ) -> (InactivePageTable<RecurseLevel4UpperHalf>, ActivePageTable<RecurseLevel4LowerHalf>) {
         let (level_4_table_frame, _) = Cr3::read();
-        let old_table = InactivePageTable::<RecurseLevel4UpperHalf> {
-            p4_frame: level_4_table_frame,
-            _p4: PhantomData,
-        };
+        let old_table = InactivePageTable::<RecurseLevel4UpperHalf> { p4_frame: level_4_table_frame, _p4: PhantomData };
         // SAFETY: The inactive page table is gurentee to be valid, by its safety contracts
         unsafe {
             Cr3::write(new_table.p4_frame, Cr3Flags::empty());
@@ -191,9 +156,7 @@ impl ActivePageTable<RecurseLevel4UpperHalf> {
         // SAFETY: The exclusivity contract are uphold by the provided inactive page table,
         // since we're switch a whole table from the provided inactive page table, there is a left
         // over lower half, so we return that.
-        (old_table, unsafe {
-            ActivePageTable::<RecurseLevel4LowerHalf>::new()
-        })
+        (old_table, unsafe { ActivePageTable::<RecurseLevel4LowerHalf>::new() })
     }
 }
 
@@ -277,15 +240,9 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     /// # Safety
     /// this function is VERY VERY unsafe to use, you must be sure that the P4 isn't split or
     /// paritioned in any way
-    pub unsafe fn full_switch(
-        &mut self,
-        new_table: InactivePageTable<P4>,
-    ) -> InactivePageTable<P4> {
+    pub unsafe fn full_switch(&mut self, new_table: InactivePageTable<P4>) -> InactivePageTable<P4> {
         let (level_4_table_frame, _) = Cr3::read();
-        let old_table = InactivePageTable::<P4> {
-            p4_frame: level_4_table_frame,
-            _p4: PhantomData,
-        };
+        let old_table = InactivePageTable::<P4> { p4_frame: level_4_table_frame, _p4: PhantomData };
         // SAFETY: The inactive page table should be valid if created correctly, and the caller
         // upholds the contract that there will be no parition of P4
         unsafe {
@@ -308,64 +265,41 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 
         fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
             if level == 1 {
-                let (mut last_phys, mut last_virt, mut last_flags) =
-                    (0u64, 0u64, EntryFlags::empty());
+                let (mut last_phys, mut last_virt, mut last_flags) = (0u64, 0u64, EntryFlags::empty());
                 let mut is_first = true;
-                for (index, entry) in table
-                    .entries()
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
+                for (index, entry) in
+                    table.entries().iter().enumerate().filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
                 {
                     let virt = base_addr as usize | (index << 12);
                     if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
                         == (entry.mask_flags(), virt as u64, entry.flags())
                     {
-                        if is_first
-                            && (last_phys, last_virt, last_flags)
-                                != (0u64, 0u64, EntryFlags::empty())
-                        {
+                        if is_first && (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
                             if last_virt.get_bit(47) {
                                 last_virt |= 0xffff << 48;
                             }
                             log!(Debug, "-----------------------------------------");
-                            log!(
-                                Debug,
-                                "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
-                            );
+                            log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
                             log!(Debug, "..........................................");
                             is_first = false;
                         }
 
-                        (last_phys, last_virt, last_flags) =
-                            (entry.mask_flags(), virt as u64, entry.flags());
+                        (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
                         continue;
-                    } else if (last_phys, last_virt, last_flags)
-                        != (0u64, 0u64, EntryFlags::empty())
-                    {
+                    } else if (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
                         if last_virt.get_bit(47) {
                             last_virt |= 0xffff << 48;
                         }
-                        log!(
-                            Debug,
-                            "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",
-                        );
+                        log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
                         log!(Debug, "-----------------------------------------");
                         is_first = true;
                     }
-                    (last_phys, last_virt, last_flags) =
-                        (entry.mask_flags(), virt as u64, entry.flags());
+                    (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
                 }
             }
 
-            for (index, table) in
-                (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table)))
-            {
-                log_dyn_recursive(
-                    table,
-                    level - 1,
-                    base_addr | (index << ((level - 1) * 9 + 12)),
-                );
+            for (index, table) in (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table))) {
+                log_dyn_recursive(table, level - 1, base_addr | (index << ((level - 1) * 9 + 12)));
             }
         }
     }
@@ -410,8 +344,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         A: FrameAllocator,
     {
         // SAFETY: The contract is uphold by the caller
-        let mut new_table =
-            unsafe { InactivePageTable::<RecurseP4>::new(self, context, options, None) };
+        let mut new_table = unsafe { InactivePageTable::<RecurseP4>::new(self, context, options, None) };
 
         // SAFETY: The contract is uphold by the caller
         unsafe {
@@ -506,10 +439,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         // SAFETY: The reference to the table is gone in the scope
         unsafe { context.unmap_temporary_page(active_table) };
 
-        InactivePageTable::<P4> {
-            p4_frame: frame,
-            _p4: PhantomData,
-        }
+        InactivePageTable::<P4> { p4_frame: frame, _p4: PhantomData }
     }
 
     /// Reference the currently owned p4 table

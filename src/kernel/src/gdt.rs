@@ -22,9 +22,8 @@ pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
         let double_fault = ctx
             .stack_allocator(|mut s| s.alloc_stack(256))
             .expect("Failed to allocate stack for the double fault handler");
-        let general_stack = ctx
-            .stack_allocator(|mut s| s.alloc_stack(256))
-            .expect("Failed to allocate general interrupt stack");
+        let general_stack =
+            ctx.stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate general interrupt stack");
         let rsp0_stack = ctx
             .stack_allocator(|mut s| s.alloc_stack(256))
             .expect("Failed to allocate stack for rsp0 privilage change in TSS");

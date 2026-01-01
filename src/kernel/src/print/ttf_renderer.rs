@@ -29,28 +29,14 @@ pub struct TtfRenderer {
 
 // TODO: ts needs a rewrite
 impl TtfRenderer {
-    pub fn new(
-        ctx: &mut InitializationContext<Stage2>,
-        foreground_color: Color,
-        background_color: Color,
-    ) -> Self {
+    pub fn new(ctx: &mut InitializationContext<Stage2>, foreground_color: Color, background_color: Color) -> Self {
         let font = ctx.context().boot_bridge().font_data();
 
         let font_addr = virt_addr_alloc((font.size() / PAGE_SIZE as usize + 1) as u64);
-        unsafe {
-            ctx.mapper().map_to_range_by_size(
-                font_addr,
-                font.start().into(),
-                font.size(),
-                EntryFlags::WRITABLE,
-            )
-        };
+        unsafe { ctx.mapper().map_to_range_by_size(font_addr, font.start().into(), font.size(), EntryFlags::WRITABLE) };
         let font = Font::from_bytes(
             unsafe {
-                core::slice::from_raw_parts(
-                    font_addr.start_address().align_to(font.start()).as_ptr(),
-                    font.size(),
-                )
+                core::slice::from_raw_parts(font_addr.start_address().align_to(font.start()).as_ptr(), font.size())
             },
             FontSettings::default(),
         )
@@ -174,15 +160,11 @@ impl TtfRenderer {
                     None => self.foreground_color,
                 };
                 self.glyph_cache
-                    .entry(Glyph {
-                        character: *character,
-                        color: color.as_u32(),
-                    })
+                    .entry(Glyph { character: *character, color: color.as_u32() })
                     .and_modify(|id| {
                         graphics.plot_glyph(
                             offset + 1,
-                            (y_offset * self.pixel_size as isize
-                                + (y as isize - metrics.height as isize)
+                            (y_offset * self.pixel_size as isize + (y as isize - metrics.height as isize)
                                 - metrics.ymin as isize
                                 + 1)
                             .try_into()
@@ -195,8 +177,7 @@ impl TtfRenderer {
                             for pixel in bitmap.iter().rev() {
                                 graphics.plot(
                                     x + offset,
-                                    ((y as isize + y_offset * self.pixel_size as isize)
-                                        - metrics.ymin as isize)
+                                    ((y as isize + y_offset * self.pixel_size as isize) - metrics.ymin as isize)
                                         .try_into()
                                         .unwrap_or(horizontal),
                                     color.blend(self.background_color, *pixel as f32 / 255.0),

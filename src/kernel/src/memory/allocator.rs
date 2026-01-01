@@ -29,9 +29,7 @@ pub struct Locked<A> {
 
 impl<A> Locked<A> {
     pub const fn new(inner: A) -> Self {
-        Locked {
-            inner: spin::Mutex::new(inner),
-        }
+        Locked { inner: spin::Mutex::new(inner) }
     }
 
     pub fn lock(&self) -> spin::MutexGuard<'_, A> {
@@ -78,15 +76,10 @@ pub unsafe fn init(ctx: &mut InitializationContext<Stage1>) {
     let heap_start = virt_addr_alloc(HEAP_SIZE / PAGE_SIZE);
     ctx.mapper().map_range(
         heap_start,
-        Page::containing_address(VirtAddr::new(
-            heap_start.start_address().as_u64() + HEAP_SIZE - 1,
-        )),
+        Page::containing_address(VirtAddr::new(heap_start.start_address().as_u64() + HEAP_SIZE - 1)),
         EntryFlags::WRITABLE,
     );
     unsafe {
-        GLOBAL_ALLOCATOR.lock().init(
-            heap_start.start_address().as_u64() as usize,
-            HEAP_SIZE as usize,
-        );
+        GLOBAL_ALLOCATOR.lock().init(heap_start.start_address().as_u64() as usize, HEAP_SIZE as usize);
     }
 }

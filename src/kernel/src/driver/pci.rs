@@ -44,17 +44,9 @@ impl Vendor {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Bar {
-    Memory32 {
-        address: u32,
-        size: u32,
-        prefetchable: bool,
-    },
+    Memory32 { address: u32, size: u32, prefetchable: bool },
 
-    Memory64 {
-        address: u64,
-        size: u64,
-        prefetchable: bool,
-    },
+    Memory64 { address: u64, size: u64, prefetchable: bool },
 
     IO(u32),
 }
@@ -346,13 +338,7 @@ impl<'a> PciHeader<'a> {
         device: u8,
         function: u8,
     ) -> Self {
-        Self {
-            bus,
-            device,
-            function,
-            command_port,
-            data_port,
-        }
+        Self { bus, device, function, command_port, data_port }
     }
 
     pub fn bus(&self) -> u8 {
@@ -475,29 +461,18 @@ impl<'a> PciHeader<'a> {
             };
 
             match bar.get_bits(1..3) {
-                0b00 => Some(Bar::Memory32 {
-                    address,
-                    size,
-                    prefetchable,
-                }),
+                0b00 => Some(Bar::Memory32 { address, size, prefetchable }),
 
                 0b10 => {
                     let address = {
                         let mut address = address as u64;
 
-                        address.set_bits(
-                            32..64,
-                            unsafe { self.read::<u32>((offset + 4).into()) }.into(),
-                        );
+                        address.set_bits(32..64, unsafe { self.read::<u32>((offset + 4).into()) }.into());
 
                         address
                     };
 
-                    Some(Bar::Memory64 {
-                        address,
-                        size: size as u64,
-                        prefetchable,
-                    })
+                    Some(Bar::Memory64 { address, size: size as u64, prefetchable })
                 }
 
                 _ => None,
@@ -522,9 +497,7 @@ pub struct PCIControler {
 
 impl PCIControler {
     const fn new() -> Self {
-        Self {
-            drivers: Vec::new(),
-        }
+        Self { drivers: Vec::new() }
     }
 }
 
@@ -533,51 +506,28 @@ pub fn register_driver(handle: Arc<dyn PciDeviceHandle>) {
 }
 
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
-    let mut pci_config_data_port = ctx
-        .alloc_port(PCI_CONFIG_DATA_PORT)
-        .expect("PCI Data port was taken");
-    let mut pci_config_command_port = ctx
-        .alloc_port(PCI_CONFIG_COMMAND_PORT)
-        .expect("PCI Command port was taken");
+    let mut pci_config_data_port = ctx.alloc_port(PCI_CONFIG_DATA_PORT).expect("PCI Data port was taken");
+    let mut pci_config_command_port = ctx.alloc_port(PCI_CONFIG_COMMAND_PORT).expect("PCI Command port was taken");
     for bus in 0..255 {
         for device in 0..32 {
             let function_count = inline_if!(
-                PciHeader::new(
-                    &mut pci_config_command_port,
-                    &mut pci_config_data_port,
-                    bus,
-                    device,
-                    0
-                )
-                .has_multiple_functions(),
+                PciHeader::new(&mut pci_config_command_port, &mut pci_config_data_port, bus, device, 0)
+                    .has_multiple_functions(),
                 8,
                 1
             );
             for function in 0..function_count {
-                let mut device = PciHeader::new(
-                    &mut pci_config_command_port,
-                    &mut pci_config_data_port,
-                    bus,
-                    device,
-                    function,
-                );
+                let mut device =
+                    PciHeader::new(&mut pci_config_command_port, &mut pci_config_data_port, bus, device, function);
 
                 if !device.get_vendor().is_valid() {
                     continue;
                 }
 
-                log!(
-                    Info,
-                    "Found PCI Device. Vendor: {:?}, Device: {:?}",
-                    device.get_vendor(),
-                    device.get_device()
-                );
+                log!(Info, "Found PCI Device. Vendor: {:?}, Device: {:?}", device.get_vendor(), device.get_device());
 
                 for driver in &DRIVER.lock().drivers {
-                    if driver
-                        .handle
-                        .handles(device.get_vendor(), device.get_device())
-                    {
+                    if driver.handle.handles(device.get_vendor(), device.get_device()) {
                         driver.handle.start(&device);
                     }
                 }

@@ -12,9 +12,7 @@ use crate::{
     interrupt,
     userland::{
         self,
-        pipeline::{
-            dispatch::DispatchAction, CommonRequestContext, CommonRequestStackFrame, RequestReferer,
-        },
+        pipeline::{CommonRequestContext, CommonRequestStackFrame, RequestReferer, dispatch::DispatchAction},
         syscall::SyscallId,
     },
 };
@@ -22,24 +20,12 @@ use crate::{
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|l| {
         l.register_after(|_| {
-            assert_eq!(
-                KERNEL_CODE_SEG.0 + 8,
-                KERNEL_DATA_SEG.0,
-                "Kernel code seg is not followed by kernel data seg"
-            );
-            assert_eq!(
-                USER_CODE_SEG.0 + 8,
-                USER_DATA_SEG.0,
-                "User code seg is not followed by user data seg"
-            );
+            assert_eq!(KERNEL_CODE_SEG.0 + 8, KERNEL_DATA_SEG.0, "Kernel code seg is not followed by kernel data seg");
+            assert_eq!(USER_CODE_SEG.0 + 8, USER_DATA_SEG.0, "User code seg is not followed by user data seg");
             // SAFETY: The contract is checked above
             unsafe {
                 Efer::SystemCallExtensions.write_retained();
-                SystemCallStar {
-                    syscall_selector: *KERNEL_CODE_SEG,
-                    sysret_selector: *USER_CODE_SEG,
-                }
-                .write();
+                SystemCallStar { syscall_selector: *KERNEL_CODE_SEG, sysret_selector: *USER_CODE_SEG }.write();
                 SystemCallLStar::write(VirtAddr::new(syscall_entry as *const () as u64));
             }
         })

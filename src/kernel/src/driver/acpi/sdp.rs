@@ -47,10 +47,7 @@ impl Xrsdp {
         check_rsdp.validate();
         let revision = check_rsdp.revision();
         // After revision checking unmap the sdp.
-        unsafe {
-            ctx.mapper()
-                .unmap_addr(Page::containing_address(VirtAddr::new(rsdp_addr.as_u64())))
-        };
+        unsafe { ctx.mapper().unmap_addr(Page::containing_address(VirtAddr::new(rsdp_addr.as_u64()))) };
         // Create sdp based on readed revision
         log!(Trace, "Rsdp address: {:#x}", rsdp_addr);
         log!(Info, "Acpi revision: {}", revision);
@@ -65,9 +62,7 @@ impl Xrsdp {
                         EntryFlags::PRESENT,
                     )
                 };
-                Xrsdp::RSDP(unsafe {
-                    Rsdp::new(virt_rdsp.start_address().align_to(rsdp_addr).as_u64())
-                })
+                Xrsdp::RSDP(unsafe { Rsdp::new(virt_rdsp.start_address().align_to(rsdp_addr).as_u64()) })
             }
             AcpiRevisions::Rev2 => {
                 let virt_xsdp = virt_addr_alloc(1);
@@ -79,9 +74,7 @@ impl Xrsdp {
                         EntryFlags::PRESENT,
                     )
                 };
-                Xrsdp::XSDP(unsafe {
-                    Xsdp::new(virt_xsdp.start_address().align_to(rsdp_addr).as_u64())
-                })
+                Xrsdp::XSDP(unsafe { Xsdp::new(virt_xsdp.start_address().align_to(rsdp_addr).as_u64()) })
             }
         };
         sdp.validate();
@@ -98,11 +91,7 @@ impl Xrsdp {
     }
 
     pub fn oem(&self) -> String {
-        self.rsdp()
-            .oem
-            .iter()
-            .map(|e| *e as char)
-            .collect::<String>()
+        self.rsdp().oem.iter().map(|e| *e as char).collect::<String>()
     }
 
     pub unsafe fn xrsdt(&self, ctx: &mut InitializationContext<Stage1>) -> Xrsdt {

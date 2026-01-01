@@ -8,8 +8,8 @@ use bitflags::bitflags;
 use smart_default::SmartDefault;
 
 use crate::{
-    address::{Frame, PhysAddr, VirtAddr},
     PrivilegeLevel,
+    address::{Frame, PhysAddr, VirtAddr},
 };
 
 bitflags! {
@@ -172,10 +172,7 @@ impl Cr3 {
         let flags = result & 0xFFF;
         let address = result & !0xFFF; // cut off the first 12 bits (exclusive)
 
-        (
-            Frame::containing_address(PhysAddr::new_truncate(address)),
-            Cr3Flags::from_bits_truncate(flags),
-        )
+        (Frame::containing_address(PhysAddr::new_truncate(address)), Cr3Flags::from_bits_truncate(flags))
     }
 
     /// Reload the cr3 invalidating all tlb
@@ -660,10 +657,7 @@ pub unsafe fn lgdt(gdt: &DescriptorTablePointer) {
 
 #[inline(always)]
 pub fn sgdt() -> DescriptorTablePointer {
-    let result = DescriptorTablePointer {
-        base: VirtAddr::null(),
-        limit: 0,
-    };
+    let result = DescriptorTablePointer { base: VirtAddr::null(), limit: 0 };
 
     unsafe {
         asm!("sgdt [{}]", in(reg) &result, options(readonly, nostack, preserves_flags));

@@ -6,8 +6,8 @@ use uefi::{
         text::Color,
     },
     table::{
-        boot::{OpenProtocolAttributes, OpenProtocolParams},
         Boot, SystemTable,
+        boot::{OpenProtocolAttributes, OpenProtocolParams},
     },
 };
 use uefi_services::system_table;
@@ -16,41 +16,26 @@ use crate::context::{InitializationContext, Stage3, Stage4};
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     if let Some(mode) = system_table.stdout().modes().max_by(|l, r| l.cmp(r)) {
-        system_table
-            .stdout()
-            .set_mode(mode)
-            .expect("Could not change text mode");
+        system_table.stdout().set_mode(mode).expect("Could not change text mode");
     }
 
-    system_table
-        .stdout()
-        .set_color(Color::LightGreen, Color::Black)
-        .expect("Failed to set color");
-    system_table
-        .stdout()
-        .clear()
-        .expect("Could not clear screen");
+    system_table.stdout().set_color(Color::LightGreen, Color::Black).expect("Failed to set color");
+    system_table.stdout().clear().expect("Could not clear screen");
 }
 
-pub fn initialize_graphics_kernel(
-    ctx: InitializationContext<Stage3>,
-) -> InitializationContext<Stage4> {
+pub fn initialize_graphics_kernel(ctx: InitializationContext<Stage3>) -> InitializationContext<Stage4> {
     let system_table = system_table();
     let config = ctx.config();
-    let handle = system_table
-        .boot_services()
-        .get_handle_for_protocol::<GraphicsOutput>();
+    let handle = system_table.boot_services().get_handle_for_protocol::<GraphicsOutput>();
     let gop = unsafe {
-        system_table
-            .boot_services()
-            .open_protocol::<GraphicsOutput>(
-                OpenProtocolParams {
-                    handle: handle.unwrap(),
-                    agent: system_table.boot_services().image_handle(),
-                    controller: None,
-                },
-                OpenProtocolAttributes::GetProtocol,
-            )
+        system_table.boot_services().open_protocol::<GraphicsOutput>(
+            OpenProtocolParams {
+                handle: handle.unwrap(),
+                agent: system_table.boot_services().image_handle(),
+                controller: None,
+            },
+            OpenProtocolAttributes::GetProtocol,
+        )
     };
     let mut gop = gop.unwrap();
 
@@ -77,22 +62,14 @@ pub fn initialize_graphics_kernel(
         let framebuffer_len = (vertical - 1) * mode.info().stride() + (horizontal - 1) + 1;
 
         let gop_info = mode.info();
-        let framebuffer = unsafe {
-            RawData::new(
-                PhysAddr::new(framebuffer),
-                (framebuffer_len * size_of::<u32>() + 4095) & !4095,
-            )
-        };
+        let framebuffer =
+            unsafe { RawData::new(PhysAddr::new(framebuffer), (framebuffer_len * size_of::<u32>() + 4095) & !4095) };
         let my_format = match gop_info.pixel_format() {
             gop::PixelFormat::Rgb => PixelFormat::Rgb,
             gop::PixelFormat::Bgr => PixelFormat::Bgr,
             gop::PixelFormat::Bitmask => PixelFormat::Bitmask({
                 let bitmask = gop_info.pixel_bitmask().unwrap();
-                PixelBitmask {
-                    red: bitmask.red,
-                    green: bitmask.green,
-                    blue: bitmask.blue,
-                }
+                PixelBitmask { red: bitmask.red, green: bitmask.green, blue: bitmask.blue }
             }),
             gop::PixelFormat::BltOnly => PixelFormat::BltOnly,
         };

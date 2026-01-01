@@ -248,8 +248,7 @@ struct RuntimeServices {
     header: TableHeader,
     get_time: unsafe extern "efiapi" fn(time: *mut Time, capabilities: *mut c_void) -> EfiStatus,
     set_time: unsafe extern "efiapi" fn(time: *const Time) -> EfiStatus,
-    get_wakeup_time:
-        unsafe extern "efiapi" fn(enabled: *mut u8, pending: *mut u8, time: *mut Time) -> EfiStatus,
+    get_wakeup_time: unsafe extern "efiapi" fn(enabled: *mut u8, pending: *mut u8, time: *mut Time) -> EfiStatus,
     set_wakeup_time: unsafe extern "efiapi" fn(enable: u8, time: *const Time) -> EfiStatus,
     set_virtual_address_map: unsafe extern "efiapi" fn(
         map_size: usize,
@@ -257,10 +256,7 @@ struct RuntimeServices {
         desc_version: u32,
         virtual_map: *mut MemoryDescriptor,
     ) -> EfiStatus,
-    convert_pointer: unsafe extern "efiapi" fn(
-        debug_disposition: usize,
-        address: *mut *const c_void,
-    ) -> EfiStatus,
+    convert_pointer: unsafe extern "efiapi" fn(debug_disposition: usize, address: *mut *const c_void) -> EfiStatus,
     get_variable: unsafe extern "efiapi" fn(
         variable_name: *const u16,
         vendor_guid: *const Guid,
@@ -281,12 +277,7 @@ struct RuntimeServices {
         data: *const u8,
     ) -> EfiStatus,
     get_next_high_monotonic_count: unsafe extern "efiapi" fn(high_count: *mut u32) -> EfiStatus,
-    reset_system: unsafe extern "efiapi" fn(
-        rt: ResetType,
-        status: EfiStatus,
-        data_size: usize,
-        data: *const u8,
-    ) -> !,
+    reset_system: unsafe extern "efiapi" fn(rt: ResetType, status: EfiStatus, data_size: usize, data: *const u8) -> !,
 
     // UEFI 2.0 Capsule Services.
     update_capsule: unsafe extern "efiapi" fn(
@@ -324,19 +315,13 @@ impl UefiRuntime {
         let mut mem_map: MemoryMap<'static> = BOOT_BRIDGE.memory_map().clone();
         let runtime_table_raw = BOOT_BRIDGE.uefi_runtime_ptr();
 
-        log!(
-            Info,
-            "Initializing UEFI Runtime, RUNTIME TABLE PHYS ADDR AT: {:#x}",
-            runtime_table_raw.as_u64()
-        );
+        log!(Info, "Initializing UEFI Runtime, RUNTIME TABLE PHYS ADDR AT: {:#x}", runtime_table_raw.as_u64());
 
         let mut runtime_table = VirtAddr::null();
         for ufu_stuff in mem_map.entries_mut().filter(|e| {
             matches!(
                 e.ty,
-                MemoryType::RUNTIME_SERVICES_CODE
-                    | MemoryType::RUNTIME_SERVICES_DATA
-                    | MemoryType::BOOT_SERVICES_DATA
+                MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA | MemoryType::BOOT_SERVICES_DATA
             )
         }) {
             log!(
@@ -363,24 +348,15 @@ impl UefiRuntime {
             });
             ufu_stuff.virt_start = page.start_address();
             if ufu_stuff.phys_start < runtime_table_raw
-                && (ufu_stuff.phys_start + ufu_stuff.phys_start.as_u64() * PAGE_SIZE - 1)
-                    > runtime_table_raw
+                && (ufu_stuff.phys_start + ufu_stuff.phys_start.as_u64() * PAGE_SIZE - 1) > runtime_table_raw
             {
-                runtime_table = page.start_address()
-                    + (runtime_table_raw.as_u64() - ufu_stuff.phys_start.as_u64());
+                runtime_table = page.start_address() + (runtime_table_raw.as_u64() - ufu_stuff.phys_start.as_u64());
             }
         }
 
-        assert!(
-            !runtime_table.is_null(),
-            "Runtime table is not in the uefi memory range"
-        );
+        assert!(!runtime_table.is_null(), "Runtime table is not in the uefi memory range");
 
-        log!(
-            Debug,
-            "Mapped UEFI Runtime, UEFI Runtime table vaddr at: {:#x}",
-            runtime_table
-        );
+        log!(Debug, "Mapped UEFI Runtime, UEFI Runtime table vaddr at: {:#x}", runtime_table);
         let runtime_table = unsafe { &mut *runtime_table.as_mut_ptr::<SystemTable>() };
         unsafe {
             let status = ((*runtime_table.runtime_services).set_virtual_address_map)(
@@ -399,12 +375,10 @@ impl UefiRuntime {
             }
         };
 
-        for ufu_stuff in mem_map.entries_mut().filter(|e| {
-            matches!(
-                e.ty,
-                MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA
-            )
-        }) {
+        for ufu_stuff in mem_map
+            .entries_mut()
+            .filter(|e| matches!(e.ty, MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA))
+        {
             mapper_upper(|mapper| unsafe {
                 mapper.unmap_addr_by_size(
                     VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
@@ -413,19 +387,13 @@ impl UefiRuntime {
             })
         }
 
-        Self {
-            table: runtime_table,
-        }
+        Self { table: runtime_table }
     }
 
     pub fn get_time(&self) -> Time {
         let mut time = MaybeUninit::<Time>::uninit();
-        let status = unsafe {
-            ((*self.table.runtime_services).get_time)(
-                time.as_mut_ptr().cast(),
-                core::ptr::null_mut(),
-            )
-        };
+        let status =
+            unsafe { ((*self.table.runtime_services).get_time)(time.as_mut_ptr().cast(), core::ptr::null_mut()) };
         if status != EfiStatus::SUCCESS {
             panic!("Failed to set virtual address map for uefi {status:?}");
         }

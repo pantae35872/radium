@@ -5,9 +5,7 @@ use pager::paging::{ActivePageTable, table::RecurseLevel4, temporary_page::Tempo
 use crate::{
     driver::acpi::{Acpi, madt::IoApicInterruptSourceOverride},
     interrupt::{apic::ApicId, io_apic::IoApicManager},
-    memory::{
-        MMIOBufferInfo, allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator,
-    },
+    memory::{MMIOBufferInfo, allocator::buddy_allocator::BuddyAllocator, stack_allocator::StackAllocator},
     port::PortAllocator,
     smp::LocalInitializer,
 };
@@ -191,12 +189,7 @@ pub struct InitializationContext<T: AnyInitializationPhase> {
 
 impl<T: AnyInitializationPhase> InitializationContext<T> {
     pub fn start(boot_bridge: BootBridge) -> InitializationContext<Stage0> {
-        InitializationContext {
-            context: Stage0 {
-                boot_bridge,
-                port_allocator: PortAllocator::new(),
-            },
-        }
+        InitializationContext { context: Stage0 { boot_bridge, port_allocator: PortAllocator::new() } }
     }
 
     pub fn context(&self) -> &T {
@@ -207,15 +200,10 @@ impl<T: AnyInitializationPhase> InitializationContext<T> {
         &mut self.context
     }
 
-    pub fn next(
-        self,
-        next: <T as InitializationPhase>::Additional,
-    ) -> InitializationContext<T::Next>
+    pub fn next(self, next: <T as InitializationPhase>::Additional) -> InitializationContext<T::Next>
     where
         T: InitializationPhase,
     {
-        InitializationContext {
-            context: self.context.next(next),
-        }
+        InitializationContext { context: self.context.next(next) }
     }
 }

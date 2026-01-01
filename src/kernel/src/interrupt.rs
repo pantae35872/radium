@@ -3,6 +3,7 @@ use core::fmt;
 use core::fmt::LowerHex;
 use core::sync::atomic::Ordering;
 
+use crate::PANIC_COUNT;
 use crate::gdt::KERNEL_CODE_SEG;
 use crate::gdt::KERNEL_DATA_SEG;
 use crate::gdt::USER_CODE_SEG;
@@ -20,11 +21,10 @@ use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
 use crate::userland;
-use crate::userland::pipeline::dispatch::DispatchAction;
 use crate::userland::pipeline::CommonRequestContext;
 use crate::userland::pipeline::CommonRequestStackFrame;
 use crate::userland::pipeline::RequestReferer;
-use crate::PANIC_COUNT;
+use crate::userland::pipeline::dispatch::DispatchAction;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use apic::LocalApic;
@@ -94,10 +94,8 @@ impl InterruptIndex {
 }
 
 fn disable_pic(ctx: &mut InitializationContext<Stage3>) {
-    let mut pic_1_data: Port<Port8Bit, PortReadWrite> =
-        ctx.alloc_port(0x21).expect("PIC Port is already taken");
-    let mut pic_2_data: Port<Port8Bit, PortReadWrite> =
-        ctx.alloc_port(0xA1).expect("PIC Port is already taken");
+    let mut pic_1_data: Port<Port8Bit, PortReadWrite> = ctx.alloc_port(0x21).expect("PIC Port is already taken");
+    let mut pic_2_data: Port<Port8Bit, PortReadWrite> = ctx.alloc_port(0xA1).expect("PIC Port is already taken");
     unsafe {
         pic_1_data.write(0xff);
         pic_2_data.write(0xff);
@@ -108,19 +106,13 @@ fn create_idt() -> &'static Idt {
     let idt = Box::leak(Idt::new().into());
 
     unsafe {
-        idt.general_protection
-            .set_handler_fn(general_protection_fault_handler)
-            .set_stack_index(GENERAL_STACK_INDEX);
-        idt.page_fault
-            .set_handler_fn(page_fault_handler)
-            .set_stack_index(GENERAL_STACK_INDEX);
+        idt.general_protection.set_handler_fn(general_protection_fault_handler).set_stack_index(GENERAL_STACK_INDEX);
+        idt.page_fault.set_handler_fn(page_fault_handler).set_stack_index(GENERAL_STACK_INDEX);
         idt.invalid_opcode
             .set_handler_addr(VirtAddr::new(invalid_opcode as *const () as u64))
             .set_stack_index(GENERAL_STACK_INDEX);
         idt.break_point.set_handler_fn(break_point);
-        idt.double_fault
-            .set_handler_fn(double_fault_handler)
-            .set_stack_index(DOUBLE_FAULT_IST_INDEX);
+        idt.double_fault.set_handler_fn(double_fault_handler).set_stack_index(DOUBLE_FAULT_IST_INDEX);
     }
     fill_idt!();
     idt
@@ -175,9 +167,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
 
     let mut io_apic_manager = IoApicManager::new();
     let io_apics = ctx.context().io_apics().clone();
-    io_apics.iter().for_each(|(addr, gsi_base)| {
-        io_apic_manager.add_io_apic(addr.clone(), *gsi_base, &mut ctx)
-    });
+    io_apics.iter().for_each(|(addr, gsi_base)| io_apic_manager.add_io_apic(addr.clone(), *gsi_base, &mut ctx));
     ctx.context()
         .interrupt_source_overrides()
         .iter()
@@ -185,10 +175,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
 
     let lapic_calibration = |id| {
         log!(Trace, "Calibrating APIC for cpu: {id}");
-        IO_APIC.lock().redirect_legacy_irqs(
-            0,
-            RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
-        );
+        IO_APIC.lock().redirect_legacy_irqs(0, RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID));
         LAPIC.inner_mut().calibrate();
     };
 
@@ -199,10 +186,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
         initializer.register(lapic);
 
         initializer.after_bsp(|| {
-            IO_APIC.lock().redirect_legacy_irqs(
-                0,
-                RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID),
-            );
+            IO_APIC.lock().redirect_legacy_irqs(0, RedirectionTableEntry::new(InterruptIndex::PITVector, *APIC_ID));
         });
 
         initializer.register_after(lapic_calibration);
@@ -381,11 +365,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
     userland::pipeline::handle_request(
         CommonRequestContext::new(&mut c_stack_frame, RequestReferer::HardwareInterrupt(idx)),
-        |CommonRequestContext {
-             stack_frame: c_stack_frame,
-             ..
-         },
-         dispatcher| {
+        |CommonRequestContext { stack_frame: c_stack_frame, .. }, dispatcher| {
             dispatcher.dispatch(|action| match action {
                 DispatchAction::HltLoop => {
                     c_stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
@@ -480,32 +460,17 @@ handler!(
     }
 );
 
-extern "x86-interrupt" fn general_protection_fault_handler(
-    stack_frame: InterruptStackFrame,
-    error_code: u64,
-) {
-    panic!(
-        "EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}, ERROR_CODE: {}",
-        stack_frame, error_code
-    );
+extern "x86-interrupt" fn general_protection_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    panic!("EXCEPTION: GENERAL PROTECTION FAULT\n{:#?}, ERROR_CODE: {}", stack_frame, error_code);
 }
 
 extern "x86-interrupt" fn break_point(_stack_frame: InterruptStackFrame) {}
 
-extern "x86-interrupt" fn double_fault_handler(
-    stack_frame: InterruptStackFrame,
-    error_code: u64,
-) -> ! {
-    panic!(
-        "EXCEPTION: DOUBLE FAULT\n{:#?}, ERROR_CODE: {}",
-        stack_frame, error_code
-    );
+extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
+    panic!("EXCEPTION: DOUBLE FAULT\n{:#?}, ERROR_CODE: {}", stack_frame, error_code);
 }
 
-extern "x86-interrupt" fn page_fault_handler(
-    stack_frame: InterruptStackFrame,
-    error_code: PageFaultErrorCode,
-) {
+extern "x86-interrupt" fn page_fault_handler(stack_frame: InterruptStackFrame, error_code: PageFaultErrorCode) {
     log!(Critical, "EXCEPTION: PAGE FAULT");
     log!(Critical, "Accessed Address: {:x?}", Cr2::read());
     log!(Critical, "Error Code: {:?}", error_code);

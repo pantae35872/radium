@@ -21,27 +21,17 @@ pub struct BuddyAllocator<const ORDER: usize = 64> {
 // SAFETY: this is uphold by the implementation of the buddy allocator to be correct
 unsafe impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
     fn allocate_frame(&mut self) -> Option<Frame> {
-        self.allocate(PAGE_SIZE as usize)
-            .map(|e| Frame::containing_address(PhysAddr::new(e as u64)))
+        self.allocate(PAGE_SIZE as usize).map(|e| Frame::containing_address(PhysAddr::new(e as u64)))
     }
 
     fn deallocate_frame(&mut self, frame: Frame) {
-        self.dealloc(
-            frame.start_address().as_u64() as *mut u8,
-            PAGE_SIZE as usize,
-        );
+        self.dealloc(frame.start_address().as_u64() as *mut u8, PAGE_SIZE as usize);
     }
 }
 
 impl<const ORDER: usize> BuddyAllocator<ORDER> {
-    pub unsafe fn new<'a>(
-        area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
-    ) -> Self {
-        let mut init = Self {
-            free_lists: [const { unsafe { FreeList::new() } }; ORDER],
-            max_mem: 0,
-            allocated: 0,
-        };
+    pub unsafe fn new<'a>(area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>) -> Self {
+        let mut init = Self { free_lists: [const { unsafe { FreeList::new() } }; ORDER], max_mem: 0, allocated: 0 };
 
         unsafe { init.add_entire_memory_to_area(area_allocator) };
 
@@ -62,8 +52,7 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
     }
 
     unsafe fn add_area(&mut self, start_addr: PhysAddr, mut size: usize) {
-        let mut start_addr =
-            KERNEL_DIRECT_PHYSICAL_MAP.as_u64() as usize + start_addr.as_u64() as usize;
+        let mut start_addr = KERNEL_DIRECT_PHYSICAL_MAP.as_u64() as usize + start_addr.as_u64() as usize;
         let unaligned_addr = start_addr;
         if !(start_addr as *const u8).is_aligned_to(MAX_ALIGN) {
             start_addr += (start_addr as *const u8).align_offset(MAX_ALIGN);
@@ -82,10 +71,7 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 *((start_addr + offset) as *mut usize) = 0;
             };
 
-            unsafe {
-                self.free_lists[order.trailing_zeros() as usize - 1]
-                    .push((start_addr + offset) as *mut usize)
-            };
+            unsafe { self.free_lists[order.trailing_zeros() as usize - 1].push((start_addr + offset) as *mut usize) };
 
             offset += order;
             self.max_mem += order;
@@ -109,11 +95,8 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
                 false => {
                     if current_order == order {
                         self.allocated += size;
-                        let addr = unsafe {
-                            node.pop().map(|e| {
-                                (e as u64 - KERNEL_DIRECT_PHYSICAL_MAP.as_u64()) as *mut u8
-                            })
-                        };
+                        let addr =
+                            unsafe { node.pop().map(|e| (e as u64 - KERNEL_DIRECT_PHYSICAL_MAP.as_u64()) as *mut u8) };
                         return addr;
                     } else {
                         some_mem = true;
@@ -211,9 +194,7 @@ impl FreeNode {
 
 impl FreeList {
     const unsafe fn new() -> FreeList {
-        FreeList {
-            head: ptr::null_mut(),
-        }
+        FreeList { head: ptr::null_mut() }
     }
 
     unsafe fn push(&mut self, item: *mut usize) {
@@ -257,10 +238,7 @@ impl<'a> Iterator for FreeListIterMut<'a> {
         if self.current.is_null() {
             None
         } else {
-            let res = FreeNode {
-                prev: self.previous,
-                curr: self.current,
-            };
+            let res = FreeNode { prev: self.previous, curr: self.current };
             self.previous = self.current;
             self.current = unsafe { *self.current as *mut usize };
             Some(res)

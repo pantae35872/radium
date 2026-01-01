@@ -23,10 +23,7 @@ struct GlobalThreadIdPool {
 
 impl GlobalThreadIdPool {
     const fn new() -> Self {
-        Self {
-            pool: Vec::new(),
-            free_id: Vec::new(),
-        }
+        Self { pool: Vec::new(), free_id: Vec::new() }
     }
 
     #[inline]
@@ -57,10 +54,7 @@ impl GlobalThreadIdPool {
         }
 
         let id = self.pool.len();
-        self.pool.push(GlobalThreadIdData {
-            local_id,
-            signature: sig(),
-        });
+        self.pool.push(GlobalThreadIdData { local_id, signature: sig() });
         NonZeroUsize::new(id + 1).unwrap()
     }
 
@@ -89,10 +83,7 @@ pub(super) fn sigature(global_id: NonZeroUsize) -> usize {
 pub(super) fn alloc_thread(local_id: LocalThreadId) -> Thread {
     let mut map = GLOBAL_THREAD_ID_MAP.write();
     let global_id = map.alloc(local_id);
-    Thread {
-        global_id,
-        signature: map.signature(global_id),
-    }
+    Thread { global_id, signature: map.signature(global_id) }
 }
 
 pub(super) fn free_thread(thread: Thread) {

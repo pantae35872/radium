@@ -54,9 +54,7 @@ static GENERAL_VIRTUAL_ALLOCATOR: VirtualAllocator = VirtualAllocator::new(
 
 #[track_caller]
 pub fn virt_addr_alloc(size_in_pages: u64) -> Page {
-    let allocated = GENERAL_VIRTUAL_ALLOCATOR
-        .allocate(size_in_pages as usize)
-        .expect("RAN OUT OF VIRTUAL ADDR");
+    let allocated = GENERAL_VIRTUAL_ALLOCATOR.allocate(size_in_pages as usize).expect("RAN OUT OF VIRTUAL ADDR");
     log!(
         Debug,
         "\"{}\" Called virt_addr_alloc with size {size_in_pages}, giving {:x}-{:x}",
@@ -83,10 +81,7 @@ impl<'a, M: Mapper> MapperWithVirtualAllocator<'a, M> {
     /// with other allocations or points to an unsafe range of memory
     pub unsafe fn map(&mut self, phys_addr: PhysAddr, size: usize, flags: EntryFlags) -> VirtAddr {
         let page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
-        unsafe {
-            self.mapper
-                .map_to_range_by_size(page, phys_addr.into(), size, flags)
-        };
+        unsafe { self.mapper.map_to_range_by_size(page, phys_addr.into(), size, flags) };
         page.start_address().align_to(phys_addr)
     }
 }
@@ -100,21 +95,11 @@ pub trait Mapper {
     /// # Panics
     /// The implementaions may panic if end_frame < start_frame.
     /// the implementation must panic if the range is already mapped and not marked OVERWRITEABLE
-    unsafe fn identity_map_range(
-        &mut self,
-        start_frame: Frame,
-        end_frame: Frame,
-        entry_flags: EntryFlags,
-    );
+    unsafe fn identity_map_range(&mut self, start_frame: Frame, end_frame: Frame, entry_flags: EntryFlags);
 
     unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags);
 
-    unsafe fn change_flags_ranges(
-        &mut self,
-        start_page: Page,
-        end_page: Page,
-        map: impl Fn(EntryFlags) -> EntryFlags,
-    );
+    unsafe fn change_flags_ranges(&mut self, start_page: Page, end_page: Page, map: impl Fn(EntryFlags) -> EntryFlags);
 
     unsafe fn map_to_range(
         &mut self,
@@ -130,11 +115,7 @@ pub trait Mapper {
     unsafe fn identity_map(&mut self, frame: Frame, flags: EntryFlags);
 
     fn map_range_by_size(&mut self, start_page: Page, size: usize, flags: EntryFlags) {
-        self.map_range(
-            start_page,
-            Page::containing_address(start_page.start_address() + size - 1),
-            flags,
-        )
+        self.map_range(start_page, Page::containing_address(start_page.start_address() + size - 1), flags)
     }
 
     unsafe fn identity_map_by_size(&mut self, start_frame: Frame, size: usize, flags: EntryFlags) {
@@ -147,13 +128,7 @@ pub trait Mapper {
         };
     }
 
-    unsafe fn map_to_range_by_size(
-        &mut self,
-        start_page: Page,
-        start_frame: Frame,
-        size: usize,
-        flags: EntryFlags,
-    ) {
+    unsafe fn map_to_range_by_size(&mut self, start_page: Page, start_frame: Frame, size: usize, flags: EntryFlags) {
         unsafe {
             self.map_to_range(
                 start_page,
@@ -293,9 +268,7 @@ unsafe impl IdentityMappable for DataBuffer<'_> {
         let buf_start = PhysAddr::new(self.buffer as *const [u8] as *const u8 as u64);
         let buf_end = PhysAddr::new(buf_start.as_u64() + self.buffer.len() as u64 - 1);
         // SAFETY: We know this is safe if created correctly
-        unsafe {
-            mapper.identity_map_range(buf_start.into(), buf_end.into(), EntryFlags::NO_EXECUTE)
-        };
+        unsafe { mapper.identity_map_range(buf_start.into(), buf_end.into(), EntryFlags::NO_EXECUTE) };
     }
 }
 
@@ -319,9 +292,7 @@ impl Display for DataBuffer<'_> {
 
 impl Clone for DataBuffer<'_> {
     fn clone(&self) -> Self {
-        Self {
-            buffer: Vec::leak(self.buffer.to_vec()),
-        }
+        Self { buffer: Vec::leak(self.buffer.to_vec()) }
     }
 }
 

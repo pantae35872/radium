@@ -3,7 +3,7 @@ use named_obj::named_obj;
 use namespace_modifier::namespace_modifier;
 use sentinel::log;
 
-use crate::driver::acpi::aml::{parser::choose, AmlContext, AmlError, AmlValue};
+use crate::driver::acpi::aml::{AmlContext, AmlError, AmlValue, parser::choose};
 
 use super::{Parser, Propagate};
 
@@ -34,9 +34,7 @@ where
             }
             match term_object().parse(input, context) {
                 Ok((next_input, next_context, None))
-                    if list_length
-                        .checked_sub((o_input.len() - next_input.len()) as u32)
-                        .is_some() =>
+                    if list_length.checked_sub((o_input.len() - next_input.len()) as u32).is_some() =>
                 {
                     ControlFlow::Continue((
                         list_length - (o_input.len() - next_input.len()) as u32,
@@ -44,18 +42,12 @@ where
                         next_context,
                     ))
                 }
-                Ok((next_input, next_context, None)) => ControlFlow::Break((
-                    list_length,
-                    next_input,
-                    next_context,
-                    Some(AmlError::ParserError.into()),
-                )),
-                Ok((next_input, next_context, Some(value))) => ControlFlow::Break((
-                    list_length,
-                    next_input,
-                    next_context,
-                    Some(Propagate::Return(value)),
-                )),
+                Ok((next_input, next_context, None)) => {
+                    ControlFlow::Break((list_length, next_input, next_context, Some(AmlError::ParserError.into())))
+                }
+                Ok((next_input, next_context, Some(value))) => {
+                    ControlFlow::Break((list_length, next_input, next_context, Some(Propagate::Return(value))))
+                }
                 Err((next_input, next_context, propagate)) => {
                     ControlFlow::Break((list_length, next_input, next_context, Some(propagate)))
                 }

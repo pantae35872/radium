@@ -14,10 +14,7 @@ pub struct Gdt {
 
 impl Gdt {
     pub fn new() -> Gdt {
-        Gdt {
-            table: [0; 8],
-            next_free: 1,
-        }
+        Gdt { table: [0; 8], next_free: 1 }
     }
 
     pub fn add_entry(&mut self, entry: Descriptor, level: PrivilegeLevel) -> SegmentSelector {
@@ -111,8 +108,7 @@ pub const GENERAL_STACK_INDEX: u16 = 1;
 
 impl Descriptor {
     pub fn data_segment() -> Descriptor {
-        let flags =
-            DescriptorFlags::USER_SEGMENT | DescriptorFlags::PRESENT | DescriptorFlags::READ_WRITE;
+        let flags = DescriptorFlags::USER_SEGMENT | DescriptorFlags::PRESENT | DescriptorFlags::READ_WRITE;
         Descriptor::UserSegment(flags.bits())
     }
 

@@ -132,10 +132,7 @@ impl MadtLocalX2Apic {
 
 impl MadtInterruptsIter {
     unsafe fn new(address: u64, length: u64) -> Self {
-        Self {
-            address,
-            end_address: address + length - 1,
-        }
+        Self { address, end_address: address + length - 1 }
     }
 }
 
@@ -150,9 +147,7 @@ impl Iterator for MadtInterruptsIter {
         let header = unsafe { &*(self.address as *const InterruptControllerStructureHeader) };
         let before_addr = self.address;
         self.address += header.record_length as u64;
-        Some(unsafe {
-            InterruptControllerStructure::from_header_and_pointer(header.clone(), before_addr)
-        })
+        Some(unsafe { InterruptControllerStructure::from_header_and_pointer(header.clone(), before_addr) })
     }
 }
 
@@ -164,16 +159,11 @@ impl MadtLocalApic {
 }
 
 impl InterruptControllerStructure {
-    unsafe fn from_header_and_pointer(
-        header: InterruptControllerStructureHeader,
-        header_address: u64,
-    ) -> Self {
+    unsafe fn from_header_and_pointer(header: InterruptControllerStructureHeader, header_address: u64) -> Self {
         match header.entry_type {
             0 => Self::LocalApic(unsafe { Self::calculate_data(header_address) }),
             1 => Self::IoApic(unsafe { Self::calculate_data(header_address) }),
-            2 => {
-                Self::IoApicInterruptSourceOverride(unsafe { Self::calculate_data(header_address) })
-            }
+            2 => Self::IoApicInterruptSourceOverride(unsafe { Self::calculate_data(header_address) }),
             3 => Self::IoApicNmi(unsafe { Self::calculate_data(header_address) }),
             4 => Self::LocalApicNmi(unsafe { Self::calculate_data(header_address) }),
             5 => Self::LocalApicAddressOverride(unsafe { Self::calculate_data(header_address) }),
@@ -184,13 +174,8 @@ impl InterruptControllerStructure {
 
     unsafe fn calculate_data<T>(header_address: u64) -> &'static T {
         let header = unsafe { &*(header_address as *const InterruptControllerStructureHeader) };
-        assert_eq!(
-            size_of::<T>(),
-            header.record_length as usize - size_of::<InterruptControllerStructureHeader>()
-        );
-        unsafe {
-            &*((header_address as *const InterruptControllerStructureHeader).offset(1) as *const T)
-        }
+        assert_eq!(size_of::<T>(), header.record_length as usize - size_of::<InterruptControllerStructureHeader>());
+        unsafe { &*((header_address as *const InterruptControllerStructureHeader).offset(1) as *const T) }
     }
 }
 

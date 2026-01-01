@@ -30,20 +30,14 @@ pub enum IcrBuilderError {
         "All including self Shorthand with anything other than fixed delivery mode is invalid, according to the intel specification"
     )]
     AllIncludingSelfNotFixed,
-    #[error(
-        "Smi and startup with level trigger mode is not valid, according to the intel specification"
-    )]
+    #[error("Smi and startup with level trigger mode is not valid, according to the intel specification")]
     SMIAndStartUpWithLevel,
 
     #[error("No shorthand selected but no destination is provided")]
     NoDestinationProvidedWithNoShorthand,
-    #[error(
-        "Interrupt Vector must not be provided with init delivery mode, according to the intel specification"
-    )]
+    #[error("Interrupt Vector must not be provided with init delivery mode, according to the intel specification")]
     VectorWithInit,
-    #[error(
-        "Interrupt Vector is not provided when using other delivery mode other than init delivery mode"
-    )]
+    #[error("Interrupt Vector is not provided when using other delivery mode other than init delivery mode")]
     NoVectorProvidedNotInit,
     #[error("Assertion must be true when using delivery mode that is not init")]
     NotInitFalseAssert,
@@ -178,15 +172,7 @@ impl IcrBuilder {
                 trigger_mode: IpiTriggerMode::Level,
                 ..
             } => return Err(IcrBuilderError::SMIAndStartUpWithLevel),
-            Self {
-                delivery_mode,
-                shorthand,
-                trigger_mode,
-                vector,
-                dest,
-                x2apic,
-                assertion,
-            } => {
+            Self { delivery_mode, shorthand, trigger_mode, vector, dest, x2apic, assertion } => {
                 if !assertion && !matches!(delivery_mode, IpiDeliveryMode::Init) {
                     return Err(IcrBuilderError::NotInitFalseAssert);
                 }
@@ -199,14 +185,12 @@ impl IcrBuilder {
                     (None, _) => return Err(IcrBuilderError::NoVectorProvidedNotInit),
                 };
                 let (dest, mode) = match (dest, shorthand) {
-                    (
-                        Some(IpiDestination::LogicalDestination(dest)),
-                        IpiDestinationShorthand::NoShorthand,
-                    ) => (dest as u64, true),
-                    (
-                        Some(IpiDestination::PhysicalDestination(dest)),
-                        IpiDestinationShorthand::NoShorthand,
-                    ) => (dest.id() as u64, false),
+                    (Some(IpiDestination::LogicalDestination(dest)), IpiDestinationShorthand::NoShorthand) => {
+                        (dest as u64, true)
+                    }
+                    (Some(IpiDestination::PhysicalDestination(dest)), IpiDestinationShorthand::NoShorthand) => {
+                        (dest.id() as u64, false)
+                    }
                     (
                         _,
                         IpiDestinationShorthand::AllExcludingSelf

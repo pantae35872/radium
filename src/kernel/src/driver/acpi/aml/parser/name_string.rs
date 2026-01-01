@@ -8,27 +8,18 @@ use crate::driver::acpi::aml::parser::choose;
 use crate::driver::acpi::aml::parser::opcode::NULL_NAME;
 use crate::driver::acpi::aml::{AmlContext, AmlError};
 
-use super::opcode::{opcode, DUAL_NAME_PREFIX, MULTI_NAME_PREFIX, PREFIX_CHAR, ROOT_CHAR};
-use super::{byte_data, either, pair, zero_or_more, Parser};
+use super::opcode::{DUAL_NAME_PREFIX, MULTI_NAME_PREFIX, PREFIX_CHAR, ROOT_CHAR, opcode};
+use super::{Parser, byte_data, either, pair, zero_or_more};
 
 pub fn name_string<'a, 'c>() -> impl Parser<'a, 'c, AmlName>
 where
     'c: 'a,
 {
     either(
-        root_char()
-            .then(name_path().arced())
-            .map(|e| AmlName(iter::once(NameComponent::Root).chain(e).collect())),
+        root_char().then(name_path().arced()).map(|e| AmlName(iter::once(NameComponent::Root).chain(e).collect())),
         prefix_path()
             .and_then(|n| name_path().map(move |e| (n, e)))
-            .map(|(e, n)| {
-                AmlName(
-                    iter::repeat(NameComponent::Prefix)
-                        .take(e)
-                        .chain(n)
-                        .collect(),
-                )
-            }),
+            .map(|(e, n)| AmlName(iter::repeat(NameComponent::Prefix).take(e).chain(n).collect())),
     )
 }
 
@@ -43,12 +34,7 @@ fn name_path<'a, 'c>() -> impl Parser<'a, 'c, Vec<NameComponent>>
 where
     'c: 'a,
 {
-    choose!(
-        name_seg().map(|e| vec![e]),
-        dual_name(),
-        multiname(),
-        opcode(NULL_NAME).map(|_| vec![]),
-    )
+    choose!(name_seg().map(|e| vec![e]), dual_name(), multiname(), opcode(NULL_NAME).map(|_| vec![]),)
 }
 
 fn multiname<'a, 'c>() -> impl Parser<'a, 'c, Vec<NameComponent>>
@@ -59,17 +45,12 @@ where
         byte_data
             .and_then(|e| {
                 move |input, context| {
-                    (0..e).try_fold(
-                        (input, context, Vec::new()),
-                        |(input, context, mut result), _| {
-                            name_seg().parse(input, context).map(
-                                |(next_input, next_context, item)| {
-                                    result.push(item);
-                                    (next_input, next_context, result)
-                                },
-                            )
-                        },
-                    )
+                    (0..e).try_fold((input, context, Vec::new()), |(input, context, mut result), _| {
+                        name_seg().parse(input, context).map(|(next_input, next_context, item)| {
+                            result.push(item);
+                            (next_input, next_context, result)
+                        })
+                    })
                 }
             })
             .arced(),
@@ -80,11 +61,7 @@ fn dual_name<'a, 'c>() -> impl Parser<'a, 'c, Vec<NameComponent>>
 where
     'c: 'a,
 {
-    opcode(DUAL_NAME_PREFIX).then(
-        pair(name_seg(), name_seg())
-            .map(|(a, b)| vec![a, b])
-            .arced(),
-    )
+    opcode(DUAL_NAME_PREFIX).then(pair(name_seg(), name_seg()).map(|(a, b)| vec![a, b]).arced())
 }
 
 fn name_seg<'a, 'c>() -> impl Parser<'a, 'c, NameComponent>
@@ -112,8 +89,8 @@ mod tests {
     use alloc::{string::String, vec::Vec};
 
     use crate::driver::acpi::aml::{
-        parser::{parser_err, parser_ok},
         TestHandle,
+        parser::{parser_err, parser_ok},
     };
 
     use super::*;
@@ -121,18 +98,8 @@ mod tests {
     #[test_case]
     fn relative_name_string_test() {
         let mut context = AmlContext::new(TestHandle);
-        parser_ok!(
-            name_string(),
-            [b'_', b'A', b'B', b'_'],
-            &mut context,
-            AmlName::from_str("_AB_").unwrap()
-        );
-        parser_ok!(
-            name_string(),
-            [b'^', b'E', b'A', b'B', b'_'],
-            &mut context,
-            AmlName::from_str("^EAB_").unwrap()
-        );
+        parser_ok!(name_string(), [b'_', b'A', b'B', b'_'], &mut context, AmlName::from_str("_AB_").unwrap());
+        parser_ok!(name_string(), [b'^', b'E', b'A', b'B', b'_'], &mut context, AmlName::from_str("^EAB_").unwrap());
         parser_ok!(
             name_string(),
             [b'^', b'^', b'^', 0x2E, b'F', b'A', b'B', b'G', b'_', b'S', b'B', b'_'],
@@ -144,12 +111,7 @@ mod tests {
     #[test_case]
     fn absolute_name_string_test() {
         let mut context = AmlContext::new(TestHandle);
-        parser_ok!(
-            name_string(),
-            [0x5C, b'_', b'S', b'B', b'_'],
-            &mut context,
-            AmlName::from_str("\\_SB_").unwrap()
-        );
+        parser_ok!(name_string(), [0x5C, b'_', b'S', b'B', b'_'], &mut context, AmlName::from_str("\\_SB_").unwrap());
     }
 
     #[test_case]
@@ -187,12 +149,7 @@ mod tests {
             .map(|chunk| chunk.iter().collect::<String>())
             .collect::<Vec<String>>()
             .join(".");
-        parser_ok!(
-            name_string(),
-            multiname_test,
-            &mut context,
-            AmlName::from_str(&name).unwrap()
-        );
+        parser_ok!(name_string(), multiname_test, &mut context, AmlName::from_str(&name).unwrap());
 
         parser_err!(name_string(), [0x2F, 3], &mut context);
     }
@@ -200,18 +157,8 @@ mod tests {
     #[test_case]
     fn single_name_path_test() {
         let mut context = AmlContext::new(TestHandle);
-        parser_ok!(
-            name_string(),
-            [b'_', b'A', b'D', b'E'],
-            &mut context,
-            AmlName::from_str("_ADE").unwrap()
-        );
-        parser_ok!(
-            name_string(),
-            [b'_', b'A', b'2', b'1'],
-            &mut context,
-            AmlName::from_str("_A21").unwrap()
-        );
+        parser_ok!(name_string(), [b'_', b'A', b'D', b'E'], &mut context, AmlName::from_str("_ADE").unwrap());
+        parser_ok!(name_string(), [b'_', b'A', b'2', b'1'], &mut context, AmlName::from_str("_A21").unwrap());
         parser_err!(name_string(), [b'e', b'A', b'D', b'E'], &mut context);
         parser_err!(name_string(), [b'1', b'A', b'D', b'E'], &mut context);
     }

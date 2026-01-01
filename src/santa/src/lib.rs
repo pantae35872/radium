@@ -66,9 +66,7 @@ impl<'a> Elf<'a> {
             return Err(ElfError::InvalidHeader);
         }
         if buffer[0..4] != [0x7F, b'E', b'L', b'F'] {
-            return Err(ElfError::InvalidMagic {
-                magic: buffer[0..4].try_into().expect("Should not failed"),
-            });
+            return Err(ElfError::InvalidMagic { magic: buffer[0..4].try_into().expect("Should not failed") });
         }
         let reader = ElfReader::new(buffer);
 
@@ -147,8 +145,7 @@ impl<'a> Elf<'a> {
                 let offset = (i * section.entry_size()) as usize;
                 let rela = unsafe {
                     core::mem::transmute::<[u8; size_of::<ElfRela>()], ElfRela>(
-                        rela_data[offset..offset + section.entry_size() as usize]
-                            [..size_of::<ElfRela>()]
+                        rela_data[offset..offset + section.entry_size() as usize][..size_of::<ElfRela>()]
                             .try_into()
                             .unwrap(),
                     )
@@ -160,29 +157,20 @@ impl<'a> Elf<'a> {
                 match rela.typ() {
                     RelaType::X86_64_RELATIVE => {
                         unsafe {
-                            *(base + offset).as_mut_ptr::<u64>() =
-                                base.as_u64() + rela.addend - self.mem_min.as_u64();
+                            *(base + offset).as_mut_ptr::<u64>() = base.as_u64() + rela.addend - self.mem_min.as_u64();
                         };
                     }
                     RelaType::X86_64_64 => {
-                        let sym = self
-                            .reader
-                            .symbol_index::<ElfSymbol>(&target_section, rela.sym() as usize)
-                            .unwrap();
+                        let sym = self.reader.symbol_index::<ElfSymbol>(&target_section, rela.sym() as usize).unwrap();
                         let sym = base.as_u64() + (sym.value - self.mem_min.as_u64());
                         unsafe { *(base + offset).as_mut_ptr::<u64>() = sym + rela.addend };
                     }
                     RelaType::X86_64_GLOB_DAT | RelaType::X86_64_JUMP_SLOT => {
-                        let sym = self
-                            .reader
-                            .symbol_index::<ElfSymbol>(&target_section, rela.sym() as usize)
-                            .unwrap();
+                        let sym = self.reader.symbol_index::<ElfSymbol>(&target_section, rela.sym() as usize).unwrap();
 
                         if sym.shndx == 0 {
-                            let dynstr_data = self
-                                .reader
-                                .section_buffer_by_name(".dynstr")
-                                .ok_or(ElfError::InvalidHeader)?;
+                            let dynstr_data =
+                                self.reader.section_buffer_by_name(".dynstr").ok_or(ElfError::InvalidHeader)?;
 
                             let end = dynstr_data[sym.name_offset as usize..]
                                 .iter()
@@ -190,19 +178,15 @@ impl<'a> Elf<'a> {
                                 .map(|pos| sym.name_offset as usize + pos)
                                 .unwrap_or(dynstr_data.len());
 
-                            let sym_name =
-                                core::str::from_utf8(&dynstr_data[sym.name_offset as usize..end])
-                                    .map_err(|_| ElfError::InvalidHeader)?;
+                            let sym_name = core::str::from_utf8(&dynstr_data[sym.name_offset as usize..end])
+                                .map_err(|_| ElfError::InvalidHeader)?;
 
-                            let sym = reslover
-                                .resolve(sym_name)
-                                .ok_or(ElfError::UnresolvedSymbol(sym_name))?;
+                            let sym = reslover.resolve(sym_name).ok_or(ElfError::UnresolvedSymbol(sym_name))?;
                             unsafe { *(base + offset).as_mut_ptr::<u64>() = sym.as_u64() };
                             continue;
                         }
                         unsafe {
-                            *(base + offset).as_mut_ptr::<u64>() =
-                                base.as_u64() + (sym.value - self.mem_min.as_u64())
+                            *(base + offset).as_mut_ptr::<u64>() = base.as_u64() + (sym.value - self.mem_min.as_u64())
                         };
                     }
                     t => return Err(ElfError::UnknownRelocationType(t)),
@@ -233,8 +217,7 @@ impl<'a> Elf<'a> {
             let sym_offset = (i * dynsym.entry_size()) as usize;
             let sym = unsafe {
                 core::mem::transmute::<[u8; size_of::<ElfSymbol>()], ElfSymbol>(
-                    dynsym_data[sym_offset..sym_offset + dynsym.entry_size() as usize]
-                        [..size_of::<ElfSymbol>()]
+                    dynsym_data[sym_offset..sym_offset + dynsym.entry_size() as usize][..size_of::<ElfSymbol>()]
                         .try_into()
                         .unwrap(),
                 )
@@ -272,10 +255,7 @@ impl<'a> Elf<'a> {
             if section.segment_type() != ProgramType::Load {
                 continue;
             }
-            assert!(
-                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
-                "sections need to be page aligned"
-            );
+            assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
             let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
             let virt_start = self.mem_min() + relative_offset;
             let virt_end = virt_start + section.memsize() - 1;
@@ -339,20 +319,12 @@ impl<'a> Elf<'a> {
     ///
     /// # Safety
     /// Physical memory must be loaded with the correct data and have a contagious physical address
-    pub unsafe fn map_permission(
-        &self,
-        mapper: &mut impl pager::Mapper,
-        virt_base: VirtAddr,
-        phys_base: PhysAddr,
-    ) {
+    pub unsafe fn map_permission(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
                 continue;
             }
-            assert!(
-                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
-                "sections need to be page aligned"
-            );
+            assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
             let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
             let virt_start = virt_base + relative_offset;
             let virt_end = virt_start + section.memsize() - 1;
@@ -401,10 +373,7 @@ impl<'a> Elf<'a> {
 }
 
 unsafe impl IdentityReplaceable for Elf<'_> {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         self.reader.identity_replace(mapper);
     }
 }

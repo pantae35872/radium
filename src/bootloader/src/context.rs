@@ -122,16 +122,14 @@ macro_rules! select_context {
     )*};
 }
 
-use bootbridge::{
-    BootBridgeBuilder, GraphicsInfo, KernelConfig, MemoryMap, RawBootBridge, RawData,
-};
+use bootbridge::{BootBridgeBuilder, GraphicsInfo, KernelConfig, MemoryMap, RawBootBridge, RawData};
 use packery::Packed;
 use pager::{
     address::PhysAddr,
     allocator::linear_allocator::LinearAllocator,
     paging::{
-        table::{DirectLevel4, Table},
         ActivePageTable,
+        table::{DirectLevel4, Table},
     },
 };
 use santa::Elf;
@@ -252,9 +250,7 @@ impl InitializationContext<Stage6> {
 
 impl<T: AnyInitializationStage> InitializationContext<T> {
     pub fn start(config: TomlValue) -> InitializationContext<Stage0> {
-        InitializationContext {
-            context: Stage0 { config },
-        }
+        InitializationContext { context: Stage0 { config } }
     }
 
     pub fn context(&self) -> &T {
@@ -265,15 +261,10 @@ impl<T: AnyInitializationStage> InitializationContext<T> {
         &mut self.context
     }
 
-    pub fn next(
-        self,
-        next: <T as InitializationStage>::Additional,
-    ) -> InitializationContext<T::Next>
+    pub fn next(self, next: <T as InitializationStage>::Additional) -> InitializationContext<T::Next>
     where
         T: InitializationStage,
     {
-        InitializationContext {
-            context: self.context.next(next),
-        }
+        InitializationContext { context: self.context.next(next) }
     }
 }

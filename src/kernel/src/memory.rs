@@ -5,25 +5,27 @@ use allocator::{area_allocator::AreaAllocator, buddy_allocator::BuddyAllocator};
 use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
+    EntryFlags, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
+        ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::{Mapper, MapperWithAllocator, TopLevelP4, TopLevelRecurse},
         table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
         temporary_page::TemporaryPage,
-        ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
-    virt_addr_alloc, EntryFlags, PAGE_SIZE,
+    virt_addr_alloc,
 };
 use raw_cpuid::CpuId;
 use spin::Mutex;
 use stack_allocator::StackAllocator;
 
 use crate::{
+    DWARF_DATA,
     driver::acpi::Acpi,
-    initialization_context::{select_context, InitializationContext, Stage0, Stage1, Stage4},
-    initialize_guard, log, DWARF_DATA,
+    initialization_context::{InitializationContext, Stage0, Stage1, Stage4, select_context},
+    initialize_guard, log,
 };
 
 pub use self::paging::remap_the_kernel;
@@ -50,20 +52,14 @@ pub fn stack_allocator<R>(
     f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
 }
 
-pub fn switch_lower_half(
-    with: InactivePageTable<RecurseLevel4LowerHalf>,
-) -> InactivePageTable<RecurseLevel4LowerHalf> {
+pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> InactivePageTable<RecurseLevel4LowerHalf> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
     // SAFETY: Switching the user level4 is completely safe, i think
     unsafe {
         ACTIVE_TABLE_LOWER.borrow_mut().switch(
-            &mut TableManipulationContext {
-                temporary_page,
-                allocator,
-                temporary_page_mapper: Some(upper),
-            },
+            &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: Some(upper) },
             with,
         )
     }
@@ -83,11 +79,7 @@ pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
     // SAFETY: This is just a helper function, the options contract are uphold by the caller
     unsafe {
         upper.copy_mappings_from(
-            &mut TableManipulationContext {
-                temporary_page,
-                allocator,
-                temporary_page_mapper: None,
-            },
+            &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None },
             options,
             copy_from,
         )
@@ -112,11 +104,7 @@ where
     unsafe {
         upper.create_mappings(
             f,
-            &mut TableManipulationContext {
-                temporary_page,
-                allocator,
-                temporary_page_mapper: None,
-            },
+            &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None },
             options,
         )
     }
@@ -134,28 +122,16 @@ pub unsafe fn mapper_lower_with<R>(
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
     unsafe {
-        upper.with(
-            with,
-            &mut TableManipulationContext {
-                temporary_page,
-                allocator,
-                temporary_page_mapper: None,
-            },
-            f,
-        )
+        upper.with(with, &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None }, f)
     }
 }
 
-pub fn mapper_lower<R>(
-    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R,
-) -> R {
+pub fn mapper_lower<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R) -> R {
     let table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
     f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
 }
 
-pub fn mapper_upper<R>(
-    f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4UpperHalf, BuddyAllocator>) -> R,
-) -> R {
+pub fn mapper_upper<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4UpperHalf, BuddyAllocator>) -> R) -> R {
     let mut table = ACTIVE_TABLE_UPPER.lock();
     f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
 }
@@ -169,15 +145,9 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             builder
                 .original_table(Arc::new(table_upper.into()))
                 .bsp_only_table(Arc::new(Some(table_lower).into()))
-                .stack_allocator(Arc::new(
-                    context.context.take_stack_allocator().unwrap().into(),
-                ))
-                .buddy_allocator(Arc::new(
-                    context.context.take_buddy_allocator().unwrap().into(),
-                ))
-                .temporary_page(Arc::new(
-                    context.context.take_temporary_page().unwrap().into(),
-                ));
+                .stack_allocator(Arc::new(context.context.take_stack_allocator().unwrap().into()))
+                .buddy_allocator(Arc::new(context.context.take_buddy_allocator().unwrap().into()))
+                .temporary_page(Arc::new(context.context.take_temporary_page().unwrap().into()));
         });
         i.register(|builder, context, id| {
             local_builder!(
@@ -189,11 +159,7 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             );
 
             if id.is_bsp() {
-                let bsp_only = context
-                    .bsp_only_table
-                    .lock()
-                    .take()
-                    .expect("BSP lower half table has been stolen");
+                let bsp_only = context.bsp_only_table.lock().take().expect("BSP lower half table has been stolen");
                 local_builder!(builder, ACTIVE_TABLE_LOWER(RefCell::new(bsp_only)));
                 return;
             }
@@ -249,8 +215,7 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
         StackAllocator::new(
             {
                 let stack_alloc_start = virt_addr_alloc(STACK_ALLOC_SIZE);
-                let stack_alloc_end =
-                    stack_alloc_start.start_address().as_u64() + STACK_ALLOC_SIZE * PAGE_SIZE;
+                let stack_alloc_end = stack_alloc_start.start_address().as_u64() + STACK_ALLOC_SIZE * PAGE_SIZE;
                 Page::range_inclusive(stack_alloc_start, VirtAddr::new(stack_alloc_end).into())
             },
             false,
@@ -274,16 +239,8 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
 pub unsafe fn prepare_flags() {
     let esi = CpuId::new().get_extended_state_info().unwrap();
     log!(Debug, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
-    log!(
-        Debug,
-        "Support AVX512 High?: {}",
-        esi.xcr0_supports_avx512_zmm_hi256()
-    );
-    log!(
-        Debug,
-        "Support AVX512 High Regs?: {}",
-        esi.xcr0_supports_avx512_zmm_hi16()
-    );
+    log!(Debug, "Support AVX512 High?: {}", esi.xcr0_supports_avx512_zmm_hi256());
+    log!(Debug, "Support AVX512 High Regs?: {}", esi.xcr0_supports_avx512_zmm_hi16());
     unsafe {
         enable_nxe_bit();
         enable_write_protect_bit();
@@ -314,19 +271,16 @@ pub unsafe fn prepare_flags() {
 unsafe fn init_allocator(ctx: &InitializationContext<Stage0>) -> BuddyAllocator<64> {
     let area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
     log!(Info, "UEFI memory map usable:");
-    ctx.context()
-        .boot_bridge()
-        .memory_map()
-        .entries()
-        .filter(|e| e.ty == MemoryType::CONVENTIONAL)
-        .for_each(|descriptor| {
+    ctx.context().boot_bridge().memory_map().entries().filter(|e| e.ty == MemoryType::CONVENTIONAL).for_each(
+        |descriptor| {
             log!(
                 Info,
                 "Range: Phys: [{:#016x}-{:#016x}]",
                 descriptor.phys_start,
                 descriptor.phys_start + descriptor.page_count * PAGE_SIZE,
             );
-        });
+        },
+    );
     unsafe { BuddyAllocator::new(area_allocator) }
 }
 
@@ -345,16 +299,8 @@ pub struct WithMapper<'a, T, A: FrameAllocator, P4: TopLevelP4> {
 }
 
 impl<'a, T, A: FrameAllocator, P4: TopLevelP4> WithMapper<'a, T, A, P4> {
-    pub fn new(
-        active_table: &'a mut ActivePageTable<P4>,
-        with_table: &'a mut T,
-        allocator: &'a mut A,
-    ) -> Self {
-        Self {
-            table: active_table,
-            with_table,
-            allocator,
-        }
+    pub fn new(active_table: &'a mut ActivePageTable<P4>, with_table: &'a mut T, allocator: &'a mut A) -> Self {
+        Self { table: active_table, with_table, allocator }
     }
 }
 
@@ -376,10 +322,7 @@ impl MMIOBufferInfo {
     ///
     /// the caller must ensure that the provide address and size is valid
     pub unsafe fn new_raw(addr: PhysAddr, size_in_pages: usize) -> Self {
-        Self {
-            addr,
-            size_in_pages,
-        }
+        Self { addr, size_in_pages }
     }
 }
 

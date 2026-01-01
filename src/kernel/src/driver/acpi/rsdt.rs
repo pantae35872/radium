@@ -35,20 +35,15 @@ impl Xrsdt {
         }
     }
 
-    pub fn get<T: AcpiSdtData>(
-        &self,
-        ctx: &mut InitializationContext<Stage1>,
-    ) -> Option<&'static AcpiSdt<T>> {
-        self.iter()
-            .find_map(|e| unsafe { AcpiSdt::<T>::new(e, ctx) })
+    pub fn get<T: AcpiSdtData>(&self, ctx: &mut InitializationContext<Stage1>) -> Option<&'static AcpiSdt<T>> {
+        self.iter().find_map(|e| unsafe { AcpiSdt::<T>::new(e, ctx) })
     }
 }
 
 impl AcpiSdt<Rsdt> {
     fn iter(&self) -> slice::Iter<'_, u32> {
         let length = (self.length - size_of::<AcpiSdt<EmptySdt>>() as u32) / 4;
-        let others =
-            unsafe { core::slice::from_raw_parts(&self.data.sdts as *const u32, length as usize) };
+        let others = unsafe { core::slice::from_raw_parts(&self.data.sdts as *const u32, length as usize) };
         others.iter()
     }
 }
@@ -56,13 +51,8 @@ impl AcpiSdt<Rsdt> {
 impl AcpiSdt<Xsdt> {
     fn iter(&self) -> Box<dyn Iterator<Item = u64> + '_> {
         let length = (self.length - size_of::<AcpiSdt<EmptySdt>>() as u32) / 4;
-        let others =
-            unsafe { core::slice::from_raw_parts(&self.data.sdts as *const u32, length as usize) };
-        Box::new(
-            others
-                .chunks(2)
-                .map(|e| (e[0] as u64) | (e[1] as u64) << 32),
-        )
+        let others = unsafe { core::slice::from_raw_parts(&self.data.sdts as *const u32, length as usize) };
+        Box::new(others.chunks(2).map(|e| (e[0] as u64) | (e[1] as u64) << 32))
     }
 }
 

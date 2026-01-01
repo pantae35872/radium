@@ -44,12 +44,7 @@ pub unsafe trait FrameAllocator {
         }
         assert!(start_frame.start_address().as_u64() != 0);
         // SAFETY: We know that the frame allocator is valid
-        Some(unsafe {
-            LinearAllocator::new(
-                start_frame.start_address(),
-                (size_in_frames * PAGE_SIZE) as usize,
-            )
-        })
+        Some(unsafe { LinearAllocator::new(start_frame.start_address(), (size_in_frames * PAGE_SIZE) as usize) })
     }
 
     /// Allocate a [`Frame`],

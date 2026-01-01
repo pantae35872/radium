@@ -90,11 +90,7 @@ struct BufferFiller<F: FnMut(&[u8; DATA_SIZE_PER_CHUNK])> {
 
 impl<F: FnMut(&[u8; DATA_SIZE_PER_CHUNK])> BufferFiller<F> {
     fn new(process: F) -> Self {
-        Self {
-            buffer: [0; DATA_SIZE_PER_CHUNK],
-            pos: 0,
-            process,
-        }
+        Self { buffer: [0; DATA_SIZE_PER_CHUNK], pos: 0, process }
     }
 
     /// It can be called repeatedly with variable-sized input strings.
@@ -140,10 +136,7 @@ impl<F: FnMut(&[u8; DATA_SIZE_PER_CHUNK])> BufferFiller<F> {
 
 impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
     pub const fn new() -> Self {
-        Self {
-            buffer: CircularRingBuffer::new(),
-            id_count: AtomicU64::new(0),
-        }
+        Self { buffer: CircularRingBuffer::new(), id_count: AtomicU64::new(0) }
     }
 
     /// Push a chunk into the buffer
@@ -155,8 +148,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         chunk_bytes[0..size_of::<ChunkHeader>()].copy_from_slice(&unsafe {
             core::mem::transmute_copy::<ChunkHeader, [u8; size_of::<ChunkHeader>()]>(&header)
         });
-        chunk_bytes[size_of::<ChunkHeader>()..][..DATA_SIZE_PER_CHUNK.min(data.len())]
-            .copy_from_slice(data);
+        chunk_bytes[size_of::<ChunkHeader>()..][..DATA_SIZE_PER_CHUNK.min(data.len())].copy_from_slice(data);
         digest.write(&chunk_bytes);
         header.crc64_sum = digest.sum64();
         chunk_bytes[0..size_of::<ChunkHeader>()].copy_from_slice(&unsafe {
@@ -230,10 +222,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
 
             let header = unsafe {
                 core::mem::transmute::<[u8; size_of::<ChunkHeader>()], ChunkHeader>(
-                    TryInto::<[u8; size_of::<ChunkHeader>()]>::try_into(
-                        &buffer[0..size_of::<ChunkHeader>()],
-                    )
-                    .unwrap(),
+                    TryInto::<[u8; size_of::<ChunkHeader>()]>::try_into(&buffer[0..size_of::<ChunkHeader>()]).unwrap(),
                 )
             };
 
@@ -241,9 +230,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                 continue;
             }
 
-            buffer[offset_of!(ChunkHeader, crc64_sum)
-                ..offset_of!(ChunkHeader, crc64_sum) + size_of::<u64>()]
-                .fill(0);
+            buffer[offset_of!(ChunkHeader, crc64_sum)..offset_of!(ChunkHeader, crc64_sum) + size_of::<u64>()].fill(0);
 
             let mut digest = crc64::Digest::new(crc64::ECMA);
             digest.write(&buffer);
@@ -266,15 +253,10 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
 
     fn read_orphan(
         writer: &mut impl Write,
-        mut buffer: singlethreaded::CircularRingBuffer<
-            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
-            128,
-        >,
+        mut buffer: singlethreaded::CircularRingBuffer<(ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]), 128>,
     ) {
-        let mut orphan: singlethreaded::CircularRingBuffer<
-            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
-            128,
-        > = singlethreaded::CircularRingBuffer::new();
+        let mut orphan: singlethreaded::CircularRingBuffer<(ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]), 128> =
+            singlethreaded::CircularRingBuffer::new();
         let mut have_orphan = false;
 
         let (mut master, data) = loop {
@@ -318,9 +300,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                 continue;
             }
 
-            let _ = writer.write_str(
-                str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap(),
-            );
+            let _ =
+                writer.write_str(str::from_utf8(&data[..(master.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap());
 
             master.length -= master.length.min(DATA_SIZE_PER_CHUNK as u64);
         }
@@ -332,10 +313,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
 
     pub fn read(&self, mut writer: impl Write) -> Option<usize> {
         let mut lost_bytes = 0;
-        let mut orphan: singlethreaded::CircularRingBuffer<
-            (ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]),
-            128,
-        > = singlethreaded::CircularRingBuffer::new();
+        let mut orphan: singlethreaded::CircularRingBuffer<(ChunkHeader, [u8; DATA_SIZE_PER_CHUNK]), 128> =
+            singlethreaded::CircularRingBuffer::new();
         let (mut lost_bytes, mut master_header, data) = loop {
             lost_bytes += CHUNK_SIZE;
 
@@ -354,8 +333,7 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         let _ = writer.write_fmt(format_args!(
             "[{}] {}",
             master_header.level,
-            str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)])
-                .unwrap()
+            str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap()
         ));
 
         master_header.length -= master_header.length.min(DATA_SIZE_PER_CHUNK as u64);
@@ -379,10 +357,8 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                 continue;
             }
 
-            let _ = writer.write_str(
-                str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)])
-                    .unwrap(),
-            );
+            let _ = writer
+                .write_str(str::from_utf8(&data[..(master_header.length as usize).min(DATA_SIZE_PER_CHUNK)]).unwrap());
 
             master_header.length -= master_header.length.min(DATA_SIZE_PER_CHUNK as u64);
         }
@@ -414,10 +390,7 @@ mod tests {
         C: Fn(&str, usize),
     {
         pub fn new(callback: C) -> Self {
-            Self {
-                callback,
-                counter: 0,
-            }
+            Self { callback, counter: 0 }
         }
     }
 
@@ -454,7 +427,10 @@ mod tests {
             (s, 0) => assert_eq!(s, "["),
             (s, 1) => assert_eq!(s, "\x1b[94mTRACE\x1b[0m"),
             (s, 2) => assert_eq!(s, "] "),
-            (s, 3) => assert_eq!(s, "1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156"),
+            (s, 3) => assert_eq!(
+                s,
+                "1234567890abcdefghijklmnopqrstuvwxyz3329326964337477803138393016499095029437783814170156"
+            ),
             (s, 4) => assert_eq!(s, "256509732480508934402278968101017787386018442744"),
             _ => unreachable!(),
         }));
@@ -471,17 +447,11 @@ mod tests {
     #[test_case]
     fn orphan_write() {
         let buffer = StaticLog::<64>::new();
-        let first_id = buffer.write_master(
-            &[116; DATA_SIZE_PER_CHUNK],
-            DATA_SIZE_PER_CHUNK as u64 * 3,
-            LogLevel::Warning,
-        );
+        let first_id =
+            buffer.write_master(&[116; DATA_SIZE_PER_CHUNK], DATA_SIZE_PER_CHUNK as u64 * 3, LogLevel::Warning);
         buffer.write_slaves(&[116; DATA_SIZE_PER_CHUNK], first_id);
-        let second_id = buffer.write_master(
-            &[117; DATA_SIZE_PER_CHUNK],
-            DATA_SIZE_PER_CHUNK as u64 * 2,
-            LogLevel::Info,
-        );
+        let second_id =
+            buffer.write_master(&[117; DATA_SIZE_PER_CHUNK], DATA_SIZE_PER_CHUNK as u64 * 2, LogLevel::Info);
         buffer.write_slaves(&[117; DATA_SIZE_PER_CHUNK], second_id);
         buffer.write_slaves(&[116; DATA_SIZE_PER_CHUNK], first_id);
 

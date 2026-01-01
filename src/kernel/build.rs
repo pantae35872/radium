@@ -15,16 +15,9 @@ fn main() {
     let outdir = env::var_os("OUT_DIR").expect("Out dir must set");
     let path = Path::new(&outdir).join("trampoline.bin");
     let trampoline_o = Path::new(&outdir).join("trampoline.o");
+    run(Command::new("fasm").arg("src/boot/trampoline.asm").arg(&path), "Failed to compile trampoline");
     run(
-        Command::new("fasm")
-            .arg("src/boot/trampoline.asm")
-            .arg(&path),
-        "Failed to compile trampoline",
-    );
-    run(
-        Command::new("ld")
-            .args(["-r", "-b", "binary", "-o", "trampoline.o", "trampoline.bin"])
-            .current_dir(&outdir),
+        Command::new("ld").args(["-r", "-b", "binary", "-o", "trampoline.o", "trampoline.bin"]).current_dir(&outdir),
         "Failed to convert flat binary to .o",
     );
     run(

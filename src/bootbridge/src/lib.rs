@@ -44,9 +44,7 @@ impl RawData {
 
 unsafe impl IdentityMappable for RawData {
     fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe {
-            mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE)
-        };
+        unsafe { mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE) };
     }
 }
 
@@ -379,18 +377,10 @@ impl BootBridge {
 }
 
 unsafe impl IdentityReplaceable for BootBridge {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         let current = self.0.load(Ordering::SeqCst);
-        let new = unsafe {
-            mapper.map(
-                PhysAddr::new(current as u64),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            )
-        };
+        let new =
+            unsafe { mapper.map(PhysAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE) };
         self.deref_mut().memory_map.identity_replace(mapper);
         self.deref_mut().kernel_elf.identity_replace(mapper);
         self.deref_mut().dwarf_data.identity_replace(mapper);
@@ -400,10 +390,7 @@ unsafe impl IdentityReplaceable for BootBridge {
 }
 
 unsafe impl IdentityReplaceable for MemoryMap<'_> {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         self.memory_map.identity_replace(mapper);
     }
 }
@@ -430,20 +417,14 @@ unsafe impl IdentityMappable for MemoryMap<'_> {
 
 impl<'a> MemoryMap<'a> {
     pub fn new(memory_map: &'static [u8], entry_size: usize, entry_version: usize) -> Self {
-        MemoryMap {
-            memory_map: DataBuffer::new(memory_map),
-            entry_size,
-            entry_version,
-        }
+        MemoryMap { memory_map: DataBuffer::new(memory_map), entry_size, entry_version }
     }
 
     pub fn get_mut(&mut self, index: usize) -> Option<&'a mut MemoryDescriptor> {
         if index >= self.memory_map.len() / self.entry_size {
             return None;
         }
-        let desc = unsafe {
-            &mut *(self.memory_map.as_ptr().add(index * self.entry_size) as *mut MemoryDescriptor)
-        };
+        let desc = unsafe { &mut *(self.memory_map.as_ptr().add(index * self.entry_size) as *mut MemoryDescriptor) };
         Some(desc)
     }
 
@@ -451,9 +432,7 @@ impl<'a> MemoryMap<'a> {
         if index >= self.memory_map.len() / self.entry_size {
             return None;
         }
-        let desc = unsafe {
-            &*(self.memory_map.as_ptr().add(index * self.entry_size) as *const MemoryDescriptor)
-        };
+        let desc = unsafe { &*(self.memory_map.as_ptr().add(index * self.entry_size) as *const MemoryDescriptor) };
         Some(desc)
     }
 
@@ -474,27 +453,17 @@ impl<'a> MemoryMap<'a> {
     }
 
     pub fn entries(&'a self) -> MemoryMapIter<'a> {
-        MemoryMapIter {
-            memory_map: self,
-            index: 0,
-        }
+        MemoryMapIter { memory_map: self, index: 0 }
     }
 
     pub fn entries_mut<'b>(&'b mut self) -> MemoryMapIterMut<'b, 'a> {
-        MemoryMapIterMut {
-            memory_map: self,
-            index: 0,
-        }
+        MemoryMapIterMut { memory_map: self, index: 0 }
     }
 }
 
 impl GraphicsInfo {
     pub fn new(resolution: (usize, usize), stride: usize, pixel_format: PixelFormat) -> Self {
-        GraphicsInfo {
-            resolution,
-            stride,
-            pixel_format,
-        }
+        GraphicsInfo { resolution, stride, pixel_format }
     }
 
     pub fn stride(&self) -> usize {

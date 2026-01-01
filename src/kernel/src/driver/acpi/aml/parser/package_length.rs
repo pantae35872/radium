@@ -2,7 +2,7 @@ use bit_field::BitField;
 
 use crate::driver::acpi::aml::AmlContext;
 
-use super::{byte_data, Parser};
+use super::{Parser, byte_data};
 
 pub fn package_length<'a, 'c>() -> impl Parser<'a, 'c, u32>
 where
@@ -33,7 +33,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::driver::acpi::aml::{parser::parser_ok, TestHandle};
+    use crate::driver::acpi::aml::{TestHandle, parser::parser_ok};
 
     use super::*;
 
@@ -41,24 +41,9 @@ mod tests {
     fn package_length_test() {
         let mut context = AmlContext::new(TestHandle);
         parser_ok!(package_length(), [0b00011101], &mut context, 0b11101);
-        parser_ok!(
-            package_length(),
-            [0b01001101, 0b10000000],
-            &mut context,
-            0b100000001101
-        );
-        parser_ok!(
-            package_length(),
-            [0b01001101, 0b11111111],
-            &mut context,
-            0b111111111101
-        );
-        parser_ok!(
-            package_length(),
-            [0b10001101, 0b11001101, 0b10101010],
-            &mut context,
-            0b10101010110011011101
-        );
+        parser_ok!(package_length(), [0b01001101, 0b10000000], &mut context, 0b100000001101);
+        parser_ok!(package_length(), [0b01001101, 0b11111111], &mut context, 0b111111111101);
+        parser_ok!(package_length(), [0b10001101, 0b11001101, 0b10101010], &mut context, 0b10101010110011011101);
         parser_ok!(
             package_length(),
             [0b11001101, 0b11001101, 0b10101010, 0b01101011],

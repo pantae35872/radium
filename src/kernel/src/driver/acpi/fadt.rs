@@ -4,7 +4,7 @@ use crate::{
     inline_if,
 };
 
-use super::{dsdt::Dsdt, AcpiSdt, AcpiSdtData};
+use super::{AcpiSdt, AcpiSdtData, dsdt::Dsdt};
 
 #[allow(unused)]
 #[repr(C, packed)]
@@ -79,15 +79,8 @@ const_assert!(size_of::<GenericAddressStructure>() == 12);
 impl AcpiSdt<Fadt> {
     pub fn dsdt(&self, ctx: &mut InitializationContext<Stage1>) -> &'static AcpiSdt<Dsdt> {
         unsafe {
-            AcpiSdt::<Dsdt>::new(
-                inline_if!(
-                    self.data.x_dsdt != 0,
-                    self.data.x_dsdt,
-                    self.data.dsdt as u64
-                ),
-                ctx,
-            )
-            .expect("Invalid dsdt pointer in fadt")
+            AcpiSdt::<Dsdt>::new(inline_if!(self.data.x_dsdt != 0, self.data.x_dsdt, self.data.dsdt as u64), ctx)
+                .expect("Invalid dsdt pointer in fadt")
         }
     }
 }

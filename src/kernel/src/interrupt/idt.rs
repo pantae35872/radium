@@ -318,10 +318,7 @@ impl Idt {
 
     fn pointer(&self) -> DescriptorTablePointer {
         use core::mem::size_of;
-        DescriptorTablePointer {
-            base: VirtAddr::new(self as *const _ as u64),
-            limit: (size_of::<Self>() - 1) as u16,
-        }
+        DescriptorTablePointer { base: VirtAddr::new(self as *const _ as u64), limit: (size_of::<Self>() - 1) as u16 }
     }
 }
 

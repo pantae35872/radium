@@ -96,34 +96,21 @@ apic_registers! {
 }
 
 pub enum LocalApicRegister<T> {
-    X2Apic {
-        msr: Msr,
-        _phantom: PhantomData<T>,
-    },
-    Apic {
-        addr: VirtAddr,
-        _phantom: PhantomData<T>,
-    },
+    X2Apic { msr: Msr, _phantom: PhantomData<T> },
+    Apic { addr: VirtAddr, _phantom: PhantomData<T> },
 }
 
 impl<T> LocalApicRegister<T> {
     fn new_base() -> Self {
-        Self::X2Apic {
-            msr: Msr::new(IA32_APIC_BASE_MSR),
-            _phantom: PhantomData,
-        }
+        Self::X2Apic { msr: Msr::new(IA32_APIC_BASE_MSR), _phantom: PhantomData }
     }
 
     fn from_mode(mode: &ApicMode, offset: usize) -> Self {
         match mode {
-            ApicMode::X2Apic => Self::X2Apic {
-                msr: Msr::new(X2APIC_BASE_MSR + (offset as u32 >> 4)),
-                _phantom: PhantomData,
-            },
-            ApicMode::Apic { base } => Self::Apic {
-                addr: *base + offset as u64,
-                _phantom: PhantomData,
-            },
+            ApicMode::X2Apic => {
+                Self::X2Apic { msr: Msr::new(X2APIC_BASE_MSR + (offset as u32 >> 4)), _phantom: PhantomData }
+            }
+            ApicMode::Apic { base } => Self::Apic { addr: *base + offset as u64, _phantom: PhantomData },
         }
     }
 }

@@ -51,24 +51,16 @@ impl TomlValue {
     fn insert_deep(&mut self, keys: Vec<String>, value: TomlValue) -> Result<(), TomlParserError> {
         let mut table = self.as_table_mut().ok_or(TomlParserError::NotATable)?;
         for key in &keys[..keys.len() - 1] {
-            let table_or_array = table
-                .entry(key.clone())
-                .or_insert(TomlValue::Table(HashMap::new()));
+            let table_or_array = table.entry(key.clone()).or_insert(TomlValue::Table(HashMap::new()));
             if table_or_array.as_table_mut().is_some() {
                 table = table_or_array.as_table_mut().unwrap();
                 continue;
             }
-            let array = table_or_array
-                .as_array_mut()
-                .ok_or(TomlParserError::NotAArray)?;
+            let array = table_or_array.as_array_mut().ok_or(TomlParserError::NotAArray)?;
             if array.is_empty() {
                 array.push(TomlValue::Table(HashMap::new()));
             }
-            table = array
-                .last_mut()
-                .unwrap()
-                .as_table_mut()
-                .ok_or(TomlParserError::NotATable)?;
+            table = array.last_mut().unwrap().as_table_mut().ok_or(TomlParserError::NotATable)?;
         }
         if let Some(key) = keys.last() {
             table.insert(key.clone(), value);
@@ -76,11 +68,7 @@ impl TomlValue {
         return Ok(());
     }
 
-    fn insert_deep_array(
-        &mut self,
-        keys: Vec<String>,
-        i_table: Table,
-    ) -> Result<(), TomlParserError> {
+    fn insert_deep_array(&mut self, keys: Vec<String>, i_table: Table) -> Result<(), TomlParserError> {
         let mut array = self
             .as_table_mut()
             .ok_or(TomlParserError::NotATable)?
@@ -250,9 +238,7 @@ impl TomlParser {
                 TomlToken::NewLine => {
                     self.consume();
                 }
-                unexpected => {
-                    return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
-                }
+                unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
             }
         }
 
@@ -298,9 +284,7 @@ impl TomlParser {
                     buffer.insert_deep(keys, value)?;
                     break;
                 }
-                unexpected => {
-                    return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
-                }
+                unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
             }
         }
         return Ok(());
@@ -313,41 +297,28 @@ impl TomlParser {
             match self.peek(0).ok_or(TomlParserError::UnexpectedToken(None))? {
                 TomlToken::Dot => {
                     self.consume();
-                    match self
-                        .consume()
-                        .ok_or(TomlParserError::UnexpectedToken(None))?
-                    {
+                    match self.consume().ok_or(TomlParserError::UnexpectedToken(None))? {
                         TomlToken::Identifier(identifier) | TomlToken::String(identifier) => {
                             keys.push(identifier.clone());
                         }
                         TomlToken::Interger(interger) => {
                             keys.push(interger.to_string());
                         }
-                        unexpected => {
-                            return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
-                        }
+                        unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
                     };
                 }
                 TomlToken::Equal | TomlToken::RBracket => {
                     break;
                 }
-                unexpected => {
-                    return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone())))
-                }
+                unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
             }
         }
         return Ok(keys);
     }
 
     fn parse_table_name(&mut self) -> Result<Vec<String>, TomlParserError> {
-        let table_name = match self
-            .consume()
-            .ok_or(TomlParserError::UnexpectedToken(None))?
-            .clone()
-        {
-            TomlToken::String(identifier) | TomlToken::Identifier(identifier) => {
-                self.parse_keys(identifier)?
-            }
+        let table_name = match self.consume().ok_or(TomlParserError::UnexpectedToken(None))?.clone() {
+            TomlToken::String(identifier) | TomlToken::Identifier(identifier) => self.parse_keys(identifier)?,
             TomlToken::Interger(interger) => self.parse_keys(interger.to_string())?,
             unexpected => return Err(TomlParserError::UnexpectedToken(Some(unexpected.clone()))),
         };
@@ -356,10 +327,7 @@ impl TomlParser {
     }
 
     fn parse_value(&mut self) -> Result<TomlValue, TomlParserError> {
-        match self
-            .consume()
-            .ok_or(TomlParserError::UnexpectedToken(None))?
-        {
+        match self.consume().ok_or(TomlParserError::UnexpectedToken(None))? {
             TomlToken::String(string) => return Ok(TomlValue::String(string.clone())),
             TomlToken::Interger(interger) => return Ok(TomlValue::Integer(*interger)),
             TomlToken::Boolean(boolean) => return Ok(TomlValue::Boolean(*boolean)),

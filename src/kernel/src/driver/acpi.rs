@@ -32,16 +32,9 @@ pub fn init(mut ctx: InitializationContext<Stage1>) -> InitializationContext<Sta
 
     log!(Debug, "Initializing acpi");
     let acpi = unsafe { Acpi::new(&mut ctx) };
-    let fadt = acpi
-        .xrsdt
-        .get::<Fadt>(&mut ctx)
-        .expect("MADT table is required for APIC initialization");
+    let fadt = acpi.xrsdt.get::<Fadt>(&mut ctx).expect("MADT table is required for APIC initialization");
     log!(Info, "FADT Reset register {:x?}", fadt.data.reset_register);
-    log!(
-        Info,
-        "FADT PM1A Control Block {:x?}",
-        fadt.data.x_pm1a_event_block
-    );
+    log!(Info, "FADT PM1A Control Block {:x?}", fadt.data.x_pm1a_event_block);
     log!(Info, "FADT Reset value {:x?}", fadt.data.reset_value);
     let info = (
         acpi.processors(&mut ctx),
@@ -73,54 +66,31 @@ impl Acpi {
         let rsdp_addr = ctx.context().boot_bridge().rsdp();
         let xrsdp = unsafe { Xrsdp::new(rsdp_addr, ctx) };
         let xrsdt = unsafe { xrsdp.xrsdt(ctx) };
-        Self {
-            xrsdp,
-            xrsdt,
-            aml: AmlContext::new(AcpiHandle),
-        }
+        Self { xrsdp, xrsdt, aml: AmlContext::new(AcpiHandle) }
     }
 
     fn local_apic_mmio(&self, ctx: &mut InitializationContext<Stage1>) -> MMIOBufferInfo {
-        let madt = self
-            .xrsdt
-            .get::<Madt>(ctx)
-            .expect("MADT table is required for APIC initialization");
+        let madt = self.xrsdt.get::<Madt>(ctx).expect("MADT table is required for APIC initialization");
         // SAFETY: we know this is safe because this is from acpi tables
         unsafe { MMIOBufferInfo::new_raw(PhysAddr::new(madt.lapic_base().into()), 1) }
     }
 
     fn io_apics(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<(MMIOBufferInfo, usize)> {
-        let madt = self
-            .xrsdt
-            .get::<Madt>(ctx)
-            .expect("MADT table is required for APIC initialization");
+        let madt = self.xrsdt.get::<Madt>(ctx).expect("MADT table is required for APIC initialization");
         madt.iter()
             .filter_map(|e| match e {
                 InterruptControllerStructure::IoApic(io_apic) => Some(io_apic),
                 _ => None,
             })
-            .map(|io_apic| {
-                (
-                    unsafe { MMIOBufferInfo::new_raw(io_apic.addr(), 1) },
-                    io_apic.gsi_base(),
-                )
-            })
+            .map(|io_apic| (unsafe { MMIOBufferInfo::new_raw(io_apic.addr(), 1) }, io_apic.gsi_base()))
             .collect()
     }
 
-    pub fn interrupt_overrides(
-        &self,
-        ctx: &mut InitializationContext<Stage1>,
-    ) -> Vec<IoApicInterruptSourceOverride> {
-        let madt = self
-            .xrsdt
-            .get::<Madt>(ctx)
-            .expect("MADT table is required for APIC initialization");
+    pub fn interrupt_overrides(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<IoApicInterruptSourceOverride> {
+        let madt = self.xrsdt.get::<Madt>(ctx).expect("MADT table is required for APIC initialization");
         madt.iter()
             .filter_map(|e| match e {
-                InterruptControllerStructure::IoApicInterruptSourceOverride(io_apic) => {
-                    Some(io_apic)
-                }
+                InterruptControllerStructure::IoApicInterruptSourceOverride(io_apic) => Some(io_apic),
                 _ => None,
             })
             .cloned()
@@ -129,10 +99,7 @@ impl Acpi {
 
     /// Call the callback with a list of apic or x2apic id
     fn processors(&self, ctx: &mut InitializationContext<Stage1>) -> Vec<ApicId> {
-        let madt = self
-            .xrsdt
-            .get::<Madt>(ctx)
-            .expect("MADT table is required for Processors initialization");
+        let madt = self.xrsdt.get::<Madt>(ctx).expect("MADT table is required for Processors initialization");
         madt.iter()
             .filter_map(|e| match e {
                 InterruptControllerStructure::LocalApic(proccesor) => Some(proccesor.apic_id()),
@@ -170,10 +137,7 @@ impl AcpiSdtData for EmptySdt {
 }
 
 impl<T: AcpiSdtData> AcpiSdt<T> {
-    unsafe fn new(
-        address: u64,
-        ctx: &mut InitializationContext<Stage1>,
-    ) -> Option<&'static AcpiSdt<T>> {
+    unsafe fn new(address: u64, ctx: &mut InitializationContext<Stage1>) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
         unsafe {
             ctx.mapper().identity_map_by_size(
@@ -188,8 +152,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         let sdt_size = detect_sdt.length;
         let _ = detect_sdt;
         unsafe {
-            ctx.mapper()
-                .unmap_addr(Page::containing_address(VirtAddr::new(address)));
+            ctx.mapper().unmap_addr(Page::containing_address(VirtAddr::new(address)));
         }
         if sdt_signature != T::signature() {
             return None;
@@ -203,8 +166,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
                 EntryFlags::NO_EXECUTE,
             )
         };
-        let table =
-            unsafe { Self::from_raw(virt_sdt.start_address().align_to(PhysAddr::new(address))) };
+        let table = unsafe { Self::from_raw(virt_sdt.start_address().align_to(PhysAddr::new(address))) };
         table.validate_checksum();
         return Some(table);
     }
@@ -215,12 +177,8 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
 
     /// Validate this table checksum
     pub fn validate_checksum(&self) {
-        let bytes: &[u8] = unsafe {
-            core::slice::from_raw_parts(
-                self as *const AcpiSdt<T> as *const u8,
-                self.length as usize,
-            )
-        };
+        let bytes: &[u8] =
+            unsafe { core::slice::from_raw_parts(self as *const AcpiSdt<T> as *const u8, self.length as usize) };
         if bytes.iter().map(|e| *e as usize).sum::<usize>() % 256 != 0 {
             panic!("Invalid acpi table");
         }

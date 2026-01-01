@@ -46,13 +46,7 @@ fn main() {
 
     sorted.sort_by(|a, b| a.0.cmp(&b.0));
 
-    sorted
-        .iter()
-        .for_each(|(addr, end, line_num, name, location)| {
-            bakery.push(*addr, *end, *line_num, name, location)
-        });
+    sorted.iter().for_each(|(addr, end, line_num, name, location)| bakery.push(*addr, *end, *line_num, name, location));
 
-    output
-        .write_all(&bakery.bake())
-        .expect("Failed to save to output file");
+    output.write_all(&bakery.bake()).expect("Failed to save to output file");
 }

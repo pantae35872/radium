@@ -20,19 +20,13 @@ macro choose($first:expr, $($rest:expr),+ $(,)?) {{
 macro_rules! parser_ok {
     ($parser:expr, $input:expr, $context:expr, $expected:expr $(,)?) => {
         assert_eq!(
-            $parser
-                .parse(&$input, $context)
-                .map(|(l, _, r)| (l, r))
-                .map_err(|(e, _, r)| (e, r)),
+            $parser.parse(&$input, $context).map(|(l, _, r)| (l, r)).map_err(|(e, _, r)| (e, r)),
             Ok((alloc::vec![].as_slice(), $expected))
         )
     };
     ($parser:expr, $input:expr, $context:expr $(,)?) => {
         assert_eq!(
-            $parser
-                .parse(&$input, $context)
-                .map(|(l, _, r)| (l, r))
-                .map_err(|(e, _, r)| (e, r)),
+            $parser.parse(&$input, $context).map(|(l, _, r)| (l, r)).map_err(|(e, _, r)| (e, r)),
             Ok((alloc::vec![].as_slice(), ()))
         )
     };
@@ -87,8 +81,7 @@ pub enum Propagate {
 
 pub type ParserError<'a, 'c> = (&'a [u8], &'c mut AmlContext, Propagate);
 
-type ParseResult<'a, 'c, Output> =
-    Result<(&'a [u8], &'c mut AmlContext, Output), ParserError<'a, 'c>>;
+type ParseResult<'a, 'c, Output> = Result<(&'a [u8], &'c mut AmlContext, Output), ParserError<'a, 'c>>;
 
 pub trait Parser<'a, 'c, Output>
 where
@@ -111,8 +104,7 @@ where
         Self: Sized + 'a,
         NewOutput: 'a,
         Output: 'a,
-        F: Fn(Output, &'c mut AmlContext) -> (Result<NewOutput, Propagate>, &'c mut AmlContext)
-            + 'a,
+        F: Fn(Output, &'c mut AmlContext) -> (Result<NewOutput, Propagate>, &'c mut AmlContext) + 'a,
     {
         BoxedParser::new(map_with_context(self, map_fn))
     }
@@ -155,17 +147,13 @@ impl<'a, 'c, Output> ArcedParser<'a, 'c, Output> {
     where
         P: Parser<'a, 'c, Output> + 'a,
     {
-        ArcedParser {
-            parser: Arc::new(parser),
-        }
+        ArcedParser { parser: Arc::new(parser) }
     }
 }
 
 impl<'a, 'c, Output> Clone for ArcedParser<'a, 'c, Output> {
     fn clone(&self) -> Self {
-        Self {
-            parser: self.parser.clone(),
-        }
+        Self { parser: self.parser.clone() }
     }
 }
 
@@ -185,9 +173,7 @@ impl<'a, 'c, Output> BoxedParser<'a, 'c, Output> {
         P: Parser<'a, 'c, Output> + 'a,
         'c: 'a,
     {
-        BoxedParser {
-            parser: Box::new(parser),
-        }
+        BoxedParser { parser: Box::new(parser) }
     }
 }
 
@@ -224,15 +210,11 @@ where
     P2: Parser<'a, 'c, R2>,
 {
     move |input, context| {
-        parser1
-            .parse(input, context)
-            .and_then(|(next_input, next_context, result1)| {
-                parser2.parse(next_input, next_context).map(
-                    |(last_input, last_context, result2)| {
-                        (last_input, last_context, (result1, result2))
-                    },
-                )
-            })
+        parser1.parse(input, context).and_then(|(next_input, next_context, result1)| {
+            parser2
+                .parse(next_input, next_context)
+                .map(|(last_input, last_context, result2)| (last_input, last_context, (result1, result2)))
+        })
     }
 }
 
@@ -270,9 +252,7 @@ where
     'c: 'a,
 {
     move |input, context| {
-        parser
-            .parse(input, context)
-            .map(|(next_input, context, result)| (next_input, context, map_fn(result)))
+        parser.parse(input, context).map(|(next_input, context, result)| (next_input, context, map_fn(result)))
     }
 }
 
@@ -319,9 +299,7 @@ where
                 result.push(item);
                 ControlFlow::Continue((next_input, next_context, result))
             }
-            Err((_next_input, next_context, _)) => {
-                ControlFlow::Break((input, next_context, result))
-            }
+            Err((_next_input, next_context, _)) => ControlFlow::Break((input, next_context, result)),
         },
     ) {
         ControlFlow::Continue(result) | ControlFlow::Break(result) => return Ok(result),

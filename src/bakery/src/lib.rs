@@ -44,10 +44,7 @@ pub struct Bakery {
 
 impl Bakery {
     pub fn new() -> Self {
-        Self {
-            file_buffer: Vec::new(),
-            string_buffer: String::new(),
-        }
+        Self { file_buffer: Vec::new(), string_buffer: String::new() }
     }
 
     pub fn push(&mut self, addr: u64, end: u64, line_num: u32, name: &str, location: &str) {
@@ -60,14 +57,8 @@ impl Bakery {
                 addr,
                 end,
                 line_num,
-                name: BakeryString {
-                    offset: location_name as u64,
-                    size: name.len() as u64,
-                },
-                location: BakeryString {
-                    offset: location_offset as u64,
-                    size: location.len() as u64,
-                },
+                name: BakeryString { offset: location_name as u64, size: name.len() as u64 },
+                location: BakeryString { offset: location_offset as u64, size: location.len() as u64 },
             })
         });
     }
@@ -94,16 +85,13 @@ impl Default for Bakery {
 impl<'a> DwarfBaker<'a> {
     pub fn new(data: &'a [u8]) -> Self {
         assert!(data[0..4] == MAGIC.to_le_bytes());
-        Self {
-            data: DataBuffer::new(data),
-        }
+        Self { data: DataBuffer::new(data) }
     }
 
     fn symbol(&self, index: usize) -> Option<BakerySymbol> {
         let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
-        let file_len =
-            usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
+        let file_len = usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
         data = &data[size_of::<usize>()..];
         let start = index * size_of::<BakerySymbol>();
         if start + size_of::<BakerySymbol>() > file_len {
@@ -111,9 +99,7 @@ impl<'a> DwarfBaker<'a> {
         }
         Some(unsafe {
             core::mem::transmute::<[u8; size_of::<BakerySymbol>()], BakerySymbol>(
-                data[start..start + size_of::<BakerySymbol>()]
-                    .try_into()
-                    .unwrap(),
+                data[start..start + size_of::<BakerySymbol>()].try_into().unwrap(),
             )
         })
     }
@@ -121,20 +107,17 @@ impl<'a> DwarfBaker<'a> {
     fn symbol_len(&self) -> usize {
         let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
-        let file_len =
-            usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
+        let file_len = usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
         file_len / size_of::<BakerySymbol>()
     }
 
     fn string_table(&self) -> &'a str {
         let mut data = self.data.buffer();
         data = &data[size_of::<u32>()..];
-        let file_len =
-            usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
+        let file_len = usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
         data = &data[size_of::<usize>()..];
         data = &data[file_len..];
-        let table_len =
-            usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
+        let table_len = usize::from_le_bytes(TryInto::try_into(&data[..size_of::<usize>()]).unwrap());
         data = &data[size_of::<usize>()..];
         data = &data[..table_len];
         str::from_utf8(data).expect("Invalid utf8 in dwarf")
@@ -157,11 +140,7 @@ impl<'a> DwarfBaker<'a> {
             } else if addr >= entry.end {
                 left = mid + 1;
             } else {
-                return Some((
-                    entry.line_num,
-                    self.string(&entry.name),
-                    self.string(&entry.location),
-                ));
+                return Some((entry.line_num, self.string(&entry.name), self.string(&entry.location)));
             }
         }
 
@@ -176,10 +155,7 @@ unsafe impl IdentityMappable for DwarfBaker<'_> {
 }
 
 unsafe impl IdentityReplaceable for DwarfBaker<'_> {
-    fn identity_replace<T: pager::Mapper>(
-        &mut self,
-        mapper: &mut pager::MapperWithVirtualAllocator<T>,
-    ) {
+    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
         self.data.identity_replace(mapper);
     }
 }

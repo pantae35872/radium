@@ -44,19 +44,12 @@ impl<T, const N: usize> SpinMPSC<T, N> {
             if i == N {
                 return v;
             }
-            v[i] = Slot {
-                sequence: AtomicUsize::new(i),
-                data: UnsafeCell::new(MaybeUninit::uninit()),
-            };
+            v[i] = Slot { sequence: AtomicUsize::new(i), data: UnsafeCell::new(MaybeUninit::uninit()) };
             generate(i + 1, v)
         }
 
         // Transmute to initialized array
-        Self {
-            buffer: generate(0, unsafe { zeroed() }),
-            tail: AtomicUsize::new(0),
-            head: AtomicUsize::new(0),
-        }
+        Self { buffer: generate(0, unsafe { zeroed() }), tail: AtomicUsize::new(0), head: AtomicUsize::new(0) }
     }
 
     /// Attempt to push a value. Returns Ok(()) if successful, or Err(value) if the queue is full.
@@ -69,15 +62,7 @@ impl<T, const N: usize> SpinMPSC<T, N> {
                 return Err(value);
             }
             // Try to reserve slot at tail
-            if self
-                .tail
-                .compare_exchange_weak(
-                    tail,
-                    tail.wrapping_add(1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
+            if self.tail.compare_exchange_weak(tail, tail.wrapping_add(1), Ordering::AcqRel, Ordering::Acquire).is_ok()
             {
                 // Successfully reserved position `pos`
                 let pos = tail;
@@ -134,15 +119,7 @@ impl<T, const N: usize> SpinMPSC<T, N> {
                 return None;
             }
             // Try to reserve slot at head
-            if self
-                .head
-                .compare_exchange_weak(
-                    head,
-                    head.wrapping_add(1),
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                )
-                .is_ok()
+            if self.head.compare_exchange_weak(head, head.wrapping_add(1), Ordering::AcqRel, Ordering::Acquire).is_ok()
             {
                 let pos = head;
                 let idx = pos % N;

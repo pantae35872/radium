@@ -1,4 +1,4 @@
-use crate::userland::pipeline::{thread::ThreadPipeline, PipelineContext, TaskProcesserState};
+use crate::userland::pipeline::{PipelineContext, TaskProcesserState, thread::ThreadPipeline};
 
 #[derive(Debug)]
 pub struct Dispatcher<'a> {
@@ -17,12 +17,7 @@ pub enum DispatchAction<'a> {
 
 impl<'a> Dispatcher<'a> {
     pub(super) fn new(context: PipelineContext, thread: &'a ThreadPipeline) -> Self {
-        Self {
-            state: context
-                .scheduled_task
-                .map(|e| thread.task_processor_state(e.thread)),
-            hlt: context.should_hlt,
-        }
+        Self { state: context.scheduled_task.map(|e| thread.task_processor_state(e.thread)), hlt: context.should_hlt }
     }
 
     pub fn dispatch(mut self, mut dispatch: impl FnMut(DispatchAction)) {
