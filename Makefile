@@ -19,7 +19,8 @@ endif
 
 CRATES := $(patsubst %/,%,$(wildcard src/*/)) \
 					$(patsubst %/,%,$(wildcard post-processor/*/)) \
-          $(patsubst %/,%,$(wildcard userland/*/))
+          $(patsubst %/,%,$(wildcard userland/*/)) \
+					$(patsubst %/,%,build-tool/)
 
 .PHONY: debug release clean run socat test-run test dbg-run force_rebuild dbg-run-no-dbg check tftp-debug tftp-release $(CRATES)
 .DEFAULT_GOAL := debug

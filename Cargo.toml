@@ -16,6 +16,8 @@ members = [
 
     "post-processor/packer", 
     "post-processor/baker", 
+
+    "build-tool", 
 ]
 resolver = "2"
 

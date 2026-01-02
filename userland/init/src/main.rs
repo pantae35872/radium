@@ -60,12 +60,12 @@ fn syscall_exit() -> ! {
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
     syscall_sleep(5000);
-    //for _ in 0..128 {
-    //    spawn(|| {
-    //        syscall_exit_thread();
-    //    });
-    //}
-    syscall_sleep(5000);
+    for _ in 0..128 {
+        spawn(|| {
+            for _ in 0..1_000_000_00u64 {}
+            syscall_exit_thread();
+        });
+    }
     syscall_exit();
 }
 
