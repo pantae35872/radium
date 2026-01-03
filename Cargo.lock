@@ -205,6 +205,7 @@ dependencies = [
  "portable-pty",
  "ratatui",
  "thiserror 2.0.17",
+ "toml",
 ]
 
 [[package]]
@@ -1904,6 +1905,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8bbf91e5a4d6315eee45e704372590b30e260ee83af6639d64557f51b067776"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "serial2"
 version = "0.2.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2214,6 +2224,45 @@ name = "time-core"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40868e7c1d2f0b8d73e4a8c7f0ff63af4f6d19be117e90bd73eb1d62cf831c6b"
+
+[[package]]
+name = "toml"
+version = "0.9.10+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0825052159284a1a8b4d6c0c86cbc801f2da5afd2b225fa548c72f2e74002f48"
+dependencies = [
+ "indexmap 2.12.1",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.7.5+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.0.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3198b4b0a8e11f09dd03e133c0280504d0801269e9afa46362ffde1cbeebf44"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.0.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab16f14aed21ee8bfd8ec22513f7287cd4a91aa92e44edfe2c17ddd004e92607"
 
 [[package]]
 name = "tree_magic_mini"
@@ -2749,6 +2798,12 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "0.7.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a5364e9d77fcdeeaa6062ced926ee3381faa2ee02d3eb83a5c27a8825540829"
 
 [[package]]
 name = "winreg"

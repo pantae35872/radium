@@ -3,5 +3,4 @@ disk.img
 OVMF.fd
 klog.txt
 out.luck
-build/
 target/

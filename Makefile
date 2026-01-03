@@ -84,6 +84,7 @@ KVM_FLAGS := -enable-kvm -cpu host,+rdrand,+sse,+mmx
 
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
+	echo "*" > $(BUILD_DIR)/.gitignore
 
 $(USERS_DIR):
 	mkdir -p $(USERS_DIR) 

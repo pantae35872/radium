@@ -16,13 +16,14 @@ pub struct Promt<'s> {
 
 #[derive(Default, Debug)]
 pub struct PromtState {
-    input: String,
+    history: Vec<String>,
+    current_input: usize,
     character_index: usize,
 }
 
 impl PromtState {
     fn clamp_cursor(&self, new_cursor_pos: usize) -> usize {
-        new_cursor_pos.clamp(0, self.input.chars().count())
+        new_cursor_pos.clamp(0, self.input().chars().count())
     }
 
     fn move_cursor_right(&mut self) {
@@ -35,12 +36,28 @@ impl PromtState {
         self.character_index = self.clamp_cursor(cursor_moved_left);
     }
 
+    fn input(&self) -> &str {
+        &self.history[self.current_input]
+    }
+
+    fn expand_history(&mut self) {
+        if self.current_input >= self.history.len() {
+            self.history.push(String::new());
+        }
+    }
+
+    fn input_mut(&mut self) -> &mut String {
+        self.expand_history();
+
+        &mut self.history[self.current_input]
+    }
+
     fn byte_index(&self) -> usize {
-        self.input.char_indices().map(|(i, _)| i).nth(self.character_index).unwrap_or(self.input.len())
+        self.input().char_indices().map(|(i, _)| i).nth(self.character_index).unwrap_or(self.input().len())
     }
 
     fn len_index(&self) -> usize {
-        self.input.char_indices().map(|(i, _)| i).last().unwrap_or(self.input.len())
+        self.input().char_indices().map(|(i, _)| i).last().unwrap_or(self.input().len())
     }
 
     fn delete_char_back(&mut self) {
@@ -48,9 +65,9 @@ impl PromtState {
         if !is_cursor_rightmost {
             let current_index = self.character_index;
             let from_left_to_current_index = current_index;
-            let before_char_to_delete = self.input.chars().take(from_left_to_current_index);
-            let after_char_to_delete = self.input.chars().skip(current_index + 1);
-            self.input = before_char_to_delete.chain(after_char_to_delete).collect();
+            let before_char_to_delete = self.input().chars().take(from_left_to_current_index);
+            let after_char_to_delete = self.input().chars().skip(current_index + 1);
+            *self.input_mut() = before_char_to_delete.chain(after_char_to_delete).collect();
         }
     }
 
@@ -59,28 +76,23 @@ impl PromtState {
         if is_not_cursor_leftmost {
             let current_index = self.character_index;
             let from_left_to_current_index = current_index - 1;
-            let before_char_to_delete = self.input.chars().take(from_left_to_current_index);
-            let after_char_to_delete = self.input.chars().skip(current_index);
-            self.input = before_char_to_delete.chain(after_char_to_delete).collect();
+            let before_char_to_delete = self.input().chars().take(from_left_to_current_index);
+            let after_char_to_delete = self.input().chars().skip(current_index);
+            *self.input_mut() = before_char_to_delete.chain(after_char_to_delete).collect();
             self.move_cursor_left();
         }
     }
 
     fn paste_string(&mut self, new_str: &str) {
         let index = self.byte_index();
-        self.input.insert_str(index, new_str);
+        self.input_mut().insert_str(index, new_str);
         self.character_index = self.clamp_cursor(self.len_index() + 1);
     }
 
     fn enter_char(&mut self, new_char: char) {
         let index = self.byte_index();
-        self.input.insert(index, new_char);
+        self.input_mut().insert(index, new_char);
         self.move_cursor_right();
-    }
-
-    fn reset(&mut self) {
-        self.input.clear();
-        self.character_index = 0;
     }
 
     pub fn set_cursor_pos(&self, area: Rect, frame: &mut Frame) {
@@ -88,6 +100,8 @@ impl PromtState {
     }
 
     pub fn key_event(&mut self, event: KeyEvent) -> Option<String> {
+        self.expand_history();
+
         match event.kind {
             KeyEventKind::Press => match event.code {
                 KeyCode::Char('v')
@@ -100,8 +114,17 @@ impl PromtState {
                     todo!("Reverse search!")
                 }
                 KeyCode::Enter => {
-                    let ret = self.input.clone();
-                    self.reset();
+                    let ret = self.input_mut().clone();
+                    if self.current_input == self.history.len() - 1 {
+                        self.history.push(String::new());
+                        self.current_input = self.history.len() - 1;
+                    } else {
+                        self.history.insert(self.history.len() - 1, self.input().to_string());
+                        self.current_input = self.history.len() - 1;
+                        self.input_mut().clear();
+                    }
+
+                    self.character_index = 0;
                     return Some(ret);
                 }
                 KeyCode::Char(to_insert) => self.enter_char(to_insert),
@@ -109,6 +132,14 @@ impl PromtState {
                 KeyCode::Delete => self.delete_char_back(),
                 KeyCode::Left => self.move_cursor_left(),
                 KeyCode::Right => self.move_cursor_right(),
+                KeyCode::Up => {
+                    self.current_input = self.current_input.saturating_sub(1);
+                    self.character_index = self.input().len();
+                }
+                KeyCode::Down => {
+                    self.current_input = self.current_input.saturating_add(1).clamp(0, self.history.len() - 1);
+                    self.character_index = self.input().len();
+                }
                 _ => {}
             },
             _ => {}
@@ -121,7 +152,9 @@ impl StatefulWidget for Promt<'_> {
     type State = PromtState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        Paragraph::new(format!(" > {}", state.input.as_str()))
+        state.expand_history();
+
+        Paragraph::new(format!(" > {}", state.input()))
             .block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)

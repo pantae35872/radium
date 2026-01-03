@@ -2,13 +2,8 @@ use std::io::stdout;
 
 use build_tool::App;
 use ratatui::{
-    Terminal, TerminalOptions, Viewport,
-    crossterm::{
-        event, execute,
-        terminal::{EnterAlternateScreen, LeaveAlternateScreen},
-    },
-    prelude::CrosstermBackend,
-    widgets::Block,
+    Viewport,
+    crossterm::{execute, terminal::EnterAlternateScreen},
 };
 
 fn main() -> Result<(), build_tool::Error> {
