@@ -1,8 +1,9 @@
 use std::{
     env,
+    ffi::OsStr,
     fs::{OpenOptions, create_dir},
     io::{self, Write},
-    path::{Path, PathBuf, absolute},
+    path::{Path, PathBuf},
 };
 
 use portable_pty::{CommandBuilder, ExitStatus};
@@ -13,11 +14,17 @@ use crate::{CmdExecutor, build::cargo_project::CargoProject};
 mod cargo_project;
 
 pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
-    let current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
+    let mut current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
+
+    while !current_dir.file_name().is_some_and(|e| e == OsStr::new("radium")) {
+        current_dir = current_dir.parent().expect("Failed to get to the project root!").to_path_buf();
+    }
+
     Builder {
         config,
         executor,
-        build_path: absolute(Path::new("build")).map_err(|error| Error::CurrentDir { error })?,
+        root_path: current_dir.clone(),
+        build_path: current_dir.join("build"),
         src_path: current_dir.join("src"),
         userland_path: current_dir.join("userland"),
     }
@@ -44,6 +51,7 @@ struct Builder<'a> {
     src_path: PathBuf,
     userland_path: PathBuf,
     build_path: PathBuf,
+    root_path: PathBuf,
 }
 
 impl Builder<'_> {
@@ -58,10 +66,11 @@ impl Builder<'_> {
     fn build(mut self) -> Result<(), Error> {
         self.make_build_dir()?;
 
+        let build_tool = self.project(&self.root_path.join("build-tool")).build()?;
         let kernel = self.project(&self.src("kernel")).build()?;
         let bootloader = self.project(&self.src("bootloader")).build()?;
         let init = self.project(&self.userland("init")).build()?;
-        assert!(kernel.exists() && bootloader.exists() && init.exists());
+        assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
 
         Ok(())
     }

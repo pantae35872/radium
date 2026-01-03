@@ -16,11 +16,11 @@ use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
     crossterm::event::{self, Event, KeyCode, KeyModifiers},
-    layout::{Constraint, Layout},
+    layout::{Constraint, Layout, Rect},
     prelude::CrosstermBackend,
     style::{Style, Stylize},
     text::{Line, ToLine},
-    widgets::{Block, BorderType, Clear, Padding, Paragraph},
+    widgets::{Block, BorderType, Padding},
 };
 use thiserror::Error;
 
@@ -43,12 +43,13 @@ pub enum Error {
 }
 
 pub struct App {
-    promt: PromtState,
+    prompt: PromtState,
     executor: Arc<Mutex<CmdExecutor>>,
     child_output: Receiver<String>,
     child_process_name: Receiver<Option<String>>,
     running_cmd_name: Option<String>,
     output_collected: Vec<String>,
+    vertical_scroll: usize,
 
     last_command: Option<String>,
     build_cmd_handle: Option<JoinHandle<Result<(), build::Error>>>,
@@ -65,6 +66,7 @@ enum MainScreen {
     Config,
     Help,
     Error(String),
+    Scrolling,
 }
 
 #[derive(Debug)]
@@ -109,7 +111,7 @@ impl App {
         let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
 
         Self {
-            promt: PromtState::default(),
+            prompt: PromtState::default(),
             executor,
             child_output,
             child_process_name,
@@ -118,6 +120,7 @@ impl App {
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
+            vertical_scroll: 0,
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
         }
@@ -148,6 +151,7 @@ impl App {
                         buf[(0, 0)].set_symbol(&line);
                     })
                     .unwrap();
+                self.vertical_scroll = 0;
             }
 
             self.draw(&mut repl_terminal, &mut main_terminal)?;
@@ -168,6 +172,24 @@ impl App {
                 Event::Key(key) => {
                     match key.code {
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.scroll_down(1);
+                            continue;
+                        }
+                        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            self.scroll_up(1, &mut main_terminal);
+                            continue;
+                        }
+                        KeyCode::PageUp => {
+                            let amount = self.page_amount(&mut main_terminal);
+                            self.scroll_up(amount, &mut main_terminal);
+                            continue;
+                        }
+                        KeyCode::PageDown => {
+                            let amount = self.page_amount(&mut main_terminal);
+                            self.scroll_down(amount);
+                            continue;
+                        }
                         _ => {}
                     }
 
@@ -175,7 +197,7 @@ impl App {
                         continue;
                     }
 
-                    let command = match self.promt.key_event(key) {
+                    let command = match self.prompt.key_event(key) {
                         Some(command) => command,
                         None => continue,
                     };
@@ -193,6 +215,27 @@ impl App {
             }
 
             self.delta_time = Instant::now() - start;
+        }
+    }
+
+    fn page_amount(&mut self, main_terminal: &mut DefaultTerminal) -> usize {
+        main_terminal.get_frame().area().height.saturating_sub(5) as usize
+    }
+
+    fn scroll_down(&mut self, delta: usize) {
+        let prev = self.vertical_scroll;
+        self.vertical_scroll = self.vertical_scroll.saturating_sub(delta);
+        if self.vertical_scroll != prev {
+            self.main_screen = MainScreen::Scrolling;
+        }
+    }
+
+    fn scroll_up(&mut self, delta: usize, main_terminal: &mut DefaultTerminal) {
+        let output = self.output_collected.len().saturating_sub(main_terminal.get_frame().area().height as usize - 4);
+        let prev = self.vertical_scroll;
+        self.vertical_scroll = (self.vertical_scroll + delta).clamp(0, output);
+        if self.vertical_scroll != prev {
+            self.main_screen = MainScreen::Scrolling;
         }
     }
 
@@ -224,6 +267,21 @@ impl App {
         self.last_command = Some(command);
     }
 
+    fn output_scrolled(&self) -> impl IntoIterator<Item = &String> + use<'_> {
+        self.output_collected.iter().rev().skip(self.vertical_scroll).rev()
+    }
+
+    fn redraw_child_output(&mut self, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
+        for line in self.output_scrolled() {
+            repl_terminal
+                .insert_before(1, |buf| {
+                    buf[(0, 0)].set_symbol(&line);
+                })
+                .map_err(|error| Error::Tui { error })?;
+        }
+        Ok(())
+    }
+
     fn redraw(
         &mut self,
         repl_terminal: &mut DefaultTerminal,
@@ -231,14 +289,8 @@ impl App {
     ) -> Result<(), Error> {
         main_terminal.clear().map_err(|error| Error::Tui { error })?;
         repl_terminal.clear().map_err(|error| Error::Tui { error })?;
-        for line in self.output_collected.iter() {
-            repl_terminal
-                .insert_before(1, |buf| {
-                    buf[(0, 0)].set_symbol(&line);
-                })
-                .unwrap();
-        }
 
+        self.redraw_child_output(repl_terminal)?;
         self.draw(repl_terminal, main_terminal)?;
 
         Ok(())
@@ -258,6 +310,10 @@ impl App {
                 let error = error.clone();
                 main_terminal.draw(|frame| self.draw_error(frame, error)).map_err(|error| Error::Tui { error })?;
             }
+            MainScreen::Scrolling => {
+                self.redraw_child_output(repl_terminal)?;
+                self.main_screen = MainScreen::None;
+            }
             MainScreen::None => {}
         };
 
@@ -273,17 +329,21 @@ impl App {
         let [layout] = Layout::default().constraints([Constraint::Fill(1)]).margin(4).areas(frame.area());
         let text = vec![
             Line::from(
-                "This is the build tool for this project, it's a simple REPL, that you can type commands in the promt,",
+                "This is the build tool for this project, it's a simple REPL, that you can type commands in the prompt,",
             ),
             Line::from("and press enter to evaluate."),
             Line::from("The avaiables commands are:"),
-            Line::from("    `h` or `help` to show this popup"),
-            Line::from("    `b` or `build` to build the project"),
-            Line::from("    `r` or `run` to run with qemu"),
+            Line::from("  `h` or `help` to show this popup"),
+            Line::from("  `b` or `build` to build the project"),
+            Line::from("  `r` or `run` to run with qemu"),
             Line::from(
-                "    `c` or `config` to configure the kernel (not required if you want to just build the project)",
+                "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
             ),
-            Line::from("Press `CTRL-C` to quit the build tool"),
+            Line::from("Also the controls are:"),
+            Line::from("  Press `PAGE UP` or `CRTL-UP` to scroll up the console"),
+            Line::from("  Press `PAGE DOWN` or `CRTL-DOWN` to scroll up the console"),
+            Line::from("  Press `CTRL-C` to quit the build tool"),
+            Line::from("  and the prompt controls is similar to a normal readline control"),
         ];
 
         frame.render_widget(
@@ -315,7 +375,7 @@ impl App {
     }
 
     fn draw_repl(&mut self, frame: &mut Frame) {
-        let [status, promt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
+        let [status, prompt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
         let command_status = if self.build_cmd_handle.is_some() {
             CommandStatus::Busy
@@ -339,12 +399,12 @@ impl App {
                 command_status,
                 ..Default::default()
             },
-            promt,
-            &mut self.promt,
+            prompt,
+            &mut self.prompt,
         );
 
         if matches!(self.main_screen, MainScreen::None) {
-            self.promt.set_cursor_pos(promt, frame);
+            self.prompt.set_cursor_pos(prompt, frame);
         }
     }
 }

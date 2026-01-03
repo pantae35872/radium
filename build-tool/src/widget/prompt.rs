@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use arboard::Clipboard;
-use oklab::{LinearRgb, Oklab, Rgb};
+use oklab::{LinearRgb, Oklab};
 use ratatui::{
     Frame,
     buffer::Buffer,
