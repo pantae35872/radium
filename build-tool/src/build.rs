@@ -26,7 +26,7 @@ pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Erro
 
 #[derive(Error, Debug)]
 pub enum Error {
-    #[error("Failed to get current dir, this must be exected in the project root, failed with: {error}")]
+    #[error("Failed to get current dir, this must be exected in the project root, failed with: `{error}`")]
     CurrentDir { error: io::Error },
     #[error("Failed to create dir failed with error: {error}")]
     CreateDir { error: io::Error },

@@ -12,7 +12,7 @@ use ratatui::{
     widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::prompt::interpolate::interpolate_multiple;
+use crate::widget::prompt::interpolate::interpolate_multiple;
 
 mod interpolate;
 
