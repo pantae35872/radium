@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs::read_to_string,
     path::{Path, PathBuf},
 };
@@ -70,15 +71,32 @@ impl<'a> CargoProject<'a> {
         command.cwd(self.path);
         command.arg("build");
         self.config.into_command(&mut command);
-        let status = self.executor.run(command).map_err(|error| super::Error::CommandIoError { error })?;
+        let status = self.executor.run(command.clone()).map_err(|error| super::Error::CommandIoError { error })?;
 
         if !status.success() {
-            return Err(super::Error::CargoBuild { status });
+            let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
+            return Err(super::Error::CommandFailed {
+                command: command_display,
+                dir: self.path.display().to_string(),
+                status,
+            });
         }
 
-        // FIXME: What to do with dynlib? .so?
-        let target_name = self.target_dir().join(self.package_name().expect("Invalid cargo project name"));
+        let package_name = self.package_name().expect("Invalid cargo project name");
+        let target_name = self.target_dir().join(package_name);
 
-        Ok(target_name)
+        if target_name.exists() {
+            return Ok(target_name);
+        }
+
+        Ok(match (target_name.with_extension("so").exists(), target_name.with_extension("efi").exists()) {
+            (true, true) => todo!("pick one!?"),
+            (true, ..) => target_name.with_extension("so"),
+            (.., true) => target_name.with_extension("efi"),
+            _ => panic!(
+                "Cargo built an unknown executeable format, {} with or without extension .so or .efi doesn't exists",
+                target_name.with_extension("").display()
+            ),
+        })
     }
 }

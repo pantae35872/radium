@@ -9,7 +9,7 @@ use std::{
         mpsc::{Receiver, Sender, channel},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
@@ -45,6 +45,8 @@ pub struct App {
     running_cmd_name: Option<String>,
 
     build_cmd_handle: Option<JoinHandle<Result<(), build::Error>>>,
+    build_error: Option<build::Error>,
+    delta_time: Duration,
 }
 
 #[derive(Debug)]
@@ -95,17 +97,21 @@ impl App {
             child_process_name,
             running_cmd_name: None,
             build_cmd_handle: None,
+            build_error: None,
+            delta_time: Duration::from_millis(1),
         }
     }
 
     pub fn run(mut self, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
         let backend = CrosstermBackend::new(stdout());
         let mut repl_terminal =
-            Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(3), ..Default::default() })
+            Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
                 .unwrap();
 
         loop {
+            let start = Instant::now();
             if self.build_cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
+                self.build_error = self.build_cmd_handle.unwrap().join().expect("Builder panicked").err();
                 self.build_cmd_handle = None;
             }
 
@@ -122,10 +128,14 @@ impl App {
             }
 
             repl_terminal.draw(|frame| self.draw(frame)).map_err(|error| Error::Tui { error })?;
+            self.delta_time = Instant::now() - start;
 
             if !event::poll(Duration::from_millis(1)).map_err(|error| Error::Tui { error })? {
                 continue;
             }
+
+            let start = Instant::now();
+
             match event::read().map_err(|error| Error::Tui { error })? {
                 Event::Key(key) => {
                     match key.code {
@@ -152,6 +162,8 @@ impl App {
                 }
                 _ => {}
             }
+
+            self.delta_time = Instant::now() - start;
         }
     }
 
@@ -160,7 +172,7 @@ impl App {
 
         match command.as_str() {
             "config" => {
-                self.run_config_menu(main_terminal);
+                main_terminal.draw(|frame| self.draw_config(frame)).unwrap();
                 main_terminal.clear().unwrap();
             }
             "build" if self.build_cmd_handle.is_none() => {
@@ -172,21 +184,30 @@ impl App {
         };
     }
 
-    fn run_config_menu(&mut self, main_terminal: &mut DefaultTerminal) {
-        main_terminal.draw(|frame| self.draw_config(frame)).unwrap();
-        let _ = event::read();
-    }
-
     fn draw_config(&mut self, frame: &mut Frame) {
         let [layout] = Layout::default().constraints([Constraint::Fill(1)]).margin(4).areas(frame.area());
         frame.render_widget(Block::bordered(), layout);
     }
 
     fn draw(&mut self, frame: &mut Frame) {
-        let [promt] = Layout::vertical([Constraint::Length(3)]).areas(frame.area());
+        let [status, promt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
+        let command_status = if self.build_cmd_handle.is_some() {
+            prompt::CommandStatus::Busy
+        } else if self.build_error.is_some() {
+            prompt::CommandStatus::Errored
+        } else {
+            prompt::CommandStatus::Idle
+        };
         frame.render_stateful_widget(
             Promt {
-                running_cmd: self.running_cmd_name.as_ref().map(|e| e.as_str()).unwrap_or(""),
+                running_cmd: self
+                    .build_error
+                    .as_ref()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| self.running_cmd_name.as_ref().map(|e| e.as_str()).unwrap_or("").to_string())
+                    .as_str(),
+                delta_time: self.delta_time,
+                command_status,
                 ..Default::default()
             },
             promt,

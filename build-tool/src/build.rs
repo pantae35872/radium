@@ -1,7 +1,7 @@
 use std::{
     env,
-    fs::create_dir,
-    io,
+    fs::{OpenOptions, create_dir},
+    io::{self, Write},
     path::{Path, PathBuf, absolute},
 };
 
@@ -32,8 +32,8 @@ pub enum Error {
     CreateDir { error: io::Error },
     #[error("Failed to execute command with io error, {error}")]
     CommandIoError { error: io::Error },
-    #[error("Cargo build, failed with exit status {status}")]
-    CargoBuild { status: ExitStatus },
+    #[error("Command `{command}` in dir `{dir}`, failed with exit status {status}")]
+    CommandFailed { command: String, dir: String, status: ExitStatus },
 }
 
 #[derive(Debug)]
@@ -61,6 +61,7 @@ impl Builder<'_> {
         let kernel = self.project(&self.src("kernel")).build()?;
         let bootloader = self.project(&self.src("bootloader")).build()?;
         let init = self.project(&self.userland("init")).build()?;
+        assert!(kernel.exists() && bootloader.exists() && init.exists());
 
         Ok(())
     }
@@ -73,6 +74,15 @@ impl Builder<'_> {
         if !self.build_path.exists() {
             create_dir(&self.build_path).map_err(|error| Error::CreateDir { error })?;
         }
+
+        let mut gitignore = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(self.build_path.join(".gitignore"))
+            .map_err(|error| Error::CreateDir { error })?;
+        gitignore.write_all("*".as_bytes()).map_err(|error| Error::CreateDir { error })?;
+        gitignore.flush().map_err(|error| Error::CreateDir { error })?;
 
         Ok(())
     }
