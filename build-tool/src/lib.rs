@@ -2,28 +2,22 @@
 #![feature(string_from_utf8_lossy_owned)]
 
 use std::{
-    env,
     ffi::OsStr,
     fs::create_dir,
     io::{self, BufRead, BufReader, stdout},
     path::{Path, absolute},
-    process::Termination,
     sync::mpsc::{Receiver, channel},
     thread,
     time::Duration,
 };
 
-use portable_pty::{Child, CommandBuilder, NativePtySystem, PtySystem};
+use portable_pty::{Child, CommandBuilder, NativePtySystem, PtyPair, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
-    crossterm::{
-        event::{self, Event, KeyCode, KeyModifiers},
-        execute,
-        terminal::{EnterAlternateScreen, LeaveAlternateScreen},
-    },
-    layout::{Columns, Constraint, Layout, Rect},
+    crossterm::event::{self, Event, KeyCode, KeyModifiers},
+    layout::{Constraint, Layout},
     prelude::CrosstermBackend,
-    widgets::{Block, Paragraph},
+    widgets::Block,
 };
 use thiserror::Error;
 
@@ -52,12 +46,12 @@ fn make_build_dir() -> Result<(), Error> {
     Ok(())
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct App {
     promt: PromtState,
     child: Option<Receiver<String>>,
     child_process: Option<(CommandBuilder, Box<dyn Child + Send + Sync>)>,
-    outputs: Vec<String>,
+    child_pair: Option<PtyPair>,
 }
 
 impl App {
@@ -70,7 +64,7 @@ impl App {
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(Default::default()).unwrap();
 
-        self.child_process = Some((command.clone(), pair.slave.spawn_command(command).unwrap()));
+        self.child_process = Some((command.clone(), pair.slave.spawn_command(command.clone()).unwrap()));
         let reader = pair.master.try_clone_reader().unwrap();
         thread::spawn(move || {
             let reader = BufReader::new(reader);
@@ -79,6 +73,7 @@ impl App {
             }
         });
         self.child = Some(rx);
+        self.child_pair = Some(pair);
 
         Ok(())
     }
@@ -92,6 +87,7 @@ impl App {
             if let Some(_status) =
                 self.child_process.as_mut().and_then(|(_name, child)| child.try_wait().ok()).flatten()
             {
+                self.child_pair = None;
                 self.child_process = None;
                 self.child = None;
             }
@@ -162,9 +158,4 @@ impl App {
         );
         self.promt.set_cursor_pos(promt, frame);
     }
-}
-
-pub fn eval(line: &str) -> Result<(), Error> {
-    //run_command(&mut Command::new("make").arg("release"))?;
-    Ok(())
 }
