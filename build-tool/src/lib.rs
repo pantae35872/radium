@@ -5,8 +5,9 @@ use std::{
     env,
     ffi::OsStr,
     fs::create_dir,
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, stdout},
     path::{Path, absolute},
+    process::Termination,
     sync::mpsc::{Receiver, channel},
     thread,
     time::Duration,
@@ -14,15 +15,22 @@ use std::{
 
 use portable_pty::{Child, CommandBuilder, NativePtySystem, PtySystem};
 use ratatui::{
-    DefaultTerminal, Frame,
-    crossterm::event::{self, Event, KeyCode, KeyModifiers},
+    DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
+    crossterm::{
+        event::{self, Event, KeyCode, KeyModifiers},
+        execute,
+        terminal::{EnterAlternateScreen, LeaveAlternateScreen},
+    },
     layout::{Constraint, Layout},
+    prelude::CrosstermBackend,
+    widgets::{Block, Paragraph},
 };
 use thiserror::Error;
 
 use crate::prompt::{Promt, PromtState};
 
 mod prompt;
+mod repl;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -75,26 +83,26 @@ impl App {
         Ok(())
     }
 
-    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<(), Error> {
+    pub fn run(mut self, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
+        let mut repl_terminal =
+            ratatui::init_with_options(TerminalOptions { viewport: Viewport::Inline(3), ..Default::default() });
         loop {
-            if let Some(status) = self.child_process.as_mut().and_then(|(_name, child)| child.try_wait().ok()).flatten()
+            if let Some(_status) =
+                self.child_process.as_mut().and_then(|(_name, child)| child.try_wait().ok()).flatten()
             {
                 self.child_process = None;
                 self.child = None;
             }
 
             while let Some(line) = self.child.as_ref().and_then(|child| child.try_recv().ok()) {
-                self.outputs.push(line);
-                for output in self.outputs.iter() {
-                    terminal
-                        .insert_before(1, |buf| {
-                            buf[(0, 0)].set_symbol(output);
-                        })
-                        .unwrap();
-                }
+                repl_terminal
+                    .insert_before(1, |buf| {
+                        buf[(0, 0)].set_symbol(&line);
+                    })
+                    .unwrap();
             }
 
-            terminal.draw(|frame| self.draw(frame)).map_err(|error| Error::Tui { error })?;
+            repl_terminal.draw(|frame| self.draw(frame)).map_err(|error| Error::Tui { error })?;
 
             if !event::poll(Duration::from_millis(1)).map_err(|error| Error::Tui { error })? {
                 continue;
@@ -105,18 +113,25 @@ impl App {
                     _ => {}
                 }
 
-                match self.promt.key_event(key) {
-                    Some(_command) => {
-                        let mut cmd = CommandBuilder::new("cargo");
-                        cmd.arg("build");
-                        cmd.arg("--release");
-                        cmd.cwd(env::current_dir().unwrap().join("src/kernel"));
-                        self.run_command(cmd)?;
-                    }
-                    None => {}
-                }
+                let command = match self.promt.key_event(key) {
+                    Some(command) => command,
+                    None => continue,
+                };
+
+                repl::eval(&mut self, &mut main_terminal, command);
+                repl_terminal.clear().unwrap();
             }
         }
+    }
+
+    fn run_config_menu(&mut self, main_terminal: &mut DefaultTerminal) {
+        main_terminal.draw(|frame| self.draw_config(frame)).unwrap();
+        let _ = event::read();
+    }
+
+    fn draw_config(&mut self, frame: &mut Frame) {
+        let [layout] = Layout::default().constraints([Constraint::Fill(1)]).margin(4).areas(frame.area());
+        frame.render_widget(Block::bordered(), layout);
     }
 
     fn draw(&mut self, frame: &mut Frame) {
