@@ -1,6 +1,6 @@
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Rect, Size},
     text::Text,
     widgets::{Block, Paragraph, Widget, Wrap},
 };
@@ -12,11 +12,17 @@ pub mod prompt;
 pub struct CenteredParagraph<'a> {
     text: Text<'a>,
     block: Option<Block<'a>>,
+    min_size: Option<Size>,
 }
 
 impl<'a> CenteredParagraph<'a> {
     pub fn new<T: Into<Text<'a>>>(text: T) -> Self {
-        Self { text: text.into(), block: None }
+        Self { text: text.into(), ..Default::default() }
+    }
+
+    pub fn min_size(mut self, size: Size) -> Self {
+        self.min_size = Some(size);
+        self
     }
 
     pub fn block(mut self, block: Block<'a>) -> Self {
@@ -38,8 +44,8 @@ impl<'a> Widget for CenteredParagraph<'a> {
 
         let (text_w, text_h) = measure_text(&self.text, max_width);
 
-        let widget_width = text_w + pad_x;
-        let widget_height = text_h + pad_y;
+        let widget_width = (text_w + pad_x).max(self.min_size.map(|rect| rect.width).unwrap_or(0));
+        let widget_height = (text_h + pad_y).max(self.min_size.map(|rect| rect.height).unwrap_or(0));
 
         let rect = Rect {
             x: area.x + (area.width.saturating_sub(widget_width)) / 2,
@@ -63,6 +69,7 @@ impl<'a> Widget for CenteredParagraph<'a> {
         paragraph.render(rect, buf);
     }
 }
+
 fn measure_text(text: &Text, max_width: u16) -> (u16, u16) {
     let mut width = 0;
     let mut height = 0;

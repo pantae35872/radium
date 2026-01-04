@@ -111,6 +111,18 @@ impl App {
         let (running_cmd_name, child_process_name) = channel();
         let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
 
+        let mut config = vec![
+            ConfigTree::Bool { name: "Release".to_string(), value: false },
+            ConfigTree::Group {
+                name: "Kernel".to_string(),
+                members: vec![ConfigTree::Number { name: "Log Level".to_string(), value: 1 }],
+            },
+        ];
+
+        for i in 0..40 {
+            config.push(ConfigTree::Bool { name: format!("Test Cfg ({i})"), value: false });
+        }
+
         Self {
             prompt: PromtState::default(),
             executor,
@@ -123,16 +135,7 @@ impl App {
             last_command: None,
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
-            config: ConfigAreaState {
-                configs: vec![
-                    ConfigTree::Bool { name: "Release".to_string(), value: false },
-                    ConfigTree::Group {
-                        name: "Kernel".to_string(),
-                        members: vec![ConfigTree::Number { name: "Log Level".to_string(), value: 1 }],
-                    },
-                ],
-                ..Default::default()
-            },
+            config: ConfigAreaState { configs: config, ..Default::default() },
         }
     }
 
@@ -317,31 +320,12 @@ impl App {
     }
 
     fn draw_config(&mut self, frame: &mut Frame) {
-        let vertical = Layout::vertical([Constraint::Percentage(80)]).flex(Flex::Center);
-        let horizontal = Layout::horizontal([Constraint::Percentage(80)]).flex(Flex::Center);
+        let vertical = Layout::vertical([Constraint::Percentage(60)]).flex(Flex::Center);
+        let horizontal = Layout::horizontal([Constraint::Percentage(60)]).flex(Flex::Center);
         let [area] = vertical.areas(frame.area());
         let [area] = horizontal.areas(area);
 
         frame.render_stateful_widget(ConfigArea, area, &mut self.config);
-        //let text = vec![
-        //    Line::from("[   ] Release mode").bg(Color::White),
-        //    Line::from("[   ] Font size"),
-        //    Line::from("[   ] Log level"),
-        //];
-
-        //frame.render_widget(
-        //    Paragraph::new(text).block(
-        //        Block::bordered()
-        //            .title(Line::from("config").centered())
-        //            .title_bottom(
-        //                Line::from("(ESC or q) quit | (↑) move up | (↓) move down | (ENTER) to edit").centered().bold(),
-        //            )
-        //            .light_blue()
-        //            .border_type(BorderType::Rounded)
-        //            .padding(Padding::symmetric(1, 1)),
-        //    ),
-        //    area,
-        //);
     }
 
     fn draw_help(&mut self, frame: &mut Frame) {

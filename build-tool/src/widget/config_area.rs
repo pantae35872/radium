@@ -1,9 +1,15 @@
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
+    layout::Margin,
     style::{Color, Stylize},
-    text::Line,
-    widgets::{Block, BorderType, Padding, Paragraph, StatefulWidget, Widget},
+    symbols::scrollbar,
+    text::{Line, Text},
+    widgets::{
+        Block, BorderType, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
+    },
 };
+
+use crate::widget::measure_text;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ConfigArea;
@@ -17,6 +23,7 @@ impl StatefulWidget for ConfigArea {
         };
 
         let mut configs = Vec::new();
+
         for (i, group) in group.iter().enumerate() {
             let name = match group {
                 ConfigTree::Number { name, .. } | ConfigTree::Group { name, .. } | ConfigTree::Bool { name, .. } => {
@@ -31,7 +38,23 @@ impl StatefulWidget for ConfigArea {
             }
         }
 
-        Paragraph::new(configs)
+        let text = Text::from(configs);
+        let (_width, height) = measure_text(&text, area.width);
+
+        if (state.current.index + 1).saturating_sub(state.vertical_scroll) > area.height as usize - 2 {
+            state.vertical_scroll += 1;
+        }
+
+        if (((state.current.index + 1) as i32) - state.vertical_scroll as i32) < 1 {
+            state.vertical_scroll -= 1;
+        }
+
+        state.vertical_scroll_state = state
+            .vertical_scroll_state
+            .content_length((height.saturating_sub(area.height - 2).max(1)).into())
+            .position(state.vertical_scroll);
+
+        Paragraph::new(text)
             .block(
                 Block::bordered()
                     .title(Line::from("config").centered())
@@ -40,9 +63,15 @@ impl StatefulWidget for ConfigArea {
                     )
                     .light_blue()
                     .border_type(BorderType::Rounded)
-                    .padding(Padding::symmetric(1, 1)),
+                    .padding(Padding::symmetric(4, 0)),
             )
+            .scroll((state.vertical_scroll as u16, 0))
             .render(area, buf);
+        Scrollbar::new(ScrollbarOrientation::VerticalRight).symbols(scrollbar::VERTICAL).render(
+            area.inner(Margin { vertical: 1, ..Default::default() }),
+            buf,
+            &mut state.vertical_scroll_state,
+        );
     }
 }
 
@@ -50,6 +79,8 @@ impl StatefulWidget for ConfigArea {
 pub struct ConfigAreaState {
     pub configs: Vec<ConfigTree>,
     pub current: ConfigReference,
+    pub vertical_scroll_state: ScrollbarState,
+    pub vertical_scroll: usize,
 }
 
 impl ConfigAreaState {
