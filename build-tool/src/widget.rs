@@ -5,6 +5,7 @@ use ratatui::{
     widgets::{Block, Paragraph, Widget, Wrap},
 };
 
+pub mod config_area;
 pub mod prompt;
 
 #[derive(Default)]

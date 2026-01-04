@@ -15,8 +15,8 @@ use std::{
 use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
-    crossterm::event::{self, Event, KeyCode, KeyModifiers},
-    layout::{Constraint, Layout},
+    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    layout::{Constraint, Flex, Layout},
     prelude::CrosstermBackend,
     style::{Style, Stylize},
     text::{Line, ToLine},
@@ -26,6 +26,7 @@ use thiserror::Error;
 
 use crate::widget::{
     CenteredParagraph,
+    config_area::{ConfigArea, ConfigAreaState, ConfigTree},
     prompt::{CommandStatus, Promt, PromtState},
 };
 
@@ -56,6 +57,8 @@ pub struct App {
 
     delta_time: Duration,
     main_screen: MainScreen,
+
+    config: ConfigAreaState,
 }
 
 #[derive(Default)]
@@ -120,6 +123,16 @@ impl App {
             last_command: None,
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
+            config: ConfigAreaState {
+                configs: vec![
+                    ConfigTree::Bool { name: "Release".to_string(), value: false },
+                    ConfigTree::Group {
+                        name: "Kernel".to_string(),
+                        members: vec![ConfigTree::Number { name: "Log Level".to_string(), value: 1 }],
+                    },
+                ],
+                ..Default::default()
+            },
         }
     }
 
@@ -163,6 +176,17 @@ impl App {
             let start = Instant::now();
 
             match event::read().map_err(|error| Error::Tui { error })? {
+                Event::Key(KeyEvent { code: KeyCode::Char('q') | KeyCode::Esc, .. })
+                    if matches!(self.main_screen, MainScreen::Config) =>
+                {
+                    self.main_screen = MainScreen::None;
+                    self.last_command = None;
+                    self.redraw(&mut repl_terminal, &mut main_terminal)?;
+                }
+                Event::Key(key) if matches!(self.main_screen, MainScreen::Config) => {
+                    self.config.key_event(key);
+                    continue;
+                }
                 Event::Key(_) if matches!(self.main_screen, MainScreen::Error(_) | MainScreen::Help) => {
                     self.main_screen = MainScreen::None;
                     self.last_command = None;
@@ -205,7 +229,6 @@ impl App {
         match command.as_str() {
             "config" | "c" => {
                 self.main_screen = MainScreen::Config;
-                todo!("Config!");
             }
             "br" | "build-reexec" => {
                 self.build_error = None;
@@ -290,8 +313,31 @@ impl App {
     }
 
     fn draw_config(&mut self, frame: &mut Frame) {
-        let [layout] = Layout::default().constraints([Constraint::Fill(1)]).margin(4).areas(frame.area());
-        frame.render_widget(Block::bordered(), layout);
+        let vertical = Layout::vertical([Constraint::Percentage(80)]).flex(Flex::Center);
+        let horizontal = Layout::horizontal([Constraint::Percentage(80)]).flex(Flex::Center);
+        let [area] = vertical.areas(frame.area());
+        let [area] = horizontal.areas(area);
+
+        frame.render_stateful_widget(ConfigArea, area, &mut self.config);
+        //let text = vec![
+        //    Line::from("[   ] Release mode").bg(Color::White),
+        //    Line::from("[   ] Font size"),
+        //    Line::from("[   ] Log level"),
+        //];
+
+        //frame.render_widget(
+        //    Paragraph::new(text).block(
+        //        Block::bordered()
+        //            .title(Line::from("config").centered())
+        //            .title_bottom(
+        //                Line::from("(ESC or q) quit | (↑) move up | (↓) move down | (ENTER) to edit").centered().bold(),
+        //            )
+        //            .light_blue()
+        //            .border_type(BorderType::Rounded)
+        //            .padding(Padding::symmetric(1, 1)),
+        //    ),
+        //    area,
+        //);
     }
 
     fn draw_help(&mut self, frame: &mut Frame) {
