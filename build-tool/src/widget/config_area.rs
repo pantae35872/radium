@@ -1,18 +1,23 @@
+use std::time::Duration;
+
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
-    layout::Margin,
-    style::{Color, Stylize},
+    layout::{Constraint, Layout, Margin},
+    style::{Color, Style, Stylize},
     symbols::scrollbar,
     text::{Line, Text},
     widgets::{
-        Block, BorderType, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
+        Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        StatefulWidget, Widget, Wrap,
     },
 };
 
-use crate::widget::measure_text;
+use crate::widget::{RainbowInterpolateState, interpolate_rainbow, measure_text};
 
 #[derive(Default, Debug, Clone, Copy)]
-pub struct ConfigArea;
+pub struct ConfigArea {
+    pub delta_time: Duration,
+}
 
 impl StatefulWidget for ConfigArea {
     type State = ConfigAreaState;
@@ -21,6 +26,43 @@ impl StatefulWidget for ConfigArea {
         let Some(group) = state.current.get_group(&state.configs) else {
             return;
         };
+
+        Block::bordered()
+            .title(
+                Line::from("config")
+                    .fg(interpolate_rainbow(&mut state.rainbow_interpolate, self.delta_time))
+                    .bold()
+                    .centered(),
+            )
+            .border_style(Style::default().light_blue())
+            .border_type(BorderType::Rounded)
+            .render(area, buf);
+
+        let text = Text::from(vec![
+            Line::from("(ESC or q) quit | (↑↓) move up and down | (←) move up a group | (ENTER) edit or enter a group")
+                .light_green(),
+        ]);
+
+        let (_width, height) = measure_text(&text, area.width - 2);
+
+        let [help_area, config_area] =
+            Layout::vertical([Constraint::Length(height + 1), Constraint::Fill(1)]).margin(1).areas(area);
+
+        Paragraph::new(text)
+            .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().light_blue()))
+            .wrap(Wrap { trim: true, ..Default::default() })
+            .render(help_area, buf);
+
+        let [location_area, config_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).areas(config_area);
+
+        let [location_area] =
+            Layout::default().constraints([Constraint::Fill(1)]).horizontal_margin(1).areas(location_area);
+
+        Line::from(format!("At Root > {}", state.current.get_path(&state.configs).join(" > ")))
+            .left_aligned()
+            .light_cyan()
+            .render(location_area, buf);
 
         let mut configs = Vec::new();
 
@@ -32,16 +74,16 @@ impl StatefulWidget for ConfigArea {
             };
             let line = Line::from(name.as_str());
             if state.current.index == i {
-                configs.push(line.bg(Color::White));
+                configs.push(line.style(Style::default().fg(Color::Cyan).bold()));
             } else {
                 configs.push(line);
             }
         }
 
         let text = Text::from(configs);
-        let (_width, height) = measure_text(&text, area.width);
+        let (_width, height) = measure_text(&text, config_area.width);
 
-        if (state.current.index + 1).saturating_sub(state.vertical_scroll) > area.height as usize - 2 {
+        if (state.current.index + 1).saturating_sub(state.vertical_scroll) > config_area.height as usize {
             state.vertical_scroll += 1;
         }
 
@@ -51,24 +93,15 @@ impl StatefulWidget for ConfigArea {
 
         state.vertical_scroll_state = state
             .vertical_scroll_state
-            .content_length((height.saturating_sub(area.height - 2).max(1)).into())
+            .content_length((height.saturating_sub(config_area.height).max(1)).into())
             .position(state.vertical_scroll);
 
         Paragraph::new(text)
-            .block(
-                Block::bordered()
-                    .title(Line::from("config").centered())
-                    .title_bottom(
-                        Line::from("(ESC or q) quit | (↑) move up | (↓) move down | (ENTER) to edit").centered().bold(),
-                    )
-                    .light_blue()
-                    .border_type(BorderType::Rounded)
-                    .padding(Padding::symmetric(4, 0)),
-            )
+            .block(Block::default().padding(Padding::symmetric(4, 0)))
             .scroll((state.vertical_scroll as u16, 0))
-            .render(area, buf);
+            .render(config_area, buf);
         Scrollbar::new(ScrollbarOrientation::VerticalRight).symbols(scrollbar::VERTICAL).render(
-            area.inner(Margin { vertical: 1, ..Default::default() }),
+            config_area.outer(Margin { horizontal: 1, ..Default::default() }),
             buf,
             &mut state.vertical_scroll_state,
         );
@@ -81,6 +114,7 @@ pub struct ConfigAreaState {
     pub current: ConfigReference,
     pub vertical_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
+    pub rainbow_interpolate: RainbowInterpolateState,
 }
 
 impl ConfigAreaState {
@@ -163,6 +197,23 @@ impl ConfigReference {
         }
 
         Some(current_tree)
+    }
+
+    pub fn get_path(&self, tree: &[ConfigTree]) -> Vec<String> {
+        let mut current_tree = tree;
+        let mut path = Vec::new();
+
+        for group_index in self.group.iter() {
+            current_tree = match current_tree.get(*group_index) {
+                Some(ConfigTree::Group { members, name, .. }) => {
+                    path.push(format!("{name}"));
+                    members
+                }
+                _ => return path,
+            };
+        }
+
+        path
     }
 
     pub fn get_value<'a>(&self, tree: &'a [ConfigTree]) -> Option<&'a ConfigTree> {

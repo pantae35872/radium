@@ -320,12 +320,12 @@ impl App {
     }
 
     fn draw_config(&mut self, frame: &mut Frame) {
-        let vertical = Layout::vertical([Constraint::Percentage(60)]).flex(Flex::Center);
+        let vertical = Layout::vertical([Constraint::Percentage(80)]).flex(Flex::Center);
         let horizontal = Layout::horizontal([Constraint::Percentage(60)]).flex(Flex::Center);
         let [area] = vertical.areas(frame.area());
         let [area] = horizontal.areas(area);
 
-        frame.render_stateful_widget(ConfigArea, area, &mut self.config);
+        frame.render_stateful_widget(ConfigArea { delta_time: self.delta_time }, area, &mut self.config);
     }
 
     fn draw_help(&mut self, frame: &mut Frame) {

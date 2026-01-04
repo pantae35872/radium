@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use arboard::Clipboard;
-use oklab::{LinearRgb, Oklab};
 use ratatui::{
     Frame,
     buffer::Buffer,
@@ -12,9 +11,7 @@ use ratatui::{
     widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
 
-use crate::widget::prompt::interpolate::interpolate_multiple;
-
-mod interpolate;
+use crate::widget::{RainbowInterpolateState, interpolate_rainbow};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct Promt<'s> {
@@ -39,7 +36,7 @@ pub struct PromtState {
     history: Vec<String>,
     current_input: usize,
     character_index: usize,
-    rainbow_interpolate: usize,
+    rainbow_interpolate: RainbowInterpolateState,
 }
 
 impl PromtState {
@@ -173,21 +170,9 @@ impl StatefulWidget for Promt<'_> {
     type State = PromtState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        let rainbow_interpolate = interpolate_multiple(
-            [
-                Oklab::from_linear_rgb(LinearRgb::new(1.0, 0.0, 0.0)), // Red
-                Oklab::from_linear_rgb(LinearRgb::new(1.0, 1.0, 0.0)), // Yellow
-                Oklab::from_linear_rgb(LinearRgb::new(0.0, 1.0, 0.0)), // Green
-                Oklab::from_linear_rgb(LinearRgb::new(0.0, 1.0, 1.0)), // Cyan
-                Oklab::from_linear_rgb(LinearRgb::new(0.0, 0.0, 1.0)), // Blue
-                Oklab::from_linear_rgb(LinearRgb::new(1.0, 0.0, 1.0)), // Magenta
-            ],
-            state.rainbow_interpolate as f32 / 10_000.0,
-        )
-        .to_srgb();
         let color = match self.command_status {
             CommandStatus::Idle => Color::Rgb(44, 255, 5),
-            CommandStatus::Busy => Color::Rgb(rainbow_interpolate.r, rainbow_interpolate.g, rainbow_interpolate.b),
+            CommandStatus::Busy => interpolate_rainbow(&mut state.rainbow_interpolate, self.delta_time),
             CommandStatus::Errored => Color::LightRed,
         };
 
@@ -202,7 +187,5 @@ impl StatefulWidget for Promt<'_> {
                     .title(Line::from(self.running_cmd).centered()),
             )
             .render(area, buf);
-
-        state.rainbow_interpolate = (state.rainbow_interpolate + 1 + self.delta_time.as_millis() as usize) % 10000;
     }
 }

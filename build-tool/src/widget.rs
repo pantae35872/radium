@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use ratatui::{
     buffer::Buffer,
     layout::{Rect, Size},
+    style::Color,
     text::Text,
     widgets::{Block, Paragraph, Widget, Wrap},
 };
+
+use oklab::{LinearRgb, Oklab};
 
 pub mod config_area;
 pub mod prompt;
@@ -83,4 +88,46 @@ fn measure_text(text: &Text, max_width: u16) -> (u16, u16) {
     }
 
     (width, height)
+}
+
+#[derive(Default, Debug, Clone, Copy)]
+struct RainbowInterpolateState {
+    interpolate: usize,
+}
+
+fn interpolate_rainbow(state: &mut RainbowInterpolateState, delta_time: Duration) -> Color {
+    let color = interpolate_multiple(
+        [
+            Oklab::from_linear_rgb(LinearRgb::new(1.0, 0.0, 0.0)), // Red
+            Oklab::from_linear_rgb(LinearRgb::new(1.0, 1.0, 0.0)), // Yellow
+            Oklab::from_linear_rgb(LinearRgb::new(0.0, 1.0, 0.0)), // Green
+            Oklab::from_linear_rgb(LinearRgb::new(0.0, 1.0, 1.0)), // Cyan
+            Oklab::from_linear_rgb(LinearRgb::new(0.0, 0.0, 1.0)), // Blue
+            Oklab::from_linear_rgb(LinearRgb::new(1.0, 0.0, 1.0)), // Magenta
+        ],
+        state.interpolate as f32 / 10_000.0,
+    )
+    .to_srgb();
+
+    state.interpolate = (state.interpolate + 1 + delta_time.as_millis() as usize) % 10000;
+
+    Color::Rgb(color.r, color.g, color.b)
+}
+
+fn interpolate_multiple<I>(colors: I, t: f32) -> Oklab
+where
+    I: IntoIterator<Item = Oklab> + Copy,
+{
+    let count = colors.into_iter().count();
+    let u = t * count as f32;
+    let i = u.floor() as usize;
+    let color_1 = colors.into_iter().nth(i).unwrap();
+    let color_2 = colors.into_iter().nth((i + 1) % count).unwrap();
+    let local_t = u - i as f32;
+
+    interpolate_oklab(color_1, color_2, local_t)
+}
+
+fn interpolate_oklab(start: Oklab, end: Oklab, t: f32) -> Oklab {
+    Oklab { l: start.l + t * (end.l - start.l), a: start.a + t * (end.a - start.a), b: start.b + t * (end.b - start.b) }
 }
