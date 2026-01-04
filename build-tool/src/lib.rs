@@ -16,7 +16,7 @@ use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
     crossterm::event::{self, Event, KeyCode, KeyModifiers},
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout},
     prelude::CrosstermBackend,
     style::{Style, Stylize},
     text::{Line, ToLine},
@@ -49,7 +49,6 @@ pub struct App {
     child_process_name: Receiver<Option<String>>,
     running_cmd_name: Option<String>,
     output_collected: Vec<String>,
-    vertical_scroll: usize,
 
     last_command: Option<String>,
     build_cmd_handle: Option<JoinHandle<Result<(), build::Error>>>,
@@ -66,7 +65,6 @@ enum MainScreen {
     Config,
     Help,
     Error(String),
-    Scrolling,
 }
 
 #[derive(Debug)]
@@ -120,7 +118,6 @@ impl App {
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
-            vertical_scroll: 0,
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
         }
@@ -130,7 +127,7 @@ impl App {
         let backend = CrosstermBackend::new(stdout());
         let mut repl_terminal =
             Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
-                .unwrap();
+                .map_err(|error| Error::Tui { error })?;
 
         loop {
             let start = Instant::now();
@@ -151,7 +148,6 @@ impl App {
                         buf[(0, 0)].set_symbol(&line);
                     })
                     .unwrap();
-                self.vertical_scroll = 0;
             }
 
             self.draw(&mut repl_terminal, &mut main_terminal)?;
@@ -172,24 +168,6 @@ impl App {
                 Event::Key(key) => {
                     match key.code {
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-                        KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.scroll_down(1);
-                            continue;
-                        }
-                        KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            self.scroll_up(1, &mut main_terminal);
-                            continue;
-                        }
-                        KeyCode::PageUp => {
-                            let amount = self.page_amount(&mut main_terminal);
-                            self.scroll_up(amount, &mut main_terminal);
-                            continue;
-                        }
-                        KeyCode::PageDown => {
-                            let amount = self.page_amount(&mut main_terminal);
-                            self.scroll_down(amount);
-                            continue;
-                        }
                         _ => {}
                     }
 
@@ -215,27 +193,6 @@ impl App {
             }
 
             self.delta_time = Instant::now() - start;
-        }
-    }
-
-    fn page_amount(&mut self, main_terminal: &mut DefaultTerminal) -> usize {
-        main_terminal.get_frame().area().height.saturating_sub(5) as usize
-    }
-
-    fn scroll_down(&mut self, delta: usize) {
-        let prev = self.vertical_scroll;
-        self.vertical_scroll = self.vertical_scroll.saturating_sub(delta);
-        if self.vertical_scroll != prev {
-            self.main_screen = MainScreen::Scrolling;
-        }
-    }
-
-    fn scroll_up(&mut self, delta: usize, main_terminal: &mut DefaultTerminal) {
-        let output = self.output_collected.len().saturating_sub(main_terminal.get_frame().area().height as usize - 4);
-        let prev = self.vertical_scroll;
-        self.vertical_scroll = (self.vertical_scroll + delta).clamp(0, output);
-        if self.vertical_scroll != prev {
-            self.main_screen = MainScreen::Scrolling;
         }
     }
 
@@ -267,12 +224,8 @@ impl App {
         self.last_command = Some(command);
     }
 
-    fn output_scrolled(&self) -> impl IntoIterator<Item = &String> + use<'_> {
-        self.output_collected.iter().rev().skip(self.vertical_scroll).rev()
-    }
-
     fn redraw_child_output(&mut self, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
-        for line in self.output_scrolled() {
+        for line in self.output_collected.iter() {
             repl_terminal
                 .insert_before(1, |buf| {
                     buf[(0, 0)].set_symbol(&line);
@@ -310,10 +263,6 @@ impl App {
                 let error = error.clone();
                 main_terminal.draw(|frame| self.draw_error(frame, error)).map_err(|error| Error::Tui { error })?;
             }
-            MainScreen::Scrolling => {
-                self.redraw_child_output(repl_terminal)?;
-                self.main_screen = MainScreen::None;
-            }
             MainScreen::None => {}
         };
 
@@ -340,8 +289,6 @@ impl App {
                 "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
             ),
             Line::from("Also the controls are:"),
-            Line::from("  Press `PAGE UP` or `CRTL-UP` to scroll up the console"),
-            Line::from("  Press `PAGE DOWN` or `CRTL-DOWN` to scroll up the console"),
             Line::from("  Press `CTRL-C` to quit the build tool"),
             Line::from("  and the prompt controls is similar to a normal readline control"),
         ];
