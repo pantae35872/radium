@@ -12,7 +12,7 @@ use ratatui::{
     },
 };
 
-use crate::widget::{RainbowInterpolateState, interpolate_rainbow, measure_text};
+use crate::widget::{RainbowInterpolateState, clear, interpolate_rainbow, measure_text};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ConfigArea {
@@ -23,6 +23,8 @@ impl StatefulWidget for ConfigArea {
     type State = ConfigAreaState;
 
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer, state: &mut Self::State) {
+        clear(area, buf);
+
         let Some(group) = state.current.get_group(&state.configs) else {
             return;
         };
