@@ -3,7 +3,9 @@ use std::{
     ffi::OsStr,
     fs::{OpenOptions, create_dir},
     io::{self, Write},
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use portable_pty::{CommandBuilder, ExitStatus};
@@ -13,13 +15,18 @@ use crate::{CmdExecutor, build::cargo_project::CargoProject};
 
 mod cargo_project;
 
-pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
+pub fn project_dir() -> Result<PathBuf, Error> {
     let mut current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
 
     while !current_dir.file_name().is_some_and(|e| e == OsStr::new("radium")) {
         current_dir = current_dir.parent().expect("Failed to get to the project root!").to_path_buf();
     }
 
+    Ok(current_dir)
+}
+
+pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
+    let current_dir = project_dir()?;
     Builder {
         config,
         executor,
@@ -33,6 +40,8 @@ pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Erro
 
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("Failed to re-execute the build tool, failed with: `{error}`")]
+    ReExecFailed { error: io::Error },
     #[error("Failed to get current dir, this must be exected in the project root, failed with: `{error}`")]
     CurrentDir { error: io::Error },
     #[error("Failed to create dir failed with error: {error}")]
@@ -72,6 +81,11 @@ impl Builder<'_> {
         let init = self.project(&self.userland("init")).build()?;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
 
+        if self.config.reexec_build_tool {
+            ratatui::restore();
+            return Err(Error::ReExecFailed { error: Command::new(build_tool).exec() });
+        }
+
         Ok(())
     }
 
@@ -100,6 +114,7 @@ impl Builder<'_> {
 #[derive(Default, Debug)]
 pub struct BuildConfig {
     pub mode: BuildMode,
+    pub reexec_build_tool: bool,
 }
 
 impl BuildConfig {

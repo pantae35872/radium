@@ -128,6 +128,9 @@ impl App {
         let mut repl_terminal =
             Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
                 .map_err(|error| Error::Tui { error })?;
+        repl_terminal
+            .insert_before(main_terminal.size().map_err(|error| Error::Tui { error })?.height, |_frame| {})
+            .map_err(|error| Error::Tui { error })?;
 
         loop {
             let start = Instant::now();
@@ -204,13 +207,29 @@ impl App {
                 self.main_screen = MainScreen::Config;
                 todo!("Config!");
             }
+            "br" | "build-reexec" => {
+                self.build_error = None;
+                self.build_cmd_handle = Some(thread::spawn(move || {
+                    build::build(
+                        &mut executor.lock().unwrap(),
+                        build::BuildConfig {
+                            mode: build::BuildMode::Debug,
+                            reexec_build_tool: true,
+                            ..Default::default()
+                        },
+                    )
+                }));
+            }
             "run" | "r" => {
                 todo!("Run!");
             }
             "build" | "b" if self.build_cmd_handle.is_none() => {
                 self.build_error = None;
                 self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { mode: build::BuildMode::Debug })
+                    build::build(
+                        &mut executor.lock().unwrap(),
+                        build::BuildConfig { mode: build::BuildMode::Debug, ..Default::default() },
+                    )
                 }));
             }
             "help" | "h" => {
@@ -221,6 +240,7 @@ impl App {
                 self.main_screen = MainScreen::Error(format!("Unknown command `{cmd}` type `help` for more info."));
             }
         };
+
         self.last_command = Some(command);
     }
 
@@ -285,6 +305,7 @@ impl App {
             Line::from("  `h` or `help` to show this popup"),
             Line::from("  `b` or `build` to build the project"),
             Line::from("  `r` or `run` to run with qemu"),
+            Line::from("  `br` or `build-reexec` to build and re execute the build tool"),
             Line::from(
                 "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
             ),
