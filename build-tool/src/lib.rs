@@ -176,6 +176,10 @@ impl App {
             let start = Instant::now();
 
             match event::read().map_err(|error| Error::Tui { error })? {
+                // We don't do release event
+                Event::Key(event) if event.is_release() => {
+                    continue;
+                }
                 Event::Key(KeyEvent { code: KeyCode::Char('q') | KeyCode::Esc, .. })
                     if matches!(self.main_screen, MainScreen::Config) =>
                 {
