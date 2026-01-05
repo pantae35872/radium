@@ -1,18 +1,18 @@
-use std::time::Duration;
+use std::{fmt::Display, time::Duration};
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent},
     layout::{Constraint, Layout, Margin},
     style::{Color, Style, Stylize},
     symbols::scrollbar,
-    text::{Line, Text},
+    text::{Line, Text, ToLine},
     widgets::{
         Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Widget, Wrap,
     },
 };
 
-use crate::widget::{RainbowInterpolateState, clear, interpolate_rainbow, measure_text};
+use crate::widget::{CenteredParagraph, RainbowInterpolateState, clear, interpolate_rainbow, measure_text};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ConfigArea {
@@ -66,24 +66,26 @@ impl StatefulWidget for ConfigArea {
             .light_cyan()
             .render(location_area, buf);
 
-        let mut configs = Vec::new();
+        let mut config_names = Vec::new();
+        let mut config_values = Vec::new();
 
         for (i, group) in group.iter().enumerate() {
             let name = match group {
-                ConfigTree::Number { name, .. } | ConfigTree::Group { name, .. } | ConfigTree::Bool { name, .. } => {
-                    name
-                }
+                ConfigTree::Group { name, .. } | ConfigTree::Value { name, .. } => name,
             };
-            let line = Line::from(name.as_str());
-            if state.current.index == i {
-                configs.push(line.style(Style::default().fg(Color::Cyan).bold()));
-            } else {
-                configs.push(line);
-            }
+            let value_formatted = match group {
+                ConfigTree::Group { .. } => "|─────> Group <─────|".to_string(),
+                ConfigTree::Value { value, .. } => format!("[ {} ]", value),
+            };
+
+            let style =
+                if state.current.index == i { Style::default().fg(Color::Cyan).bold() } else { Style::default() };
+
+            config_names.push(name.to_line().style(style).left_aligned());
+            config_values.push(Line::from(value_formatted).style(style).right_aligned());
         }
 
-        let text = Text::from(configs);
-        let (_width, height) = measure_text(&text, config_area.width);
+        let height = config_names.len() as u16;
 
         if (state.current.index + 1).saturating_sub(state.vertical_scroll) > config_area.height as usize {
             state.vertical_scroll += 1;
@@ -98,15 +100,60 @@ impl StatefulWidget for ConfigArea {
             .content_length((height.saturating_sub(config_area.height).max(1)).into())
             .position(state.vertical_scroll);
 
-        Paragraph::new(text)
+        Paragraph::new(config_names)
             .block(Block::default().padding(Padding::symmetric(4, 0)))
             .scroll((state.vertical_scroll as u16, 0))
             .render(config_area, buf);
+
+        Paragraph::new(config_values)
+            .block(Block::default().padding(Padding::symmetric(4, 0)))
+            .scroll((state.vertical_scroll as u16, 0))
+            .render(config_area, buf);
+
         Scrollbar::new(ScrollbarOrientation::VerticalRight).symbols(scrollbar::VERTICAL).render(
             config_area.outer(Margin { horizontal: 1, ..Default::default() }),
             buf,
             &mut state.vertical_scroll_state,
         );
+
+        if let Some(ConfigTree::Value { value, name }) =
+            state.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut state.configs))
+        {
+            let text = match value {
+                ConfigValue::Bool(value) => {
+                    if *value {
+                        vec![Line::from("True").style(Style::default().fg(Color::Cyan).bold()), Line::from("False")]
+                    } else {
+                        vec![Line::from("True"), Line::from("False").style(Style::default().fg(Color::Cyan).bold())]
+                    }
+                }
+                ConfigValue::Number(value) => {
+                    vec![Line::from(value.to_string())]
+                }
+                ConfigValue::Text(value) => {
+                    vec![Line::from(value.clone())]
+                }
+                ConfigValue::Union { current, values } => {
+                    let mut text = Vec::new();
+                    for (i, value) in values.iter().enumerate() {
+                        let style =
+                            if *current == i { Style::default().fg(Color::Cyan).bold() } else { Style::default() };
+                        text.push(value.to_line().style(style));
+                    }
+                    text
+                }
+            };
+
+            CenteredParagraph::new(text)
+                .block(
+                    Block::bordered()
+                        .title(name.to_line().centered())
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().light_blue())
+                        .padding(Padding::symmetric(2.max(name.to_line().width() as u16 / 2), 0)),
+                )
+                .render(config_area, buf);
+        }
     }
 }
 
@@ -114,20 +161,51 @@ impl StatefulWidget for ConfigArea {
 pub struct ConfigAreaState {
     pub configs: Vec<ConfigTree>,
     pub current: ConfigReference,
+    pub edit: Option<ConfigReference>,
+
     pub vertical_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
     pub rainbow_interpolate: RainbowInterpolateState,
 }
 
 impl ConfigAreaState {
-    pub fn key_event(&mut self, event: KeyEvent) {
+    pub fn key_event(&mut self, event: KeyEvent) -> bool {
+        if let Some(ConfigTree::Value { value, .. }) =
+            self.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut self.configs))
+        {
+            match (event.code, value) {
+                (KeyCode::Enter | KeyCode::Esc, _) => {
+                    self.edit = None;
+                }
+                (KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab, ConfigValue::Bool(value)) => {
+                    *value = !*value;
+                }
+                (KeyCode::Up | KeyCode::BackTab, ConfigValue::Union { current, values, .. }) => {
+                    if *current == 0 {
+                        *current = values.len().saturating_sub(1);
+                    } else {
+                        *current = *current - 1;
+                    }
+                }
+                (KeyCode::Down | KeyCode::Tab, ConfigValue::Union { current, values, .. }) => {
+                    *current = (*current + 1) % values.len();
+                }
+                _ => {}
+            }
+            return false;
+        }
+
         match event.code {
-            KeyCode::Up => self.current.up(&self.configs),
-            KeyCode::Down => self.current.down(&self.configs),
+            KeyCode::Up | KeyCode::BackTab => self.current.up(&self.configs),
+            KeyCode::Down | KeyCode::Tab => self.current.down(&self.configs),
             KeyCode::Left => self.current.traverse_up(),
-            KeyCode::Enter => self.current.traverse_down(&self.configs),
+            KeyCode::Enter => {
+                self.edit = self.current.traverse_down_or_edit(&mut self.configs);
+            }
+            KeyCode::Char('q') | KeyCode::Esc => return true,
             _ => {}
         };
+        return false;
     }
 }
 
@@ -160,12 +238,14 @@ impl ConfigReference {
         }
     }
 
-    pub fn traverse_down(&mut self, tree: &[ConfigTree]) {
-        let Some(ConfigTree::Group { .. }) = self.get_value(tree) else {
-            return;
+    pub fn traverse_down_or_edit<'a>(&mut self, tree: &'a mut [ConfigTree]) -> Option<ConfigReference> {
+        let Some(ConfigTree::Group { .. }) = self.get_value_mut(tree) else {
+            return Some(self.clone());
         };
+
         self.group.push(self.index);
         self.index = 0;
+        None
     }
 
     pub fn traverse_up(&mut self) {
@@ -231,7 +311,7 @@ impl ConfigReference {
         current_tree.get(self.index)
     }
 
-    pub fn get_mut_value<'a>(&self, tree: &'a mut [ConfigTree]) -> Option<&'a mut ConfigTree> {
+    pub fn get_value_mut<'a>(&self, tree: &'a mut [ConfigTree]) -> Option<&'a mut ConfigTree> {
         let mut current_tree = tree;
 
         for group_index in self.group.iter() {
@@ -248,6 +328,36 @@ impl ConfigReference {
 #[derive(Debug, Clone)]
 pub enum ConfigTree {
     Group { name: String, members: Vec<ConfigTree> },
-    Number { name: String, value: i32 },
-    Bool { name: String, value: bool },
+    Value { name: String, value: ConfigValue },
+}
+
+#[derive(Debug, Clone)]
+pub enum ConfigValue {
+    Number(i32),
+    Bool(bool),
+    Text(String),
+    Union { current: usize, values: Vec<String> },
+}
+
+impl Display for ConfigValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Number(value) => write!(f, "{value}"),
+            Self::Bool(value) => write!(f, "{value}"),
+            Self::Text(value) => write!(f, "{value}"),
+            Self::Union { current, values, .. } => write!(f, "{}", &values[*current]),
+        }
+    }
+}
+
+impl From<bool> for ConfigValue {
+    fn from(value: bool) -> Self {
+        Self::Bool(value)
+    }
+}
+
+impl From<i32> for ConfigValue {
+    fn from(value: i32) -> Self {
+        Self::Number(value)
+    }
 }

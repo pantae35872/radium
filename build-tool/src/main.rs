@@ -5,5 +5,6 @@ fn main() -> Result<(), build_tool::Error> {
     let terminal = ratatui::init_with_options(ratatui::TerminalOptions { viewport: Viewport::Fullscreen });
     let app_result = App::new().run(terminal);
     ratatui::restore();
+    println!();
     app_result
 }

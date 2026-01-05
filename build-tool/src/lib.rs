@@ -26,7 +26,7 @@ use thiserror::Error;
 
 use crate::widget::{
     CenteredParagraph,
-    config_area::{ConfigArea, ConfigAreaState, ConfigTree},
+    config_area::{ConfigArea, ConfigAreaState, ConfigTree, ConfigValue},
     prompt::{CommandStatus, Promt, PromtState},
 };
 
@@ -111,17 +111,41 @@ impl App {
         let (running_cmd_name, child_process_name) = channel();
         let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
 
-        let mut config = vec![
-            ConfigTree::Bool { name: "Release".to_string(), value: false },
-            ConfigTree::Group {
+        use {ConfigTree::*, ConfigValue::*};
+
+        let config = vec![
+            Value {
+                name: "Build Mode".to_string(),
+                value: Union {
+                    current: 1, // Release
+                    values: vec!["Debug".to_string(), "Release".to_string()],
+                },
+            },
+            Group {
+                name: "Bootloader".to_string(),
+                members: vec![Value { name: "Any key boot".to_string(), value: Bool(false) }],
+            },
+            Group {
                 name: "Kernel".to_string(),
-                members: vec![ConfigTree::Number { name: "Log Level".to_string(), value: 1 }],
+                members: vec![
+                    Value {
+                        name: "Log Level".to_string(),
+                        value: Union {
+                            current: 2, // Info
+                            values: vec![
+                                "Trace".to_string(),
+                                "Debug".to_string(),
+                                "Info".to_string(),
+                                "Warning".to_string(),
+                                "Error".to_string(),
+                                "Critical".to_string(),
+                            ],
+                        },
+                    },
+                    Value { name: "Font size".to_string(), value: Number(14) },
+                ],
             },
         ];
-
-        for i in 0..40 {
-            config.push(ConfigTree::Bool { name: format!("Test Cfg ({i})"), value: false });
-        }
 
         Self {
             prompt: PromtState::default(),
@@ -183,15 +207,12 @@ impl App {
                 Event::Key(event) if event.is_release() => {
                     continue;
                 }
-                Event::Key(KeyEvent { code: KeyCode::Char('q') | KeyCode::Esc, .. })
-                    if matches!(self.main_screen, MainScreen::Config) =>
-                {
-                    self.main_screen = MainScreen::None;
-                    self.last_command = None;
-                    self.redraw(&mut repl_terminal, &mut main_terminal)?;
-                }
                 Event::Key(key) if matches!(self.main_screen, MainScreen::Config) => {
-                    self.config.key_event(key);
+                    if self.config.key_event(key) {
+                        self.main_screen = MainScreen::None;
+                        self.last_command = None;
+                        self.redraw(&mut repl_terminal, &mut main_terminal)?;
+                    }
                     continue;
                 }
                 Event::Key(_) if matches!(self.main_screen, MainScreen::Error(_) | MainScreen::Help) => {

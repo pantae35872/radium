@@ -95,7 +95,7 @@ fn measure_text(text: &Text, max_width: u16) -> (u16, u16) {
 }
 
 #[derive(Default, Debug, Clone, Copy)]
-struct RainbowInterpolateState {
+pub struct RainbowInterpolateState {
     interpolate: usize,
 }
 
