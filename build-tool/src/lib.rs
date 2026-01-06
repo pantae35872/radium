@@ -55,6 +55,7 @@ pub struct App {
     build_cmd_handle: Option<JoinHandle<Result<(), build::Error>>>,
     build_error: Option<build::Error>,
 
+    previous_render_start: Instant,
     delta_time: Duration,
     main_screen: MainScreen,
 
@@ -123,7 +124,10 @@ impl App {
             },
             Group {
                 name: "Bootloader".to_string(),
-                members: vec![Value { name: "Any key boot".to_string(), value: Bool(false) }],
+                members: vec![
+                    Value { name: "Any key boot".to_string(), value: Bool(false) },
+                    Value { name: "Kernel File".to_string(), value: Text("".to_string()) },
+                ],
             },
             Group {
                 name: "Kernel".to_string(),
@@ -157,6 +161,7 @@ impl App {
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
+            previous_render_start: Instant::now(),
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
             config: ConfigAreaState { configs: config, ..Default::default() },
@@ -173,7 +178,10 @@ impl App {
             .map_err(|error| Error::Tui { error })?;
 
         loop {
+            self.delta_time = Instant::now() - self.previous_render_start;
+            self.previous_render_start = Instant::now();
             let start = Instant::now();
+
             if self.build_cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
                 self.build_error = self.build_cmd_handle.unwrap().join().expect("Builder panicked").err();
                 self.build_cmd_handle = None;
@@ -194,13 +202,13 @@ impl App {
             }
 
             self.draw(&mut repl_terminal, &mut main_terminal)?;
-            self.delta_time = Instant::now() - start;
+            let render_duration = Instant::now() - start;
 
-            if !event::poll(Duration::from_millis(1)).map_err(|error| Error::Tui { error })? {
+            if !event::poll(Duration::from_millis(1).saturating_sub(render_duration))
+                .map_err(|error| Error::Tui { error })?
+            {
                 continue;
             }
-
-            let start = Instant::now();
 
             match event::read().map_err(|error| Error::Tui { error })? {
                 // We don't do release event
@@ -247,7 +255,8 @@ impl App {
                 _ => {}
             }
 
-            self.delta_time = Instant::now() - start;
+            let event_handle_duration = Instant::now() - start;
+            std::thread::sleep(Duration::from_millis(1).saturating_sub(event_handle_duration));
         }
     }
 
@@ -400,7 +409,7 @@ impl App {
     fn draw_repl(&mut self, frame: &mut Frame) {
         let [status, prompt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
-        let command_status = if self.build_cmd_handle.is_some() {
+        let command_status = if self.build_cmd_handle.is_some() || !matches!(self.main_screen, MainScreen::None) {
             CommandStatus::Busy
         } else if self.build_error.is_some() {
             CommandStatus::Errored

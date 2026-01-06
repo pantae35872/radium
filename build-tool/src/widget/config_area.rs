@@ -1,7 +1,7 @@
 use std::{fmt::Display, time::Duration};
 
 use ratatui::{
-    crossterm::event::{KeyCode, KeyEvent},
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     layout::{Constraint, Layout, Margin},
     style::{Color, Style, Stylize},
     symbols::scrollbar,
@@ -177,6 +177,24 @@ impl ConfigAreaState {
                 (KeyCode::Enter | KeyCode::Esc, _) => {
                     self.edit = None;
                 }
+                (KeyCode::Char('h'), ConfigValue::Number(value)) if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    *value = 0;
+                }
+                (KeyCode::Backspace, ConfigValue::Number(value)) => {
+                    *value = *value / 10;
+                }
+                (KeyCode::Char(c), ConfigValue::Number(value)) if let Some(digit) = c.to_digit(10) => {
+                    *value = value.saturating_mul(10).saturating_add(digit as i32);
+                }
+                (KeyCode::Char('h'), ConfigValue::Text(value)) if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                    value.clear();
+                }
+                (KeyCode::Backspace, ConfigValue::Text(value)) => {
+                    value.pop();
+                }
+                (KeyCode::Char(c), ConfigValue::Text(value)) => {
+                    value.push(c);
+                }
                 (KeyCode::Up | KeyCode::Down | KeyCode::Tab | KeyCode::BackTab, ConfigValue::Bool(value)) => {
                     *value = !*value;
                 }
@@ -224,6 +242,7 @@ pub struct ConfigReference {
 impl ConfigReference {
     pub fn up(&mut self, tree: &[ConfigTree]) {
         if self.index == 0 {
+            self.index = self.get_group(tree).and_then(|t| t.len().checked_sub(1)).unwrap_or(0);
             return;
         }
 
@@ -234,7 +253,7 @@ impl ConfigReference {
         self.index += 1;
 
         if self.get_value(tree).is_none() {
-            self.index -= 1;
+            self.index = 0;
         }
     }
 
