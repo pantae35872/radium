@@ -15,7 +15,7 @@ use std::{
 use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
-    crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
+    crossterm::event::{self, Event, KeyCode, KeyModifiers},
     layout::{Constraint, Flex, Layout},
     prelude::CrosstermBackend,
     style::{Style, Stylize},
@@ -178,8 +178,12 @@ impl App {
             .map_err(|error| Error::Tui { error })?;
 
         loop {
+            let event_handle_duration = Instant::now() - self.previous_render_start;
+            std::thread::sleep(Duration::from_millis(1).saturating_sub(event_handle_duration));
+
             self.delta_time = Instant::now() - self.previous_render_start;
             self.previous_render_start = Instant::now();
+
             let start = Instant::now();
 
             if self.build_cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
@@ -254,9 +258,6 @@ impl App {
                 }
                 _ => {}
             }
-
-            let event_handle_duration = Instant::now() - start;
-            std::thread::sleep(Duration::from_millis(1).saturating_sub(event_handle_duration));
         }
     }
 
