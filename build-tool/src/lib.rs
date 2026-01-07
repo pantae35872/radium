@@ -164,7 +164,7 @@ impl App {
             previous_render_start: Instant::now(),
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
-            config: ConfigAreaState { configs: config, ..Default::default() },
+            config: ConfigAreaState { config_staging: config.clone(), config, ..Default::default() },
         }
     }
 

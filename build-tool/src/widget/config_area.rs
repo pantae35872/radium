@@ -2,10 +2,10 @@ use std::{fmt::Display, time::Duration};
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
-    layout::{Constraint, Layout, Margin},
+    layout::{Constraint, Layout, Margin, Size},
     style::{Color, Style, Stylize},
     symbols::scrollbar,
-    text::{Line, Text, ToLine},
+    text::{Line, Span, Text, ToLine},
     widgets::{
         Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
         StatefulWidget, Widget, Wrap,
@@ -25,7 +25,11 @@ impl StatefulWidget for ConfigArea {
     fn render(self, area: ratatui::prelude::Rect, buf: &mut ratatui::prelude::Buffer, state: &mut Self::State) {
         clear(area, buf);
 
-        let Some(group) = state.current.get_group(&state.configs) else {
+        let Some(group_unmodified) = state.current.get_group(&state.config) else {
+            return;
+        };
+
+        let Some(group) = state.current.get_group(&state.config_staging) else {
             return;
         };
 
@@ -61,7 +65,7 @@ impl StatefulWidget for ConfigArea {
         let [location_area] =
             Layout::default().constraints([Constraint::Fill(1)]).horizontal_margin(1).areas(location_area);
 
-        Line::from(format!("At Root > {}", state.current.get_path(&state.configs).join(" > ")))
+        Line::from(format!("At Root > {}", state.current.get_path(&state.config_staging).join(" > ")))
             .left_aligned()
             .light_cyan()
             .render(location_area, buf);
@@ -69,13 +73,21 @@ impl StatefulWidget for ConfigArea {
         let mut config_names = Vec::new();
         let mut config_values = Vec::new();
 
-        for (i, group) in group.iter().enumerate() {
+        for (i, (group, group_unmodified)) in group.iter().zip(group_unmodified).enumerate() {
             let name = match group {
                 ConfigTree::Group { name, .. } | ConfigTree::Value { name, .. } => name,
             };
             let value_formatted = match group {
                 ConfigTree::Group { .. } => "|─────> Group <─────|".to_string(),
-                ConfigTree::Value { value, .. } => format!("[ {} ]", value),
+                ConfigTree::Value { value, .. }
+                    if matches!(group_unmodified, ConfigTree::Value { value: value_unmodified, .. }
+                    if value_unmodified != value) =>
+                {
+                    format!("[ {} ]*", value)
+                }
+                ConfigTree::Value { value, .. } => {
+                    format!("[ {} ]", value)
+                }
             };
 
             let style =
@@ -117,7 +129,7 @@ impl StatefulWidget for ConfigArea {
         );
 
         if let Some(ConfigTree::Value { value, name }) =
-            state.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut state.configs))
+            state.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut state.config_staging))
         {
             let text = match value {
                 ConfigValue::Bool(value) => {
@@ -154,14 +166,46 @@ impl StatefulWidget for ConfigArea {
                 )
                 .render(config_area, buf);
         }
+
+        if let Some(wanna_save) = state.wanna_save {
+            let selection = if wanna_save {
+                Line::from(vec![
+                    Span::styled("Save", Style::default().fg(Color::Cyan).bold()),
+                    Span::from("      "),
+                    Span::styled("Don't save", Style::default()),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("Save", Style::default()),
+                    Span::from("      "),
+                    Span::styled("Don't save", Style::default().fg(Color::Cyan).bold()),
+                ])
+            }
+            .centered();
+            let sline = "Save configuration and exit ?".to_line().centered();
+            CenteredParagraph::new(vec![selection])
+                .min_size(Size::new(sline.width() as u16 + 4, 3))
+                .block(
+                    Block::bordered()
+                        .title(sline)
+                        .title_bottom("(←→) Select, (ENTER) continue".to_line().centered())
+                        .border_type(BorderType::Rounded)
+                        .border_style(Style::default().light_blue())
+                        .padding(Padding::symmetric(2, 1)),
+                )
+                .render(config_area, buf);
+        }
     }
 }
 
 #[derive(Default, Debug, Clone)]
 pub struct ConfigAreaState {
-    pub configs: Vec<ConfigTree>,
+    pub config: Vec<ConfigTree>,
+
+    pub config_staging: Vec<ConfigTree>,
     pub current: ConfigReference,
     pub edit: Option<ConfigReference>,
+    pub wanna_save: Option<bool>,
 
     pub vertical_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
@@ -171,7 +215,7 @@ pub struct ConfigAreaState {
 impl ConfigAreaState {
     pub fn key_event(&mut self, event: KeyEvent) -> bool {
         if let Some(ConfigTree::Value { value, .. }) =
-            self.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut self.configs))
+            self.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut self.config_staging))
         {
             match (event.code, value) {
                 (KeyCode::Enter | KeyCode::Esc, _) => {
@@ -213,14 +257,35 @@ impl ConfigAreaState {
             return false;
         }
 
+        if let Some(value) = self.wanna_save.as_mut() {
+            return match event.code {
+                KeyCode::Enter => {
+                    if *value {
+                        self.config = self.config_staging.clone();
+                    } else {
+                        self.config_staging = self.config.clone();
+                    }
+                    self.wanna_save = None;
+                    true
+                }
+                KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                    *value = !*value;
+                    false
+                }
+                _ => false,
+            };
+        }
+
         match event.code {
-            KeyCode::Up | KeyCode::BackTab => self.current.up(&self.configs),
-            KeyCode::Down | KeyCode::Tab => self.current.down(&self.configs),
+            KeyCode::Up | KeyCode::BackTab => self.current.up(&self.config_staging),
+            KeyCode::Down | KeyCode::Tab => self.current.down(&self.config_staging),
             KeyCode::Left => self.current.traverse_up(),
             KeyCode::Enter => {
-                self.edit = self.current.traverse_down_or_edit(&mut self.configs);
+                self.edit = self.current.traverse_down_or_edit(&mut self.config_staging);
             }
-            KeyCode::Char('q') | KeyCode::Esc => return true,
+            KeyCode::Char('q') | KeyCode::Esc => {
+                self.wanna_save = Some(true);
+            }
             _ => {}
         };
         return false;
@@ -350,7 +415,7 @@ pub enum ConfigTree {
     Value { name: String, value: ConfigValue },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigValue {
     Number(i32),
     Bool(bool),
