@@ -74,7 +74,7 @@ impl<'a> Widget for CenteredParagraph<'a> {
 fn clear(rect: Rect, buf: &mut Buffer) {
     for x in rect.left()..rect.right() {
         for y in rect.top()..rect.bottom() {
-            buf[(x, y)].set_fg(ratatui::style::Color::White);
+            buf[(x, y)].set_fg(ratatui::style::Color::White).set_char(' ');
         }
     }
 }
