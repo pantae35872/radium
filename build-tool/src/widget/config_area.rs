@@ -1,4 +1,4 @@
-use std::{fmt::Display, time::Duration};
+use std::time::Duration;
 
 use ratatui::{
     crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
@@ -12,7 +12,10 @@ use ratatui::{
     },
 };
 
-use crate::widget::{CenteredParagraph, RainbowInterpolateState, clear, interpolate_rainbow, measure_text};
+use crate::{
+    config::{ConfigRoot, ConfigTree, ConfigValue},
+    widget::{CenteredParagraph, RainbowInterpolateState, clear, interpolate_rainbow, measure_text},
+};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ConfigArea {
@@ -292,7 +295,7 @@ impl ConfigAreaState {
         self.changed_diff = Some(diff);
     }
 
-    pub fn key_event(&mut self, event: KeyEvent) -> bool {
+    pub fn key_event(&mut self, event: KeyEvent) -> Option<ConfigRoot> {
         if let Some(ConfigTree::Value { value, .. }) =
             self.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut self.config_staging))
         {
@@ -333,22 +336,22 @@ impl ConfigAreaState {
                 }
                 _ => {}
             }
-            return false;
+            return None;
         }
 
         if let Some(value) = self.wanna_save.as_mut() {
             return match event.code {
                 KeyCode::Esc => {
                     self.wanna_save = None;
-                    false
+                    None
                 }
                 KeyCode::Up => {
                     self.diff_scroll = self.diff_scroll.saturating_sub(1);
-                    false
+                    None
                 }
                 KeyCode::Down => {
                     self.diff_scroll += 1;
-                    false
+                    None
                 }
                 KeyCode::Enter => {
                     if *value {
@@ -357,13 +360,13 @@ impl ConfigAreaState {
                         self.config_staging = self.config.clone();
                     }
                     self.wanna_save = None;
-                    true
+                    self.config.clone().try_into().ok()
                 }
                 KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
                     *value = !*value;
-                    false
+                    None
                 }
-                _ => false,
+                _ => None,
             };
         }
 
@@ -377,13 +380,14 @@ impl ConfigAreaState {
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.take_changed_diff();
                 if self.changed_diff.as_ref().is_some_and(|d| d.is_empty()) {
-                    return true;
+                    return self.config.clone().try_into().ok();
                 }
                 self.wanna_save = Some(true);
             }
             _ => {}
         };
-        return false;
+
+        None
     }
 }
 
@@ -513,42 +517,5 @@ impl ConfigReference {
         }
 
         current_tree.get_mut(self.index)
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ConfigTree {
-    Group { name: String, members: Vec<ConfigTree> },
-    Value { name: String, value: ConfigValue },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ConfigValue {
-    Number(i32),
-    Bool(bool),
-    Text(String),
-    Union { current: usize, values: Vec<String> },
-}
-
-impl Display for ConfigValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Number(value) => write!(f, "{value}"),
-            Self::Bool(value) => write!(f, "{value}"),
-            Self::Text(value) => write!(f, "{value}"),
-            Self::Union { current, values, .. } => write!(f, "{}", &values[*current]),
-        }
-    }
-}
-
-impl From<bool> for ConfigValue {
-    fn from(value: bool) -> Self {
-        Self::Bool(value)
-    }
-}
-
-impl From<i32> for ConfigValue {
-    fn from(value: i32) -> Self {
-        Self::Number(value)
     }
 }

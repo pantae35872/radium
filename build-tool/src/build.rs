@@ -11,7 +11,7 @@ use std::{
 use portable_pty::{CommandBuilder, ExitStatus};
 use thiserror::Error;
 
-use crate::{CmdExecutor, build::cargo_project::CargoProject};
+use crate::{CmdExecutor, build::cargo_project::CargoProject, config::BuildMode};
 
 mod cargo_project;
 
@@ -121,13 +121,6 @@ impl BuildConfig {
     fn into_command(&self, builder: &mut CommandBuilder) {
         self.mode.into_command(builder);
     }
-}
-
-#[derive(Default, Debug)]
-pub enum BuildMode {
-    #[default]
-    Debug,
-    Release,
 }
 
 impl BuildMode {

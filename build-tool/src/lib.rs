@@ -24,13 +24,17 @@ use ratatui::{
 };
 use thiserror::Error;
 
-use crate::widget::{
-    CenteredParagraph,
-    config_area::{ConfigArea, ConfigAreaState, ConfigTree, ConfigValue},
-    prompt::{CommandStatus, Promt, PromtState},
+use crate::{
+    config::{ConfigRoot, ConfigTree},
+    widget::{
+        CenteredParagraph,
+        config_area::{ConfigArea, ConfigAreaState},
+        prompt::{CommandStatus, Promt, PromtState},
+    },
 };
 
 mod build;
+mod config;
 mod widget;
 
 #[derive(Error, Debug)]
@@ -59,7 +63,8 @@ pub struct App {
     delta_time: Duration,
     main_screen: MainScreen,
 
-    config: ConfigAreaState,
+    config: ConfigRoot,
+    config_area: ConfigAreaState,
 }
 
 #[derive(Default)]
@@ -112,44 +117,7 @@ impl App {
         let (running_cmd_name, child_process_name) = channel();
         let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
 
-        use {ConfigTree::*, ConfigValue::*};
-
-        let config = vec![
-            Value {
-                name: "Build Mode".to_string(),
-                value: Union {
-                    current: 1, // Release
-                    values: vec!["Debug".to_string(), "Release".to_string()],
-                },
-            },
-            Group {
-                name: "Bootloader".to_string(),
-                members: vec![
-                    Value { name: "Any key boot".to_string(), value: Bool(false) },
-                    Value { name: "Kernel File".to_string(), value: Text("".to_string()) },
-                ],
-            },
-            Group {
-                name: "Kernel".to_string(),
-                members: vec![
-                    Value {
-                        name: "Log Level".to_string(),
-                        value: Union {
-                            current: 2, // Info
-                            values: vec![
-                                "Trace".to_string(),
-                                "Debug".to_string(),
-                                "Info".to_string(),
-                                "Warning".to_string(),
-                                "Error".to_string(),
-                                "Critical".to_string(),
-                            ],
-                        },
-                    },
-                    Value { name: "Font size".to_string(), value: Number(14) },
-                ],
-            },
-        ];
+        let config = Into::<Vec<ConfigTree>>::into(ConfigRoot::default());
 
         Self {
             prompt: PromtState::default(),
@@ -164,7 +132,8 @@ impl App {
             previous_render_start: Instant::now(),
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
-            config: ConfigAreaState { config_staging: config.clone(), config, ..Default::default() },
+            config: ConfigRoot::default(),
+            config_area: ConfigAreaState { config_staging: config.clone(), config, ..Default::default() },
         }
     }
 
@@ -220,9 +189,10 @@ impl App {
                     continue;
                 }
                 Event::Key(key) if matches!(self.main_screen, MainScreen::Config) => {
-                    if self.config.key_event(key) {
+                    if let Some(new_config_root) = self.config_area.key_event(key) {
                         self.main_screen = MainScreen::None;
                         self.last_command = None;
+                        self.config = new_config_root;
                         self.redraw(&mut repl_terminal, &mut main_terminal)?;
                     }
                     continue;
@@ -270,14 +240,11 @@ impl App {
             }
             "br" | "build-reexec" => {
                 self.build_error = None;
+                let mode = self.config.build_mode;
                 self.build_cmd_handle = Some(thread::spawn(move || {
                     build::build(
                         &mut executor.lock().unwrap(),
-                        build::BuildConfig {
-                            mode: build::BuildMode::Debug,
-                            reexec_build_tool: true,
-                            ..Default::default()
-                        },
+                        build::BuildConfig { mode, reexec_build_tool: true, ..Default::default() },
                     )
                 }));
             }
@@ -286,11 +253,9 @@ impl App {
             }
             "build" | "b" if self.build_cmd_handle.is_none() => {
                 self.build_error = None;
+                let mode = self.config.build_mode;
                 self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(
-                        &mut executor.lock().unwrap(),
-                        build::BuildConfig { mode: build::BuildMode::Debug, ..Default::default() },
-                    )
+                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { mode, ..Default::default() })
                 }));
             }
             "help" | "h" => {
@@ -356,7 +321,7 @@ impl App {
         let [area] = vertical.areas(frame.area());
         let [area] = horizontal.areas(area);
 
-        frame.render_stateful_widget(ConfigArea { delta_time: self.delta_time }, area, &mut self.config);
+        frame.render_stateful_widget(ConfigArea { delta_time: self.delta_time }, area, &mut self.config_area);
     }
 
     fn draw_help(&mut self, frame: &mut Frame) {
