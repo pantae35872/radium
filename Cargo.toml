@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "src/boot_cfg_parser", 
     "src/kernel", 
     "src/bootloader", 
     "src/bootbridge", 

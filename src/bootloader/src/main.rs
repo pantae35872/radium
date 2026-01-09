@@ -2,13 +2,11 @@
 #![no_std]
 #![feature(str_from_raw_parts)]
 #![feature(allocator_api)]
+#![allow(dead_code)]
 
 use core::arch::asm;
 
-use boot_cfg_parser::toml::parser::TomlValue;
-use boot_services::LoaderFile;
 use bootbridge::BootBridgeBuilder;
-use context::{InitializationContext, Stage0};
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::{load_kernel_elf, load_kernel_infos};
 use kernel_mapper::{finialize_mapping, prepare_kernel_page};
@@ -20,10 +18,14 @@ use uefi::{
 };
 
 use uefi_services::{print, println};
+
 extern crate alloc;
 
+mod config {
+    include!(concat!(env!("OUT_DIR"), "/config.rs"));
+}
+
 pub mod boot_services;
-pub mod config;
 pub mod context;
 pub mod graphics;
 pub mod kernel_loader;
@@ -73,7 +75,6 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     initialize_graphics_bootloader(&mut system_table);
     set_logger(&UEFI_LOGGER);
 
-    let config: TomlValue = LoaderFile::new("\\boot\\bootinfo.toml").into();
     let bootbridge_builder = BootBridgeBuilder::new(|size: usize| {
         uefi_services::system_table()
             .boot_services()
@@ -81,12 +82,11 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
             .unwrap_or_else(|e| panic!("Failed to allocate memory for the boot information {}", e))
     });
 
-    let stage0 = InitializationContext::<Stage0>::start(config);
-    let stage1 = load_kernel_infos(stage0);
+    let stage1 = load_kernel_infos();
     let stage2 = load_kernel_elf(stage1);
     let stage3 = prepare_kernel_page(stage2);
 
-    if stage3.config().any_key_boot() {
+    if config::config().boot_loader.any_key_boot {
         any_key_boot(&mut system_table);
     }
 
@@ -96,7 +96,9 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let (system_table, mut memory_map) = system_table.exit_boot_services(MemoryType::LOADER_DATA);
     memory_map.sort();
     let stage5 = stage4.next((entry_size, system_table.as_ptr() as u64));
+
     let stage6 = finialize_mapping(stage5, memory_map);
+
     let entrypoint = stage6.context().entry_point;
     let table = stage6.context().table;
     let boot_bridge = stage6.build_bridge(bootbridge_builder);

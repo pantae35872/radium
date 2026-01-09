@@ -4,6 +4,7 @@ use hashbrown::HashMap;
 use pager::{EntryFlags, Mapper, PAGE_SIZE, virt_addr_alloc};
 
 use crate::{
+    config::config,
     graphics::{color::Color, graphic},
     initialization_context::{InitializationContext, Stage2},
 };
@@ -51,7 +52,7 @@ impl TtfRenderer {
             initial_offset: 0,
             cache: HashMap::with_capacity(255),
             glyph_cache: HashMap::with_capacity(255),
-            pixel_size: ctx.context().boot_bridge().font_size(),
+            pixel_size: config().kernel.font_size as usize,
         }
     }
 

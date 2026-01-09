@@ -12,9 +12,6 @@ pager = { path = "../pager" }
 sentinel = { path = "../sentinel" }
 packery = { path = "../packery" }
 
-[dependencies.boot_cfg_parser]
-path = "../boot_cfg_parser"
-
 [dependencies.bootbridge]
 path = "../bootbridge"
 

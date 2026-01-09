@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{ToTokens, quote};
 use syn::{
     DataEnum, DataStruct, DeriveInput, Error, Fields, Ident, Meta, MetaNameValue, parse_macro_input, spanned::Spanned,
 };
@@ -23,6 +23,13 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
     let mut field_names = Vec::new();
     let mut field_config_names = Vec::new();
     let field_len = data.fields.len();
+    let name_str_lit = name.to_string();
+
+    let mut copied_field = String::new();
+    let mut copied_value_get = Vec::new();
+    let mut copied_value = String::new();
+    let mut type_gen = Vec::new();
+
     for field in data.fields.iter() {
         let field_name = field.ident.as_ref().ok_or(Error::new(field.span(), "tuple structs is not supported"))?;
 
@@ -44,7 +51,46 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
         });
         field_names.push(field_name.clone());
         field_config_names.push(cfg_name);
+
+        copied_field.push_str(&format!(
+            "    pub {}: {},\n",
+            field_name.to_token_stream().to_string(),
+            // TODO: Hard coded for now
+            match field_type.to_token_stream().to_string() {
+                t if &t == "String" => "&'static str".to_string(),
+                t => t,
+            }
+        ));
+
+        copied_value_get.push(quote!(
+            {
+                let string = self.#field_name.into_const_rust();
+                let mut lines = string.lines();
+
+                let mut result = String::new();
+
+                if let Some(first) = lines.next() {
+                    result.push_str(first);
+                }
+
+                for line in lines {
+                    result.push('\n');
+                    result.push_str("    ");
+                    result.push_str(line);
+                }
+
+                result
+            }
+        ));
+        copied_value.push_str(&format!("\n    {}: {{}},", field_name.to_token_stream().to_string()));
+        type_gen.push(quote! {
+            accum.push_str(&self.#field_name.into_const_rust_types());
+        });
     }
+
+    let rust_const = format! {
+        "{name} {{{{{copied_value}\n}}}}"
+    };
     Ok(quote! {
         const _: () = {
             use crate::config::{Config, ConfigTree};
@@ -56,6 +102,20 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
             {
                 fn into_tree(self, name: String) -> ConfigTree {
                     ConfigTree::Group { name, members: Into::<Vec<ConfigTree>>::into(self) }
+                }
+
+                fn into_const_rust(&self) -> String {
+                    format!(
+                        #rust_const,
+                        #(#copied_value_get,)*
+                    )
+                }
+
+                fn into_const_rust_types(&self) -> String {
+                    let mut accum = String::new();
+                    accum.push_str(&format!("\n#[derive(Debug)]\npub struct {name} {{\n{copied_field}}}\n", name = #name_str_lit, copied_field = #copied_field));
+                    #(#type_gen)*
+                    accum
                 }
             }
 
@@ -106,6 +166,11 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
     let mut try_from_tree_match = Vec::new();
     let mut from_self_match = Vec::new();
     let mut value_fields = Vec::new();
+
+    let mut match_gen = Vec::new();
+    let mut copied_variant = String::new();
+
+    let name_str_lit = name.to_string();
     for (i, variant) in data.variants.iter().enumerate() {
         if !matches!(variant.fields, Fields::Unit) {
             return Err(Error::new(variant.span(), "Config variant can only be unit field"));
@@ -124,6 +189,13 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
         value_fields.push(quote! {
             #variant_str.to_string()
         });
+
+        let value = format!("{}::{}", name.to_token_stream().to_string(), variant_name.to_token_stream().to_string());
+        match_gen.push(quote! {
+            #name::#variant_name => #value.to_string()
+        });
+
+        copied_variant.push_str(&format!("    {},\n", variant_str));
     }
 
     Ok(quote! {
@@ -134,6 +206,16 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
             impl Config for #name {
                 fn into_tree(self, name: String) -> ConfigTree {
                     ConfigTree::Value { name, value: Into::<ConfigValue>::into(self) }
+                }
+
+                fn into_const_rust(&self) -> String {
+                    match self {
+                        #(#match_gen,)*
+                    }
+                }
+
+                fn into_const_rust_types(&self) -> String {
+                    format!("\n#[derive(Debug)]\npub enum {name} {{\n{copied_variant}}}\n", name = #name_str_lit, copied_variant = #copied_variant)
                 }
             }
 

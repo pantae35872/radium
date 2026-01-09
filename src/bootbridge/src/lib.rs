@@ -48,12 +48,6 @@ unsafe impl IdentityMappable for RawData {
     }
 }
 
-#[derive(Debug)]
-pub struct KernelConfig {
-    pub font_pixel_size: usize,
-    pub log_level: u64,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub struct MemoryDescriptor {
@@ -184,7 +178,6 @@ pub struct RawBootBridge {
     dwarf_data: Option<DwarfBaker<'static>>,
     packed: Option<Packed<'static>>,
     kernel_elf: Elf<'static>,
-    kernel_config: KernelConfig,
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
     rsdp: PhysAddr,
@@ -234,12 +227,6 @@ impl BootBridgeBuilder {
     pub fn framebuffer_data(&mut self, data: RawData) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.framebuffer_data = data;
-        self
-    }
-
-    pub fn kernel_config(&mut self, config: KernelConfig) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_config = config;
         self
     }
 
@@ -339,16 +326,8 @@ impl BootBridge {
         self.deref().font_data
     }
 
-    pub fn font_size(&self) -> usize {
-        self.deref().kernel_config.font_pixel_size
-    }
-
     pub fn kernel_base(&self) -> PhysAddr {
         self.deref().kernel_base
-    }
-
-    pub fn log_level(&self) -> u64 {
-        self.deref().kernel_config.log_level
     }
 
     pub fn early_alloc(&self) -> &LinearAllocator {
@@ -507,12 +486,11 @@ impl Debug for BootBridge {
         let boot_bridge = self.deref();
         write!(
             f,
-            "BootBridge {{ ptr: {:#x}, framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, kernel_config: {:?}, rsdp: {} }}",
+            "BootBridge {{ ptr: {:#x}, framebuffer_data: {:?}, font_data: {:?}, kernel_elf: {:?}, rsdp: {} }}",
             self.0.load(Ordering::Relaxed) as u64,
             boot_bridge.framebuffer_data,
             boot_bridge.font_data,
             boot_bridge.kernel_elf,
-            boot_bridge.kernel_config,
             boot_bridge.rsdp.as_u64(),
         )
     }

@@ -58,10 +58,10 @@ impl<'a> CargoProject<'a> {
     /// Get the output dir, ex. target/release/, target/x86_64/release
     pub fn target_dir(&self) -> PathBuf {
         let Some(name) = self.target_name() else {
-            return self.build_path.join(self.config.mode.dir_name());
+            return self.build_path.join(self.config.config.build_mode.dir_name());
         };
 
-        self.build_path.join(name).join(self.config.mode.dir_name())
+        self.build_path.join(name).join(self.config.config.build_mode.dir_name())
     }
 
     /// Build the binary at the provided path with cargo build,

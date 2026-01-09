@@ -63,7 +63,7 @@ pub struct App {
     delta_time: Duration,
     main_screen: MainScreen,
 
-    config: ConfigRoot,
+    config: Arc<ConfigRoot>,
     config_area: ConfigAreaState,
 }
 
@@ -137,7 +137,7 @@ impl App {
                 config: config.clone().into(),
                 ..Default::default()
             },
-            config,
+            config: config.into(),
         }
     }
 
@@ -196,7 +196,7 @@ impl App {
                     if let Some(new_config_root) = self.config_area.key_event(key) {
                         self.main_screen = MainScreen::None;
                         self.last_command = None;
-                        self.config = new_config_root;
+                        self.config = Arc::new(new_config_root);
                         if let Err(err) = config::save(&self.config) {
                             self.main_screen = MainScreen::Error(format!("{err}"));
                         }
@@ -247,12 +247,9 @@ impl App {
             }
             "br" | "build-reexec" => {
                 self.build_error = None;
-                let mode = self.config.build_mode;
+                let config = Arc::clone(&self.config);
                 self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(
-                        &mut executor.lock().unwrap(),
-                        build::BuildConfig { mode, reexec_build_tool: true, ..Default::default() },
-                    )
+                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config, reexec_build_tool: true })
                 }));
             }
             "run" | "r" => {
@@ -260,9 +257,9 @@ impl App {
             }
             "build" | "b" if self.build_cmd_handle.is_none() => {
                 self.build_error = None;
-                let mode = self.config.build_mode;
+                let config = Arc::clone(&self.config);
                 self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { mode, ..Default::default() })
+                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config, reexec_build_tool: false })
                 }));
             }
             "help" | "h" => {

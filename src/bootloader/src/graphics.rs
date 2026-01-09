@@ -12,7 +12,10 @@ use uefi::{
 };
 use uefi_services::system_table;
 
-use crate::context::{InitializationContext, Stage3, Stage4};
+use crate::{
+    config::config,
+    context::{InitializationContext, Stage3, Stage4},
+};
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     if let Some(mode) = system_table.stdout().modes().max_by(|l, r| l.cmp(r)) {
@@ -25,7 +28,6 @@ pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
 
 pub fn initialize_graphics_kernel(ctx: InitializationContext<Stage3>) -> InitializationContext<Stage4> {
     let system_table = system_table();
-    let config = ctx.config();
     let handle = system_table.boot_services().get_handle_for_protocol::<GraphicsOutput>();
     let gop = unsafe {
         system_table.boot_services().open_protocol::<GraphicsOutput>(
@@ -39,7 +41,7 @@ pub fn initialize_graphics_kernel(ctx: InitializationContext<Stage3>) -> Initial
     };
     let mut gop = gop.unwrap();
 
-    let (width, height) = config.screen_resolution();
+    let (width, height) = (config().boot_loader.screen_resolution.width, config().boot_loader.screen_resolution.height);
     let mut best_mode = None;
     let mut best_score = u64::MAX;
 

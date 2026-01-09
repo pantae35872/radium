@@ -1,17 +1,22 @@
 use std::{
     env,
     ffi::OsStr,
-    fs::{OpenOptions, create_dir},
+    fs::{OpenOptions, create_dir, remove_file},
     io::{self, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 use portable_pty::{CommandBuilder, ExitStatus};
 use thiserror::Error;
 
-use crate::{CmdExecutor, build::cargo_project::CargoProject, config::BuildMode};
+use crate::{
+    CmdExecutor,
+    build::cargo_project::CargoProject,
+    config::{BuildMode, Config, ConfigRoot},
+};
 
 mod cargo_project;
 
@@ -46,6 +51,8 @@ pub enum Error {
     CurrentDir { error: io::Error },
     #[error("Failed to create dir failed with error: {error}")]
     CreateDir { error: io::Error },
+    #[error("Failed to generate config.rs file, failed with error: {error}")]
+    GenConfig { error: io::Error },
     #[error("Failed to execute command with io error, {error}")]
     CommandIoError { error: io::Error },
     #[error("Command `{command}` in dir `{dir}`, failed with exit status {status}")]
@@ -74,6 +81,7 @@ impl Builder<'_> {
 
     fn build(mut self) -> Result<(), Error> {
         make_build_dir()?;
+        self.gen_config()?;
 
         let build_tool = self.project(&self.root_path.join("build-tool")).build()?;
         let kernel = self.project(&self.src("kernel")).build()?;
@@ -89,20 +97,50 @@ impl Builder<'_> {
         Ok(())
     }
 
+    fn gen_config(&self) -> Result<(), Error> {
+        let config = format!(
+            r#"
+// GENERATED FILE. DO NOT EDIT, USE `config` COMMAND IN THE BUILD TOOL REPL TO CONFIG.
+
+pub const CONFIG: ConfigRoot = {};
+
+pub const fn config() -> ConfigRoot {{
+    return CONFIG;
+}}
+{}
+"#,
+            self.config.config.into_const_rust(),
+            self.config.config.into_const_rust_types()
+        );
+        let config_rs = self.build_path.join("config.rs");
+        if config_rs.exists() {
+            remove_file(config_rs).map_err(|error| Error::GenConfig { error })?;
+        }
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(self.build_path.join("config.rs"))
+            .and_then(|mut f| f.write_all(config.trim().as_bytes()))
+            .map_err(|error| Error::GenConfig { error })?;
+
+        Ok(())
+    }
+
     fn project<'a>(&'a mut self, path: &'a Path) -> CargoProject<'a> {
         CargoProject::new(path, &self.build_path, &self.config, &mut self.executor)
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct BuildConfig {
-    pub mode: BuildMode,
+    pub config: Arc<ConfigRoot>,
     pub reexec_build_tool: bool,
 }
 
 impl BuildConfig {
     fn into_command(&self, builder: &mut CommandBuilder) {
-        self.mode.into_command(builder);
+        self.config.build_mode.into_command(builder);
     }
 }
 

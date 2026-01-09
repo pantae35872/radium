@@ -17,7 +17,10 @@ use uefi::{
 };
 use uefi_services::system_table;
 
-use crate::context::{InitializationContext, Stage2, Stage3, Stage5, Stage6};
+use crate::{
+    config::config,
+    context::{InitializationContext, Stage2, Stage3, Stage5, Stage6},
+};
 
 pub fn finialize_mapping(
     mut ctx: InitializationContext<Stage5>,
@@ -66,7 +69,6 @@ fn prepare_direct_map(ctx: &mut InitializationContext<Stage5>, memory_map: &Memo
 
 pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> InitializationContext<Stage3> {
     let system_table = system_table();
-    let config = ctx.config();
 
     let mut buf = vec![0; system_table.boot_services().memory_map_size().map_size * 2];
     let mem_map = system_table.boot_services().memory_map(&mut buf).expect("FAILED TO GET MEMORY MAP");
@@ -81,8 +83,8 @@ pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> Initialization
         })
         .map(|e| (e.page_count * PAGE_SIZE) as usize)
         .sum::<usize>();
-    let mem_map_size =
-        page_table_size(mem_map_size, PageLevel::Page4K) + config.early_boot_kernel_page_table_byte_count();
+    let mem_map_size = page_table_size(mem_map_size, PageLevel::Page4K)
+        + config().boot_loader.early_boot_kernel_page_table_page_count as usize * PAGE_SIZE as usize;
     let mem_map_pages = (mem_map_size / PAGE_SIZE as usize) + 1;
 
     let kernel_pages_table = system_table

@@ -8,7 +8,11 @@ use uefi::table::{
 };
 use uefi_services::system_table;
 
-use crate::context::{InitializationContext, Stage0, Stage1, Stage2};
+use crate::{
+    boot_services::LoaderFile,
+    config::config,
+    context::{InitializationContext, Stage1, Stage2},
+};
 
 pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
     config_table
@@ -40,16 +44,14 @@ pub fn load_kernel_elf(ctx: InitializationContext<Stage1>) -> InitializationCont
     ctx.next((entry, PhysAddr::new(program_ptr as u64), elf))
 }
 
-pub fn load_kernel_infos(ctx: InitializationContext<Stage0>) -> InitializationContext<Stage1> {
+pub fn load_kernel_infos() -> InitializationContext<Stage1> {
     let system_table = system_table();
-    let config = ctx.config();
-    let kernel_font = config.font_file().raw_data_permanent();
-    let kernel_file = config.kernel_file().permanent();
-    let dwarf_file = config.dwarf_file().permanent();
-    let packed_file = config.packed_file().permanent();
+    let kernel_font = LoaderFile::root(config().boot_loader.font_file).raw_data_permanent();
+    let kernel_file = LoaderFile::root(config().boot_loader.kernel_file).permanent();
+    let dwarf_file = LoaderFile::root(config().boot_loader.dwarf_file).permanent();
+    let packed_file = LoaderFile::root(config().boot_loader.packed_file).permanent();
     let rsdp = PhysAddr::new(find_rsdp(system_table.config_table()).expect("Failed to find RSDP"));
     let dwarf_file = DwarfBaker::new(dwarf_file);
     let packed_file = Packed::new(packed_file).expect("Packed file not valid");
-    let kernel_config = config.kernel_config();
-    ctx.next((kernel_font, dwarf_file, packed_file, rsdp, kernel_config, kernel_file))
+    InitializationContext::<Stage1>::start(kernel_font, dwarf_file, packed_file, rsdp, kernel_file)
 }

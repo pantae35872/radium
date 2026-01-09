@@ -1,4 +1,8 @@
-use std::{env, path::Path, process::Command};
+use std::{
+    env, fs,
+    path::{Path, absolute},
+    process::Command,
+};
 
 use uuid::Uuid;
 
@@ -11,6 +15,10 @@ fn run(cmd: &mut Command, fail_msg: &str) {
 
 fn main() {
     println!("cargo:rerun-if-changed=./src");
+    println!("cargo:rerun-if-changed=../../build/config.rs");
+    let outdir = env::var_os("OUT_DIR").expect("Out dir must set");
+    fs::copy(absolute(Path::new("../../build/config.rs")).unwrap(), Path::new(&outdir).join("config.rs")).unwrap();
+
     nasm_rs::compile_library_args("bootlib", &["src/boot/boot.asm"], &["-felf64"]).unwrap();
     let outdir = env::var_os("OUT_DIR").expect("Out dir must set");
     let path = Path::new(&outdir).join("trampoline.bin");

@@ -1,5 +1,4 @@
-use alloc::ffi::CString;
-use boot_cfg_parser::toml::{parse_toml, parser::TomlValue};
+use alloc::{ffi::CString, format};
 use bootbridge::RawData;
 use pager::address::PhysAddr;
 use uefi::{
@@ -18,6 +17,8 @@ use uefi::{
 use uefi_raw::protocol::file_system::FileAttribute;
 use uefi_services::{println, system_table};
 
+use crate::config::config;
+
 const DEV_SERVER_IP: IpAddress = IpAddress::new_v4([192, 168, 69, 1]);
 
 /// A read only file, just an abstraction over the uefi file protocol
@@ -27,6 +28,10 @@ pub struct LoaderFile {
 }
 
 impl LoaderFile {
+    pub fn root(file: &'static str) -> Self {
+        Self::new(&format!("{root}\\{file}", root = config().boot_loader.file_root))
+    }
+
     pub fn new(path: &str) -> Self {
         let system_table = system_table();
         let protocol = system_table
@@ -133,13 +138,5 @@ impl Drop for LoaderFile {
                 .free_pool(self.buffer as *mut u8)
                 .expect("Failed to deallocate an unused file");
         }
-    }
-}
-
-impl From<LoaderFile> for TomlValue {
-    fn from(value: LoaderFile) -> Self {
-        let buffer = value.buffer();
-        parse_toml(core::str::from_utf8(buffer).expect("File is not a valid utf8, can't convert into toml value"))
-            .expect("Failed to parse a toml file")
     }
 }

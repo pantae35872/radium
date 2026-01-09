@@ -11,6 +11,101 @@ use thiserror::Error;
 
 use crate::build::{self, make_build_dir};
 
+#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
+pub struct ConfigRoot {
+    #[config_name = "Build Mode"]
+    pub build_mode: BuildMode,
+    #[config_name = "Bootloader"]
+    pub boot_loader: Bootloader,
+    #[config_name = "Kernel"]
+    pub kernel: Kernel,
+}
+
+#[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]
+pub enum BuildMode {
+    #[default]
+    Debug,
+    Release,
+}
+
+//file_root = "\\boot"
+//kernel_file = "kernel.bin"
+//font_file = "kernel-font.ttf"
+//dwarf_file = "dwarf.baker"
+//packed_file = "usr_bin.pak"
+//screen_resolution = { width = 1920, height = 1080 }
+//any_key_boot = false
+//early_boot_kernel_page_table_page_count = 64 # 64 Pages for kernel elf
+
+#[derive(Config, Serialize, SmartDefault, Deserialize, Debug, Clone)]
+pub struct Bootloader {
+    #[config_name = "Any key boot"]
+    pub any_key_boot: bool,
+
+    #[config_name = "Screen resolution"]
+    pub screen_resolution: ScreenResolution,
+
+    #[config_name = "File root"]
+    #[default = "\\boot"]
+    pub file_root: String,
+
+    #[config_name = "Kernel File"]
+    #[default = "kernel.bin"]
+    pub kernel_file: String,
+
+    #[config_name = "Font File"]
+    #[default = "kernel-font.ttf"]
+    pub font_file: String,
+
+    #[config_name = "Dwarf File"]
+    #[default = "dwarf.baker"]
+    pub dwarf_file: String,
+
+    #[config_name = "Packed File"]
+    #[default = "usr_bin.pak"]
+    pub packed_file: String,
+
+    #[config_name = "Early Boot Kernel Page Table Page count"]
+    #[default = 64]
+    pub early_boot_kernel_page_table_page_count: i32,
+}
+
+#[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
+pub struct ScreenResolution {
+    #[config_name = "Width"]
+    #[default = 1920]
+    pub width: i32,
+    #[config_name = "Height"]
+    #[default = 1080]
+    pub height: i32,
+}
+
+#[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
+pub struct Kernel {
+    #[config_name = "Log level"]
+    pub log_level: LogLevel,
+    #[config_name = "Font size"]
+    #[default(14)]
+    pub font_size: i32,
+}
+
+#[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    #[default]
+    Info,
+    Warning,
+    Error,
+    Critical,
+}
+
+pub trait Config: TryFrom<ConfigTree, Error = ConfigTree> {
+    fn into_tree(self, name: String) -> ConfigTree;
+    fn into_const_rust(&self) -> String;
+    fn into_const_rust_types(&self) -> String;
+}
+
 pub fn load() -> ConfigRoot {
     let Some(config_path) = make_build_dir().ok().map(|p| p.join("config.toml")) else {
         return ConfigRoot::default();
@@ -56,55 +151,6 @@ pub fn save(config: &ConfigRoot) -> Result<(), Error> {
     Ok(())
 }
 
-#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
-pub struct ConfigRoot {
-    #[config_name = "Build Mode"]
-    pub build_mode: BuildMode,
-    #[config_name = "Bootloader"]
-    pub boot_loader: Bootloader,
-    #[config_name = "Kernel"]
-    pub kernel: Kernel,
-}
-
-#[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]
-pub enum BuildMode {
-    #[default]
-    Debug,
-    Release,
-}
-
-#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
-pub struct Bootloader {
-    #[config_name = "Any key boot"]
-    pub any_key_boot: bool,
-    #[config_name = "Kernel File"]
-    pub kernel_file: String,
-}
-
-#[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
-pub struct Kernel {
-    #[config_name = "Log level"]
-    pub log_level: LogLevel,
-    #[config_name = "Font size"]
-    #[default(14)]
-    pub font_size: i32,
-}
-
-#[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]
-pub enum LogLevel {
-    Trace,
-    Debug,
-    #[default]
-    Info,
-    Warning,
-    Error,
-    Critical,
-}
-
-pub trait Config: TryFrom<ConfigTree, Error = ConfigTree> {
-    fn into_tree(self, name: String) -> ConfigTree;
-}
-
 #[derive(Debug, Clone)]
 pub enum ConfigTree {
     Group { name: String, members: Vec<ConfigTree> },
@@ -120,7 +166,7 @@ pub enum ConfigValue {
 }
 
 macro_rules! cfg_value_impl {
-    ($variant: ident($ty: ty)) => {
+    ($variant: ident($ty: ty), $formatter: literal) => {
         impl From<$ty> for ConfigValue {
             fn from(value: $ty) -> Self {
                 Self::$variant(value)
@@ -130,6 +176,14 @@ macro_rules! cfg_value_impl {
         impl Config for $ty {
             fn into_tree(self, name: String) -> ConfigTree {
                 ConfigTree::Value { name, value: ConfigValue::$variant(self) }
+            }
+
+            fn into_const_rust(&self) -> String {
+                format!($formatter, self)
+            }
+
+            fn into_const_rust_types(&self) -> String {
+                String::new()
             }
         }
 
@@ -146,9 +200,9 @@ macro_rules! cfg_value_impl {
     };
 }
 
-cfg_value_impl!(Number(i32));
-cfg_value_impl!(Bool(bool));
-cfg_value_impl!(Text(String));
+cfg_value_impl!(Number(i32), "{}");
+cfg_value_impl!(Bool(bool), "{}");
+cfg_value_impl!(Text(String), "r\"{}\"");
 
 impl Display for ConfigValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

@@ -1,7 +1,4 @@
-use core::mem::forget;
-
 use bakery::DwarfBaker;
-use boot_cfg_parser::toml::parser::TomlValue;
 
 macro_rules! create_initialization_chain {
     (
@@ -122,7 +119,7 @@ macro_rules! select_context {
     )*};
 }
 
-use bootbridge::{BootBridgeBuilder, GraphicsInfo, KernelConfig, MemoryMap, RawBootBridge, RawData};
+use bootbridge::{BootBridgeBuilder, GraphicsInfo, MemoryMap, RawBootBridge, RawData};
 use packery::Packed;
 use pager::{
     address::PhysAddr,
@@ -136,17 +133,12 @@ use santa::Elf;
 #[allow(unused_imports)]
 pub(crate) use select_context;
 
-use crate::config::BootConfig;
-
 create_initialization_chain! {
-    Stage0 {
-        config: TomlValue,
-    } => Stage1 {
+    Stage1 {
         font_data: RawData,
         dwarf_data: DwarfBaker<'static>,
         packed: Packed<'static>,
         rsdp: PhysAddr,
-        kernel_config: KernelConfig,
         kernel_file: &'static [u8],
     } => Stage2 {
         entry_point: u64,
@@ -192,11 +184,6 @@ pub struct InitializationContext<T: AnyInitializationStage> {
 }
 
 select_context!(
-    (Stage0, Stage1, Stage2, Stage3, Stage4, Stage5, Stage6) => {
-        pub fn config(&self) -> BootConfig<'_> {
-            BootConfig::parse(self.context().config())
-        }
-    }
     (Stage3, Stage4, Stage5, Stage6) => {
         pub fn active_table(&self) -> ActivePageTable<DirectLevel4> {
             unsafe { ActivePageTable::new_custom(self.context().table as *mut Table<DirectLevel4>) }
@@ -207,9 +194,6 @@ select_context!(
 impl InitializationContext<Stage6> {
     pub fn build_bridge(self, mut builder: BootBridgeBuilder) -> *mut RawBootBridge {
         let mut table = self.active_table();
-        // NOTE: The config must be forget or otherwise it'll call deallocate which will crash
-        // after exiting boot service
-        forget(self.context.config);
 
         let Stage6 {
             elf,
@@ -219,13 +203,13 @@ impl InitializationContext<Stage6> {
             memory_map,
             font_data,
             graphics_info,
-            kernel_config,
             kernel_base,
             frame_buffer,
             runtime_service,
             rsdp,
             ..
         } = self.context;
+
         table.identity_map_object(&elf, &mut allocator);
         table.identity_map_object(&dwarf_data, &mut allocator);
         table.identity_map_object(&builder, &mut allocator);
@@ -235,7 +219,6 @@ impl InitializationContext<Stage6> {
             .font_data(font_data)
             .early_alloc(allocator)
             .graphics_info(graphics_info)
-            .kernel_config(kernel_config)
             .kernel_base(kernel_base)
             .framebuffer_data(frame_buffer)
             .runtime_service(runtime_service)
@@ -249,8 +232,14 @@ impl InitializationContext<Stage6> {
 }
 
 impl<T: AnyInitializationStage> InitializationContext<T> {
-    pub fn start(config: TomlValue) -> InitializationContext<Stage0> {
-        InitializationContext { context: Stage0 { config } }
+    pub fn start(
+        font_data: RawData,
+        dwarf_data: DwarfBaker<'static>,
+        packed: Packed<'static>,
+        rsdp: PhysAddr,
+        kernel_file: &'static [u8],
+    ) -> InitializationContext<Stage1> {
+        InitializationContext { context: Stage1 { font_data, dwarf_data, packed, rsdp, kernel_file } }
     }
 
     pub fn context(&self) -> &T {

@@ -56,8 +56,6 @@ BAKER_BIN := $(abspath $(BUILD_DIR)/release/baker)
 PACKER_BIN := $(abspath $(BUILD_DIR)/release/packer)
 KERNEL_BUILD_BIN := $(abspath $(BUILD_DIR)/kernel.bin)
 BUILD_MODE_FILE := $(BUILD_DIR)/.build_mode
-BOOT_INFO := bootinfo.toml
-TEST_BOOT_INFO := test_bootinfo.toml
 KERNEL_FONT := kernel-font.ttf
 
 OVMF := OVMF.fd
@@ -170,16 +168,10 @@ $(PACKER_BIN):
 $(BAKER_BIN):
 	cd post-processor/baker && cargo build --release
 
-$(FAT_IMG): $(BOOT_INFO) $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(USERS_FILE) $(BOOTLOADER_BIN)
+$(FAT_IMG): $(BUILD_DIR) $(KERNEL_FONT) $(DWARF_FILE) $(USERS_FILE) $(BOOTLOADER_BIN)
 	dd if=/dev/zero of=$(FAT_IMG) bs=1M count=64 status=none
 	mkfs.vfat -F32 $(FAT_IMG)
 	mmd -i $(FAT_IMG) ::/EFI ::/EFI/BOOT ::/boot
-ifneq ($(STILL_TESTING),1)
-	mcopy -D o -i $(FAT_IMG) $(BOOT_INFO) ::/boot
-else
-	mcopy -D o -i $(FAT_IMG) $(TEST_BOOT_INFO) ::/boot
-	mmove -D o -i $(FAT_IMG) boot/$(TEST_BOOT_INFO) boot/$(BOOT_INFO) 
-endif
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_FONT) $(DWARF_FILE) $(USERS_FILE) ::/boot
 	mcopy -D o -i $(FAT_IMG) $(KERNEL_BUILD_BIN) ::/boot 
 	mcopy -D o -i $(FAT_IMG) $(BUILD_DIR)/BOOTX64.EFI ::/EFI/BOOT

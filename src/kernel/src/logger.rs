@@ -7,7 +7,7 @@ use sentinel::{LogLevel, LoggerBackend, log, set_logger};
 use static_log::StaticLog;
 
 use crate::{
-    initialization_context::{InitializationContext, Stage0},
+    config::{self, config},
     initialize_guard,
     interrupt::{self, CORE_ID, IS_IN_ISR},
     print, serial_print,
@@ -53,9 +53,16 @@ impl MainLogger {
     ///
     /// # Safety
     /// the caller must ensure that this is only being called on kernel initialization
-    pub unsafe fn set_level(&self, level: u64) {
+    pub unsafe fn set_level(&self, level: config::LogLevel) {
         unsafe {
-            *self.level.get() = LogLevel::from(level);
+            *self.level.get() = match level {
+                config::LogLevel::Trace => LogLevel::Trace,
+                config::LogLevel::Debug => LogLevel::Debug,
+                config::LogLevel::Info => LogLevel::Info,
+                config::LogLevel::Warning => LogLevel::Warning,
+                config::LogLevel::Error => LogLevel::Error,
+                config::LogLevel::Critical => LogLevel::Critical,
+            };
         }
     }
 
@@ -127,11 +134,11 @@ impl LoggerBackend for MainLogger {
     }
 }
 
-pub fn init(ctx: &InitializationContext<Stage0>) {
+pub fn init() {
     initialize_guard!();
     // SAFETY: This is safe because the above interrupt guard
     unsafe {
-        LOGGER.set_level(ctx.context().boot_bridge().log_level());
+        LOGGER.set_level(config().kernel.log_level);
     };
     set_logger(&LOGGER);
     log!(Trace, "Logging start");

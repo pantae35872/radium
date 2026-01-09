@@ -43,6 +43,10 @@ pub mod syscall;
 pub mod userland;
 pub mod utils;
 
+pub mod config {
+    include!(concat!(env!("OUT_DIR"), "/config.rs"));
+}
+
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
@@ -79,7 +83,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
 
     let boot_bridge = BootBridge::new(boot_bridge);
     let mut stage0 = InitializationContext::<Stage0>::start(boot_bridge);
-    logger::init(&stage0);
+    logger::init();
     qemu_init(&mut stage0);
     let stage1 = memory::init(stage0);
     let mut stage2 = acpi::init(stage1);
@@ -100,9 +104,8 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     userland::init(&mut stage4);
     pit::init(&mut stage4);
     syscall::init(&mut stage4);
+    LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
     smp::init_aps(stage4);
-
-    //LOGGER.flush_all(&[|s| serial_print!("{s}"), |s| print!("{s}")]);
 
     userland::pipeline::spawn_init();
     userland::pipeline::start_scheduling();
