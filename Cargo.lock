@@ -203,6 +203,7 @@ dependencies = [
  "oklab",
  "portable-pty",
  "ratatui",
+ "serde",
  "smart-default",
  "thiserror 2.0.17",
  "toml",

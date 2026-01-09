@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use syn::{
     DataEnum, DataStruct, DeriveInput, Error, Fields, Ident, Meta, MetaNameValue, parse_macro_input, spanned::Spanned,
 };
@@ -45,13 +45,11 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
         field_names.push(field_name.clone());
         field_config_names.push(cfg_name);
     }
-    let mod_name = format_ident!("__impl_config_{name}");
     Ok(quote! {
-        #[allow(nonstandard_style)]
-        mod #mod_name {
+        const _: () = {
             use crate::config::{Config, ConfigTree};
-            use super::*;
 
+            #[automatically_derived]
             impl Config for #name
             where
                 #(#field_where_clause,)*
@@ -61,6 +59,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                 }
             }
 
+            #[automatically_derived]
             impl TryFrom<Vec<ConfigTree>> for #name
             where
                 #(#field_where_clause,)*
@@ -73,6 +72,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                 }
             }
 
+            #[automatically_derived]
             impl TryFrom<ConfigTree> for #name
             where
                 #(#field_where_clause,)*
@@ -87,6 +87,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                 }
             }
 
+            #[automatically_derived]
             impl From<#name> for Vec<ConfigTree>
             where
                 #(#field_where_clause,)*
@@ -97,7 +98,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                     ]
                 }
             }
-        }
+        };
     })
 }
 
@@ -125,19 +126,18 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
         });
     }
 
-    let mod_name = format_ident!("__impl_config_{name}");
     Ok(quote! {
-        #[allow(nonstandard_style)]
-        mod #mod_name {
-            use super::#name;
+        const _: () = {
             use crate::config::{Config, ConfigTree, ConfigValue};
 
+            #[automatically_derived]
             impl Config for #name {
                 fn into_tree(self, name: String) -> ConfigTree {
                     ConfigTree::Value { name, value: Into::<ConfigValue>::into(self) }
                 }
             }
 
+            #[automatically_derived]
             impl TryFrom<ConfigTree> for #name {
                 type Error = ConfigTree;
 
@@ -149,6 +149,7 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
                 }
             }
 
+            #[automatically_derived]
             impl From<#name> for ConfigValue {
                 fn from(value: #name) -> Self {
                     let current = match value {
@@ -160,6 +161,6 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
                     }
                 }
             }
-        }
+        };
     })
 }

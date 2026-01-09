@@ -25,7 +25,7 @@ use ratatui::{
 use thiserror::Error;
 
 use crate::{
-    config::{ConfigRoot, ConfigTree},
+    config::ConfigRoot,
     widget::{
         CenteredParagraph,
         config_area::{ConfigArea, ConfigAreaState},
@@ -117,7 +117,7 @@ impl App {
         let (running_cmd_name, child_process_name) = channel();
         let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
 
-        let config = Into::<Vec<ConfigTree>>::into(ConfigRoot::default());
+        let config = config::load();
 
         Self {
             prompt: PromtState::default(),
@@ -132,8 +132,12 @@ impl App {
             previous_render_start: Instant::now(),
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
-            config: ConfigRoot::default(),
-            config_area: ConfigAreaState { config_staging: config.clone(), config, ..Default::default() },
+            config_area: ConfigAreaState {
+                config_staging: config.clone().into(),
+                config: config.clone().into(),
+                ..Default::default()
+            },
+            config,
         }
     }
 
@@ -193,6 +197,9 @@ impl App {
                         self.main_screen = MainScreen::None;
                         self.last_command = None;
                         self.config = new_config_root;
+                        if let Err(err) = config::save(&self.config) {
+                            self.main_screen = MainScreen::Error(format!("{err}"));
+                        }
                         self.redraw(&mut repl_terminal, &mut main_terminal)?;
                     }
                     continue;

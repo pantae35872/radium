@@ -15,16 +15,6 @@ use crate::{CmdExecutor, build::cargo_project::CargoProject, config::BuildMode};
 
 mod cargo_project;
 
-pub fn project_dir() -> Result<PathBuf, Error> {
-    let mut current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
-
-    while !current_dir.file_name().is_some_and(|e| e == OsStr::new("radium")) {
-        current_dir = current_dir.parent().expect("Failed to get to the project root!").to_path_buf();
-    }
-
-    Ok(current_dir)
-}
-
 pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
     let current_dir = project_dir()?;
     Builder {
@@ -36,6 +26,16 @@ pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Erro
         userland_path: current_dir.join("userland"),
     }
     .build()
+}
+
+pub fn project_dir() -> Result<PathBuf, Error> {
+    let mut current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
+
+    while !current_dir.file_name().is_some_and(|e| e == OsStr::new("radium")) {
+        current_dir = current_dir.parent().expect("Failed to get to the project root!").to_path_buf();
+    }
+
+    Ok(current_dir)
 }
 
 #[derive(Error, Debug)]
@@ -73,7 +73,7 @@ impl Builder<'_> {
     }
 
     fn build(mut self) -> Result<(), Error> {
-        self.make_build_dir()?;
+        make_build_dir()?;
 
         let build_tool = self.project(&self.root_path.join("build-tool")).build()?;
         let kernel = self.project(&self.src("kernel")).build()?;
@@ -91,23 +91,6 @@ impl Builder<'_> {
 
     fn project<'a>(&'a mut self, path: &'a Path) -> CargoProject<'a> {
         CargoProject::new(path, &self.build_path, &self.config, &mut self.executor)
-    }
-
-    fn make_build_dir(&self) -> Result<(), Error> {
-        if !self.build_path.exists() {
-            create_dir(&self.build_path).map_err(|error| Error::CreateDir { error })?;
-        }
-
-        let mut gitignore = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(self.build_path.join(".gitignore"))
-            .map_err(|error| Error::CreateDir { error })?;
-        gitignore.write_all("*".as_bytes()).map_err(|error| Error::CreateDir { error })?;
-        gitignore.flush().map_err(|error| Error::CreateDir { error })?;
-
-        Ok(())
     }
 }
 
@@ -137,4 +120,26 @@ impl BuildMode {
             Self::Release => "release",
         }
     }
+}
+
+pub fn build_path() -> Result<PathBuf, Error> {
+    Ok(project_dir()?.join("build"))
+}
+
+pub fn make_build_dir() -> Result<PathBuf, Error> {
+    let build_path = build_path()?;
+    if !build_path.exists() {
+        create_dir(&build_path).map_err(|error| Error::CreateDir { error })?;
+    }
+
+    let mut gitignore = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(build_path.join(".gitignore"))
+        .map_err(|error| Error::CreateDir { error })?;
+    gitignore.write_all("*".as_bytes()).map_err(|error| Error::CreateDir { error })?;
+    gitignore.flush().map_err(|error| Error::CreateDir { error })?;
+
+    Ok(build_path)
 }

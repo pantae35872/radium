@@ -1,9 +1,62 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    fs::{OpenOptions, remove_file},
+    io::{self, Read, Write},
+};
 
 use build_tool_proc::Config;
+use serde::{Deserialize, Serialize};
 use smart_default::SmartDefault;
+use thiserror::Error;
 
-#[derive(Config, Debug, Clone, Default)]
+use crate::build::{self, make_build_dir};
+
+pub fn load() -> ConfigRoot {
+    let Some(config_path) = make_build_dir().ok().map(|p| p.join("config.toml")) else {
+        return ConfigRoot::default();
+    };
+    if !config_path.exists() {
+        return ConfigRoot::default();
+    }
+
+    let mut buf = String::new();
+    let Some(_readed) =
+        OpenOptions::new().read(true).open(config_path).and_then(|mut config| config.read_to_string(&mut buf)).ok()
+    else {
+        return ConfigRoot::default();
+    };
+
+    toml::from_str(&buf).unwrap_or_default()
+}
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("Serialization for the config failed, failed with `{0}`")]
+    SerializeFailed(#[from] toml::ser::Error),
+    #[error("Build dir failed, failed with `{0}`")]
+    BuildDir(#[from] build::Error),
+    #[error("failed to save config, failed with `{0}`")]
+    SaveConfig(#[from] io::Error),
+}
+
+pub fn save(config: &ConfigRoot) -> Result<(), Error> {
+    let config_path = make_build_dir().map(|p| p.join("config.toml"))?;
+    let toml_string = toml::to_string_pretty(config)?;
+
+    if config_path.exists() {
+        remove_file(&config_path)?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(config_path)
+        .and_then(|mut config| config.write_all(toml_string.as_bytes()))?;
+
+    Ok(())
+}
+
+#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ConfigRoot {
     #[config_name = "Build Mode"]
     pub build_mode: BuildMode,
@@ -13,14 +66,14 @@ pub struct ConfigRoot {
     pub kernel: Kernel,
 }
 
-#[derive(Config, Debug, Clone, Copy, Default)]
+#[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]
 pub enum BuildMode {
     #[default]
     Debug,
     Release,
 }
 
-#[derive(Config, Debug, Clone, Default)]
+#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
 pub struct Bootloader {
     #[config_name = "Any key boot"]
     pub any_key_boot: bool,
@@ -28,7 +81,7 @@ pub struct Bootloader {
     pub kernel_file: String,
 }
 
-#[derive(Config, Debug, Clone, SmartDefault)]
+#[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
 pub struct Kernel {
     #[config_name = "Log level"]
     pub log_level: LogLevel,
@@ -37,7 +90,7 @@ pub struct Kernel {
     pub font_size: i32,
 }
 
-#[derive(Config, Clone, Copy, Debug, Default)]
+#[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]
 pub enum LogLevel {
     Trace,
     Debug,
