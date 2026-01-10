@@ -14,11 +14,18 @@ use thiserror::Error;
 
 use crate::{
     CmdExecutor,
-    build::cargo_project::CargoProject,
+    build::{
+        cargo_project::CargoProject,
+        iso::{
+            Iso, PrimaryVolumeDescriptor, TerminatorDescriptor,
+            writer::{DateTime, IsoStrA, IsoStrD},
+        },
+    },
     config::{BuildMode, Config, ConfigRoot},
 };
 
 mod cargo_project;
+mod iso;
 
 pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
     let current_dir = project_dir()?;
@@ -53,6 +60,8 @@ pub enum Error {
     CreateDir { error: io::Error },
     #[error("Failed to generate config.rs file, failed with error: {error}")]
     GenConfig { error: io::Error },
+    #[error("Failed to generate iso file, failed with error: {error}")]
+    GenIso { error: io::Error },
     #[error("Failed to execute command with io error, {error}")]
     CommandIoError { error: io::Error },
     #[error("Command `{command}` in dir `{dir}`, failed with exit status {status}")]
@@ -88,11 +97,58 @@ impl Builder<'_> {
         let bootloader = self.project(&self.src("bootloader")).build()?;
         let init = self.project(&self.userland("init")).build()?;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
+        self.gen_iso()?;
 
         if self.config.reexec_build_tool {
             ratatui::restore();
             return Err(Error::ReExecFailed { error: Command::new(build_tool).exec() });
         }
+
+        Ok(())
+    }
+
+    fn gen_iso(&self) -> Result<(), Error> {
+        let mut iso = Iso::new();
+        iso.add_descriptor(PrimaryVolumeDescriptor {
+            system_identifier: IsoStrA::new(""),
+            volume_identifier: IsoStrD::new("Radium disk image"),
+            volume_space_size: 16,
+            volume_set_size: 1,
+            volume_sequence_number: 0,
+            logical_block_size: 2048,
+            path_table_size: 0,
+            l_lba_path_table_location: 0,
+            l_lba_optional_path_table_location: 0,
+            m_lba_path_table_location: 0,
+            m_lba_optional_path_table_location: 0,
+            root_directory_entry: [0; _],
+            volume_set_identifier: IsoStrD::new("A"),
+            publisher_identifier: IsoStrA::new(""),
+            data_preparer_identifier: IsoStrA::new("I WROTE MY OWN"),
+            application_identifier: IsoStrA::new(""),
+            copyright_file_identifier: IsoStrD::new(""),
+            abstract_file_identifier: IsoStrD::new(""),
+            bibliographic_file_identifier: IsoStrD::new(""),
+            volume_creation_date: DateTime::now(),
+            volume_modification: DateTime::now(),
+            volume_expiration_date: DateTime::empty(),
+            volume_effective_date: DateTime::empty(),
+            application_used: [0; _],
+        });
+        iso.add_descriptor(TerminatorDescriptor);
+        let iso_bytes = iso.build();
+
+        let out_iso = self.build_path.join("radium.iso");
+        if out_iso.exists() {
+            remove_file(&out_iso).map_err(|error| Error::GenConfig { error })?;
+        }
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(out_iso)
+            .and_then(|mut f| f.write_all(&iso_bytes))
+            .map_err(|error| Error::GenIso { error })?;
 
         Ok(())
     }

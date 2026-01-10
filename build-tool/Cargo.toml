@@ -12,6 +12,9 @@ toml = "0.9.10"
 build-tool-proc = { path = "../build-tool-proc" }
 smart-default = "0.7.1"
 serde = { version = "1.0.228", features = ["derive"]}
+bit_field = "0.10.2"
+paste = "1.0.15"
+chrono = "0.4.42"
 
 [dependencies.arboard]
 version = "3.6.1"
