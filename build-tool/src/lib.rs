@@ -1,4 +1,5 @@
 #![feature(if_let_guard)]
+#![feature(vec_push_within_capacity)]
 #![feature(string_from_utf8_lossy_owned)]
 
 use std::{

@@ -2,7 +2,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::{OpenOptions, create_dir, remove_file},
-    io::{self, Write},
+    io::{self, Read, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
@@ -16,10 +16,7 @@ use crate::{
     CmdExecutor,
     build::{
         cargo_project::CargoProject,
-        iso::{
-            Iso, PrimaryVolumeDescriptor, TerminatorDescriptor,
-            writer::{DateTime, IsoStrA, IsoStrD},
-        },
+        iso::{Iso, writer::IsoFileStr},
     },
     config::{BuildMode, Config, ConfigRoot},
 };
@@ -97,7 +94,7 @@ impl Builder<'_> {
         let bootloader = self.project(&self.src("bootloader")).build()?;
         let init = self.project(&self.userland("init")).build()?;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
-        self.gen_iso()?;
+        self.gen_iso(kernel)?;
 
         if self.config.reexec_build_tool {
             ratatui::restore();
@@ -107,36 +104,19 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn gen_iso(&self) -> Result<(), Error> {
-        let mut iso = Iso::new();
-        iso.add_descriptor(PrimaryVolumeDescriptor {
-            system_identifier: IsoStrA::new(""),
-            volume_identifier: IsoStrD::new("Radium disk image"),
-            volume_space_size: 16,
-            volume_set_size: 1,
-            volume_sequence_number: 0,
-            logical_block_size: 2048,
-            path_table_size: 0,
-            l_lba_path_table_location: 0,
-            l_lba_optional_path_table_location: 0,
-            m_lba_path_table_location: 0,
-            m_lba_optional_path_table_location: 0,
-            root_directory_entry: [0; _],
-            volume_set_identifier: IsoStrD::new("A"),
-            publisher_identifier: IsoStrA::new(""),
-            data_preparer_identifier: IsoStrA::new("I WROTE MY OWN"),
-            application_identifier: IsoStrA::new(""),
-            copyright_file_identifier: IsoStrD::new(""),
-            abstract_file_identifier: IsoStrD::new(""),
-            bibliographic_file_identifier: IsoStrD::new(""),
-            volume_creation_date: DateTime::now(),
-            volume_modification: DateTime::now(),
-            volume_expiration_date: DateTime::empty(),
-            volume_effective_date: DateTime::empty(),
-            application_used: [0; _],
+    fn gen_iso(&self, kernel: PathBuf) -> Result<(), Error> {
+        let mut kernel_file = OpenOptions::new().read(true).open(kernel).map_err(|error| Error::GenIso { error })?;
+        let mut kernel_data = Vec::new();
+        kernel_file.read_to_end(&mut kernel_data).map_err(|error| Error::GenIso { error })?;
+        let iso = Iso::new(|root| {
+            root.file(IsoFileStr::new("hello.txt"), "Hello !!!".as_bytes().to_vec())
+                .dir(IsoFileStr::new("test_dir"), |dir| {
+                    dir.file(IsoFileStr::new("TestFile.txt"), "Another one".as_bytes().to_vec());
+                })
+                .dir(IsoFileStr::new("boot"), |dir| {
+                    dir.file(IsoFileStr::new("kernel.bin"), kernel_data);
+                });
         });
-        iso.add_descriptor(TerminatorDescriptor);
-        let iso_bytes = iso.build();
 
         let out_iso = self.build_path.join("radium.iso");
         if out_iso.exists() {
@@ -147,7 +127,7 @@ impl Builder<'_> {
             .write(true)
             .truncate(true)
             .open(out_iso)
-            .and_then(|mut f| f.write_all(&iso_bytes))
+            .and_then(|mut f| f.write_all(&iso.build()))
             .map_err(|error| Error::GenIso { error })?;
 
         Ok(())

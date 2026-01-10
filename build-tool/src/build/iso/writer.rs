@@ -3,7 +3,7 @@
 //! Derived from:
 //! http://wiki.osdev.org/ISO_9660#Numerical_formats
 
-use chrono::{Datelike, Local, Timelike};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
 
 #[derive(Debug, Clone, Default)]
 pub struct TypeWriter {
@@ -57,9 +57,40 @@ impl TypeWriter {
         self
     }
 
-    pub fn write_date_time(&mut self, datetime: &DateTime) -> &mut Self {
-        self.write_str(&datetime.time);
-        self.write_u8(datetime.timezone);
+    pub fn write_date_time_dir(&mut self, time: DateTime<Local>) -> &mut Self {
+        let timezone = (time.offset().local_minus_utc() / (15 * 60)) as i8 as u8;
+        self.write_u8(
+            time.to_utc()
+                .years_since(DateTime::from_naive_utc_and_offset(
+                    NaiveDate::from_ymd_opt(1900, 1, 1).unwrap().into(),
+                    Utc,
+                ))
+                .unwrap() as u8,
+        );
+        self.write_u8(time.month() as u8);
+        self.write_u8(time.day() as u8);
+        self.write_u8(time.hour() as u8);
+        self.write_u8(time.minute() as u8);
+        self.write_u8(time.second() as u8);
+        self.write_u8(timezone);
+        self
+    }
+
+    pub fn write_date_time_ascii(&mut self, time: DateTime<Local>) -> &mut Self {
+        let timezone = (time.offset().local_minus_utc() / (15 * 60)) as i8 as u8;
+        let time = IsoStrD::new(format!(
+            "{:0>4}{:0>2}{:0>2}{:0>2}{:0>2}{:0>2}{:0>2}",
+            time.year(),
+            time.month(),
+            time.day(),
+            time.hour(),
+            time.minute(),
+            time.second(),
+            0, // FIXME: WHY, Hundredths of a second from 0 to 99.
+        ));
+        assert_eq!(time.as_ref().len(), 16);
+        self.write_str(&time);
+        self.write_u8(timezone);
         self
     }
 
@@ -97,44 +128,40 @@ impl TypeWriter {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DateTime {
-    time: IsoStrD,
-    timezone: u8,
-}
-
-impl From<chrono::DateTime<Local>> for DateTime {
-    fn from(time: chrono::DateTime<Local>) -> Self {
-        let timezone = (time.offset().local_minus_utc() / (15 * 60)) as i8 as u8;
-        let time = IsoStrD::new(format!(
-            "{:0>4}{:0>2}{:0>2}{:0>2}{:0>2}{:0>2}{:0>2}",
-            time.year(),
-            time.month(),
-            time.day(),
-            time.hour(),
-            time.minute(),
-            time.second(),
-            0, // FIXME: WHY, Hundredths of a second from 0 to 99.
-        ));
-        assert_eq!(time.as_ref().len(), 16);
-        Self { time, timezone }
-    }
-}
-
-impl DateTime {
-    pub fn empty() -> Self {
-        Self { time: IsoStrD::new("0000000000000000"), timezone: 0 }
-    }
-
-    pub fn now() -> Self {
-        Self::from(Local::now())
-    }
-}
-
 pub trait IsoStr: AsRef<str> {}
 
 impl IsoStr for IsoStrD {}
 impl IsoStr for IsoStrA {}
+impl IsoStr for IsoFileStr {}
+
+#[derive(Debug, Default, PartialEq, Eq, Clone)]
+pub struct IsoFileStr(String);
+
+impl IsoFileStr {
+    pub fn new<T: AsRef<str>>(str: T) -> Self {
+        let ascii = str.as_ref().chars().map(|c| if c.is_ascii() { c as u8 } else { b'_' });
+        let converted = ascii
+            .map(|c| match c {
+                b'a'..=b'z' => c - 32,
+                b'A'..=b'Z' => c,
+                b'0'..=b'9' => c,
+                b'.' => c,
+                b' ' => c,
+                b'_' => c,
+                _ => b'_',
+            })
+            .chain([b';', b'1'])
+            .map(|c| c as char)
+            .collect();
+        Self(converted)
+    }
+}
+
+impl AsRef<str> for IsoFileStr {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct IsoStrD(String);

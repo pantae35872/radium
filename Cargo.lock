@@ -202,6 +202,7 @@ version = "0.1.0"
 dependencies = [
  "arboard",
  "bit_field",
+ "bitflags 2.10.0",
  "build-tool-proc",
  "chrono",
  "oklab",
