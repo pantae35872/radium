@@ -116,7 +116,7 @@ socat:
 	socat -,echo=0,icanon=0 unix-connect:qemu-monitor-socket
 
 run: $(DISK_FILE) $(OVMF)
-	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/os.iso -monitor unix:qemu-monitor-socket,server,nowait
+	qemu-system-x86_64 $(QEMU_FLAGS) $(KVM_FLAGS) -display sdl -cdrom $(BUILD_DIR)/radium.iso -monitor unix:qemu-monitor-socket,server,nowait
 
 dbg-run: $(DISK_FILE) $(OVMF)
 	@echo $$$$ > /tmp/dbg_make_pid.txt; \

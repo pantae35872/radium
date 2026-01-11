@@ -108,15 +108,14 @@ impl Builder<'_> {
         let mut kernel_file = OpenOptions::new().read(true).open(kernel).map_err(|error| Error::GenIso { error })?;
         let mut kernel_data = Vec::new();
         kernel_file.read_to_end(&mut kernel_data).map_err(|error| Error::GenIso { error })?;
-        let iso = Iso::new(|root| {
-            root.file(IsoFileStr::new("hello.txt"), "Hello !!!".as_bytes().to_vec())
-                .dir(IsoFileStr::new("test_dir"), |dir| {
-                    dir.file(IsoFileStr::new("TestFile.txt"), "Another one".as_bytes().to_vec());
-                })
-                .dir(IsoFileStr::new("boot"), |dir| {
-                    dir.file(IsoFileStr::new("kernel.bin"), kernel_data);
-                });
-        });
+
+        let mut fat_file = OpenOptions::new()
+            .read(true)
+            .open(self.build_path.join("fat.img"))
+            .map_err(|error| Error::GenIso { error })?;
+        let mut fat_data = Vec::new();
+        fat_file.read_to_end(&mut fat_data).map_err(|error| Error::GenIso { error })?;
+        let iso = Iso::new(|_root| {}, Some(fat_data));
 
         let out_iso = self.build_path.join("radium.iso");
         if out_iso.exists() {

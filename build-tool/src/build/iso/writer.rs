@@ -94,7 +94,7 @@ impl TypeWriter {
         self
     }
 
-    pub fn write_str_padded(&mut self, value: &impl IsoStr, length: usize) -> &mut Self {
+    pub fn write_str_padded_with(&mut self, value: &impl IsoStr, length: usize, pad_with: u8) -> &mut Self {
         let str_bytes = value.as_ref().as_bytes();
         let before_len = self.len();
         if str_bytes.len() > length {
@@ -102,11 +102,15 @@ impl TypeWriter {
         } else {
             self.write_bytes(&str_bytes);
             for _ in str_bytes.len()..length {
-                self.buffer.push(0x20);
+                self.buffer.push(pad_with);
             }
         }
         assert_eq!(before_len + length, self.len());
         self
+    }
+
+    pub fn write_str_padded(&mut self, value: &impl IsoStr, length: usize) -> &mut Self {
+        self.write_str_padded_with(value, length, 0x20)
     }
 
     pub fn write_str(&mut self, value: &impl IsoStr) -> &mut Self {
