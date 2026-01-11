@@ -3,161 +3,116 @@ use std::iter;
 use bitflags::bitflags;
 use chrono::{DateTime, Datelike, Local};
 
-use crate::build::iso::{
-    boot_catalog::BootCatalog,
-    writer::{Endian, IsoFileStr, IsoStrA, IsoStrD, TypeWriter},
+use crate::build::{
+    Directory,
+    iso::{
+        boot_catalog::BootCatalog,
+        writer::{Endian, IsoFileStr, IsoStrA, IsoStrD, TypeWriter},
+    },
 };
 
 mod boot_catalog;
 pub mod writer;
 
-#[derive(Debug, Default)]
-pub struct Iso {
-    root: Vec<Directory>,
-    uefi_fat: Option<Vec<u8>>,
-}
+pub fn make(root: &Vec<Directory>, uefi_fat: Option<Vec<u8>>) -> Vec<u8> {
+    let mut allocator = SectorAllocator::new();
+    // 32 KiB arbitary data
+    allocator.alloc(32 * 1024);
 
-impl Iso {
-    pub fn new(root: impl FnOnce(&mut DirectoryWriter), uefi_fat: Option<Vec<u8>>) -> Self {
-        let mut new_dir = DirectoryWriter::new();
-        root(&mut new_dir);
-        Self { root: new_dir.directory, uefi_fat }
+    let descriptor_ptr = allocator.alloc(
+        VolumeDescriptor { typ: VolumeDescriptorType::Primary, data: [0; _] }.write().len()
+            * if uefi_fat.is_some() { 3 } else { 2 },
+    );
+
+    let boot_descriptor = uefi_fat.map(|fat_img| {
+        let fat_ptr = allocator.alloc(fat_img.len());
+        allocator.write(&fat_ptr, &fat_img);
+        let catalog = BootCatalog { rba: fat_ptr.loc as u32, sector_count: fat_ptr.size as u16 }.build();
+        let catalog_ptr = allocator.alloc(catalog.len());
+        allocator.write(&catalog_ptr, &catalog);
+        VolumeDescriptor::from(BootCatalogDescriptor { catalog_location: catalog_ptr.loc as u32 }).write()
+    });
+
+    let (root_extent, root_len) = write_dir(None, &root, &mut allocator);
+    let mut descriptors = Vec::new();
+
+    descriptors.extend(
+        VolumeDescriptor::from(PrimaryVolumeDescriptor {
+            system_identifier: IsoStrA::new(""),
+            volume_identifier: IsoStrD::new("Radium bootable image"),
+            volume_space_size: allocator.current as u32,
+            volume_set_size: 1,
+            volume_sequence_number: 1,
+            logical_block_size: 2048,
+            path_table_size: 0,
+            l_lba_path_table_location: 0,
+            l_lba_optional_path_table_location: 0,
+            m_lba_path_table_location: 0,
+            m_lba_optional_path_table_location: 0,
+            root_directory_entry: DirectoryEntry::root(root_extent, root_len),
+            volume_set_identifier: IsoStrD::new(""),
+            publisher_identifier: IsoStrA::new("radium"),
+            data_preparer_identifier: IsoStrA::new("dadium build-tool"),
+            application_identifier: IsoStrA::new(""),
+            copyright_file_identifier: IsoStrD::new(""),
+            abstract_file_identifier: IsoStrD::new(""),
+            bibliographic_file_identifier: IsoStrD::new(""),
+            volume_creation_date: Local::now(),
+            volume_modification: Local::now(),
+            volume_expiration_date: Local::now().with_year(Local::now().year() + 5).unwrap(),
+            volume_effective_date: Local::now().with_year(Local::now().year() + 5).unwrap(),
+            application_used: [0; _],
+        })
+        .write(),
+    );
+
+    if let Some(boot_descriptor) = boot_descriptor {
+        descriptors.extend(boot_descriptor);
     }
 
-    pub fn build(mut self) -> Vec<u8> {
-        let mut allocator = SectorAllocator::new();
-        // 32 KiB arbitary data
-        allocator.alloc(32 * 1024);
-        fn write_dir(
-            parent: Option<DirectoryEntry>,
-            dir: &mut Vec<Directory>,
-            allocator: &mut SectorAllocator,
-        ) -> (u32, u32) {
-            let parent = parent.unwrap_or(DirectoryEntry::parent(0, 0));
-            let parent_len = parent.clone().write().len();
-            let mut entry = Vec::new();
-            let len =
-                dir.iter().fold(DirectoryEntry::current(0, 0).write().len() + parent_len, |accum, dir| match dir {
-                    Directory::File { name, .. } => DirectoryEntry::file(name.clone(), 0, 0).write().len() + accum,
-                    Directory::Directory { name, .. } => DirectoryEntry::dir(name.clone(), 0, 0).write().len() + accum,
-                });
+    descriptors.extend(VolumeDescriptor::from(TerminatorDescriptor).write());
 
-            let extent_ptr = allocator.alloc(len);
-            let current = DirectoryEntry::current(extent_ptr.loc as u32, len as u32);
-            entry.extend(current.clone().write());
-            if parent.data_length == 0 && parent.extent == 0 {
-                entry.extend(DirectoryEntry::parent(extent_ptr.loc as u32, extent_ptr.size as u32 * 2048).write());
-            } else {
-                entry.extend(parent.write());
+    allocator.write(&descriptor_ptr, &descriptors);
+
+    allocator.data.iter().copied().flatten().collect()
+}
+
+fn write_dir(parent: Option<DirectoryEntry>, dir: &Vec<Directory>, allocator: &mut SectorAllocator) -> (u32, u32) {
+    let parent = parent.unwrap_or(DirectoryEntry::parent(0, 0));
+    let parent_len = parent.clone().write().len();
+    let mut entry = Vec::new();
+    let len = dir.iter().fold(DirectoryEntry::current(0, 0).write().len() + parent_len, |accum, dir| match dir {
+        Directory::File { name, .. } => DirectoryEntry::file(IsoFileStr::new(name), 0, 0).write().len() + accum,
+        Directory::Directory { name, .. } => DirectoryEntry::dir(IsoFileStr::new(name), 0, 0).write().len() + accum,
+    });
+
+    let extent_ptr = allocator.alloc(len);
+    let current = DirectoryEntry::current(extent_ptr.loc as u32, len as u32);
+    entry.extend(current.clone().write());
+    if parent.data_length == 0 && parent.extent == 0 {
+        entry.extend(DirectoryEntry::parent(extent_ptr.loc as u32, extent_ptr.size as u32 * 2048).write());
+    } else {
+        entry.extend(parent.write());
+    }
+
+    for dir in dir {
+        match dir {
+            Directory::File { name, data } => {
+                let extent_ptr = allocator.alloc(data.len());
+                allocator.write(&extent_ptr, data);
+                entry.extend(
+                    DirectoryEntry::file(IsoFileStr::new(name), extent_ptr.loc as u32, data.len() as u32).write(),
+                );
             }
-
-            for dir in dir {
-                match dir {
-                    Directory::File { name, data, ptr } => {
-                        let extent_ptr = allocator.alloc(data.len());
-                        *ptr = Some(extent_ptr);
-                        allocator.write(&extent_ptr, data);
-                        entry.extend(
-                            DirectoryEntry::file(name.clone(), extent_ptr.loc as u32, data.len() as u32).write(),
-                        );
-                    }
-                    Directory::Directory { name, child } => {
-                        let parent = DirectoryEntry::parent(current.extent, current.data_length);
-                        let (dir_extent, dir_len) = write_dir(Some(parent), child, allocator);
-                        entry.extend(DirectoryEntry::dir(name.clone(), dir_extent as u32, dir_len as u32).write());
-                    }
-                }
+            Directory::Directory { name, child } => {
+                let parent = DirectoryEntry::parent(current.extent, current.data_length);
+                let (dir_extent, dir_len) = write_dir(Some(parent), child, allocator);
+                entry.extend(DirectoryEntry::dir(IsoFileStr::new(name), dir_extent as u32, dir_len as u32).write());
             }
-            allocator.write(&extent_ptr, &entry);
-            (extent_ptr.loc as u32, extent_ptr.size as u32 * 2048)
         }
-
-        let descriptor_ptr = allocator.alloc(
-            VolumeDescriptor { typ: VolumeDescriptorType::Primary, data: [0; _] }.write().len()
-                * if self.uefi_fat.is_some() { 3 } else { 2 },
-        );
-
-        let boot_descriptor = self.uefi_fat.map(|fat_img| {
-            let fat_ptr = allocator.alloc(fat_img.len());
-            allocator.write(&fat_ptr, &fat_img);
-            let catalog = BootCatalog { rba: fat_ptr.loc as u32, sector_count: fat_ptr.size as u16 }.build();
-            let catalog_ptr = allocator.alloc(catalog.len());
-            allocator.write(&catalog_ptr, &catalog);
-            VolumeDescriptor::from(BootCatalogDescriptor { catalog_location: catalog_ptr.loc as u32 }).write()
-        });
-
-        let (root_extent, root_len) = write_dir(None, &mut self.root, &mut allocator);
-        let mut descriptors = Vec::new();
-
-        descriptors.extend(
-            VolumeDescriptor::from(PrimaryVolumeDescriptor {
-                system_identifier: IsoStrA::new(""),
-                volume_identifier: IsoStrD::new("Radium bootable image"),
-                volume_space_size: allocator.current as u32,
-                volume_set_size: 1,
-                volume_sequence_number: 1,
-                logical_block_size: 2048,
-                path_table_size: 0,
-                l_lba_path_table_location: 0,
-                l_lba_optional_path_table_location: 0,
-                m_lba_path_table_location: 0,
-                m_lba_optional_path_table_location: 0,
-                root_directory_entry: DirectoryEntry::root(root_extent, root_len),
-                volume_set_identifier: IsoStrD::new(""),
-                publisher_identifier: IsoStrA::new("radium"),
-                data_preparer_identifier: IsoStrA::new("dadium build-tool"),
-                application_identifier: IsoStrA::new(""),
-                copyright_file_identifier: IsoStrD::new(""),
-                abstract_file_identifier: IsoStrD::new(""),
-                bibliographic_file_identifier: IsoStrD::new(""),
-                volume_creation_date: Local::now(),
-                volume_modification: Local::now(),
-                volume_expiration_date: Local::now().with_year(Local::now().year() + 5).unwrap(),
-                volume_effective_date: Local::now().with_year(Local::now().year() + 5).unwrap(),
-                application_used: [0; _],
-            })
-            .write(),
-        );
-
-        if let Some(boot_descriptor) = boot_descriptor {
-            descriptors.extend(boot_descriptor);
-        }
-
-        descriptors.extend(VolumeDescriptor::from(TerminatorDescriptor).write());
-
-        allocator.write(&descriptor_ptr, &descriptors);
-
-        allocator.data.iter().copied().flatten().collect()
     }
-}
-
-#[derive(Debug, Default)]
-pub struct DirectoryWriter {
-    directory: Vec<Directory>,
-}
-
-impl DirectoryWriter {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn file(&mut self, name: IsoFileStr, data: Vec<u8>) -> &mut Self {
-        self.directory.push(Directory::File { name, data, ptr: None });
-        self
-    }
-
-    pub fn dir(&mut self, name: IsoFileStr, dir: impl FnOnce(&mut DirectoryWriter)) -> &mut Self {
-        let mut new_dir = DirectoryWriter::new();
-        dir(&mut new_dir);
-        self.directory.push(Directory::Directory { name, child: new_dir.directory });
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Directory {
-    File { name: IsoFileStr, data: Vec<u8>, ptr: Option<SectorAllocatorPtr> },
-    Directory { name: IsoFileStr, child: Vec<Directory> },
+    allocator.write(&extent_ptr, &entry);
+    (extent_ptr.loc as u32, extent_ptr.size as u32 * 2048)
 }
 
 #[derive(Debug, Default)]

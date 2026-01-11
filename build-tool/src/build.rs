@@ -14,14 +14,12 @@ use thiserror::Error;
 
 use crate::{
     CmdExecutor,
-    build::{
-        cargo_project::CargoProject,
-        iso::{Iso, writer::IsoFileStr},
-    },
+    build::cargo_project::CargoProject,
     config::{BuildMode, Config, ConfigRoot},
 };
 
 mod cargo_project;
+mod fat;
 mod iso;
 
 pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
@@ -94,7 +92,22 @@ impl Builder<'_> {
         let bootloader = self.project(&self.src("bootloader")).build()?;
         let init = self.project(&self.userland("init")).build()?;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
-        self.gen_iso(kernel)?;
+        let kernel = self.read_file(kernel).map_err(|error| Error::GenIso { error })?;
+        let bootloader = self.read_file(bootloader).map_err(|error| Error::GenIso { error })?;
+
+        let mut root = DirectoryWriter::new();
+        root.dir("EFI", |efi| {
+            efi.dir("BOOT", |boot| {
+                boot.file("BOOTX64.EFI", bootloader);
+            });
+        });
+        root.dir(self.config.config.boot_loader.file_root.as_str().trim_prefix("\\"), |boot| {
+            boot.file(self.config.config.boot_loader.kernel_file.as_str(), kernel);
+        });
+
+        let fat = fat::make(&root.directory);
+        let iso = iso::make(&root.directory, Some(fat));
+        self.write_file(&self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
 
         if self.config.reexec_build_tool {
             ratatui::restore();
@@ -104,32 +117,20 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn gen_iso(&self, kernel: PathBuf) -> Result<(), Error> {
-        let mut kernel_file = OpenOptions::new().read(true).open(kernel).map_err(|error| Error::GenIso { error })?;
-        let mut kernel_data = Vec::new();
-        kernel_file.read_to_end(&mut kernel_data).map_err(|error| Error::GenIso { error })?;
+    fn read_file(&self, path: impl AsRef<Path>) -> Result<Vec<u8>, io::Error> {
+        let path = path.as_ref();
+        let mut file = OpenOptions::new().read(true).open(path)?;
+        let mut file_data = Vec::new();
+        file.read_to_end(&mut file_data)?;
+        Ok(file_data)
+    }
 
-        let mut fat_file = OpenOptions::new()
-            .read(true)
-            .open(self.build_path.join("fat.img"))
-            .map_err(|error| Error::GenIso { error })?;
-        let mut fat_data = Vec::new();
-        fat_file.read_to_end(&mut fat_data).map_err(|error| Error::GenIso { error })?;
-        let iso = Iso::new(|_root| {}, Some(fat_data));
-
-        let out_iso = self.build_path.join("radium.iso");
-        if out_iso.exists() {
-            remove_file(&out_iso).map_err(|error| Error::GenConfig { error })?;
+    fn write_file(&self, path: impl AsRef<Path>, data: &[u8]) -> Result<(), io::Error> {
+        let path = path.as_ref();
+        if path.exists() {
+            remove_file(path)?;
         }
-        OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(out_iso)
-            .and_then(|mut f| f.write_all(&iso.build()))
-            .map_err(|error| Error::GenIso { error })?;
-
-        Ok(())
+        OpenOptions::new().create(true).write(true).truncate(true).open(path).and_then(|mut f| f.write_all(&data))
     }
 
     fn gen_config(&self) -> Result<(), Error> {
@@ -193,6 +194,35 @@ impl BuildMode {
             Self::Release => "release",
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct DirectoryWriter {
+    directory: Vec<Directory>,
+}
+
+impl DirectoryWriter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn file(&mut self, name: impl AsRef<str>, data: Vec<u8>) -> &mut Self {
+        self.directory.push(Directory::File { name: name.as_ref().to_string(), data });
+        self
+    }
+
+    pub fn dir(&mut self, name: impl AsRef<str>, dir: impl FnOnce(&mut DirectoryWriter)) -> &mut Self {
+        let mut new_dir = DirectoryWriter::new();
+        dir(&mut new_dir);
+        self.directory.push(Directory::Directory { name: name.as_ref().to_string(), child: new_dir.directory });
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+enum Directory {
+    File { name: String, data: Vec<u8> },
+    Directory { name: String, child: Vec<Directory> },
 }
 
 pub fn build_path() -> Result<PathBuf, Error> {

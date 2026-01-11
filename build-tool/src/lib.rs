@@ -1,6 +1,7 @@
 #![feature(if_let_guard)]
 #![feature(vec_push_within_capacity)]
 #![feature(string_from_utf8_lossy_owned)]
+#![feature(trim_prefix_suffix)]
 
 use std::{
     ffi::OsStr,
