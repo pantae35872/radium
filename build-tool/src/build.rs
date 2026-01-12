@@ -106,6 +106,16 @@ impl Builder<'_> {
         let ovmf_file = self.root_path.join("OVMF.fd");
 
         if !ovmf_file.exists() {
+            let mut command = CommandBuilder::new("git");
+            command.cwd(&self.root_path);
+            command.args(["submodule", "update", "--init"]);
+            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+
+            let mut command = CommandBuilder::new("git");
+            command.cwd(self.root_path.join("vendor").join("edk2"));
+            command.args(["submodule", "update", "--init"]);
+            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+
             let mut command = CommandBuilder::new("bash");
             command.cwd(&self.root_path);
             command.args(["-c", "cd vendor/edk2 && make -C BaseTools && source edksetup.sh && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE"]);
