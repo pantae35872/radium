@@ -106,6 +106,7 @@ impl Builder<'_> {
         });
 
         let fat = fat::make(&root.directory);
+        self.write_file(&self.build_path.join("radium.img"), &fat).map_err(|error| Error::GenIso { error })?;
         let iso = iso::make(&root.directory, Some(fat));
         self.write_file(&self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
 

@@ -1,18 +1,318 @@
+use std::iter;
+
+use bit_field::BitField;
+use bitflags::bitflags;
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike, Utc};
+
 use crate::build::{Directory, fat::writer::Writer};
 
 mod writer;
 
+/// Count of bytes per sector. This value may take on only the following values: 512, 1024, 2048 or 4096
+const BYTES_PER_SECTOR: u16 = 512;
+/// Number of sectors per allocation unit. This value must be a power of 2 that is greater than 0.
+/// The legal values are 1, 2, 4, 8, 16, 32, 64, and 128
+const SECTOR_PER_CLUSTER: u8 = 1;
+const BYTES_PER_CLUSTER: usize = BYTES_PER_SECTOR as usize * SECTOR_PER_CLUSTER as usize;
+
 pub fn make(root: &Vec<Directory>) -> Vec<u8> {
-    Vec::new()
+    let mut fat = Fat::new();
+    write_dir(None, "".to_string(), root, &mut fat);
+
+    let fat_entries = fat.entries.len().max(65526) + 2; // Including 2 reserved
+    let fat_size_sector = to_sector_aligned(fat_entries * 4);
+    // -2 Excluding the 2 reserved sector since it doens't occupy the data area
+    let total_sector = fat_entries - 2 * SECTOR_PER_CLUSTER as usize + fat_size_sector;
+    let reserved_count = 0x20;
+    let total_sector = reserved_count + total_sector;
+
+    let mut writer = Writer::new();
+    let bpb = BPB {
+        reserved_sector_count: reserved_count as u16,
+        media: 0xF8,
+        sec_per_trk: 0,
+        num_heads: 0,
+        hidden_sector_count: 0,
+        total_sector: total_sector as u32,
+        drv_number: 0x80,
+        ext_flags: 0,
+        root_cluster: 2,
+        fs_info: 1,
+        bk_boot_sec: 6,
+        fat_count: 1,
+        fat_size: fat_size_sector as u32,
+        serial_number: Local::now().timestamp_subsec_nanos(),
+    };
+    let fsinfo = FSInfo { next_free: fat.entries.len() as u32, free_count: (fat_entries - fat.entries.len()) as u32 };
+
+    bpb.write(&mut writer); // Sector 0
+    fsinfo.write(&mut writer); // Sector 1
+    writer.padded(BYTES_PER_SECTOR as usize * 4); // padd 3 sector
+    bpb.write(&mut writer); // Sector 6
+    fsinfo.write(&mut writer); // Sector 7
+    writer.padded_min(reserved_count * BYTES_PER_SECTOR as usize);
+
+    for entry in fat.entries {
+        writer.write_u32(entry);
+    }
+    writer.padded_min(reserved_count * BYTES_PER_SECTOR as usize + fat_size_sector * BYTES_PER_SECTOR as usize);
+
+    writer.write_bytes(&fat.data);
+    writer.padded_min(total_sector * BYTES_PER_SECTOR as usize);
+
+    writer.buffer_owned()
+}
+
+fn write_dir(
+    parent: Option<DirectoryStructure>,
+    name: String,
+    dir: &Vec<Directory>,
+    fat: &mut Fat,
+) -> DirectoryStructure {
+    let volume_label = if parent.is_none() {
+        Some(DirectoryStructure::new("RADIUM BOOT".to_string(), DirectoryAttribute::VOLUME_ID, 0, 0).write())
+    } else {
+        None
+    };
+    let volume_label_size = volume_label.as_ref().map(|e| e.len()).unwrap_or(0);
+    let dot_len = DirectoryStructure::new(".".to_string(), DirectoryAttribute::empty(), 0, 0).write().len();
+    let dotdot_len = DirectoryStructure::new("..".to_string(), DirectoryAttribute::empty(), 0, 0).write().len();
+    let len = dir.iter().fold(dot_len + dotdot_len + volume_label_size, |accum, dir| match dir {
+        Directory::Directory { name, .. } | Directory::File { name, .. } => {
+            DirectoryStructure::new(name.to_string(), DirectoryAttribute::empty(), 0, 0).write().len() + accum
+        }
+    });
+
+    let dir_ptr = fat.allocate(len);
+    let mut dirs: Vec<u8> = Vec::new();
+    // Except for the root directory, each directory must contain the following two entries at the
+    // beginning of the directory
+    if let Some(parent) = parent {
+        // The first directory entry must have a directory name set to “.”
+        // This dot entry refers to the current directory. Rules listed above for the DIR_Attr
+        // field and DIR_FileSize field must be followed. Since the dot entry refers to the
+        // current directory (the one containing the dot entry), the contents of the
+        // DIR_FstClusLO and DIR_FstClusHI fields must be the same as that of the current directory.
+        // All date and time fields must be set to the same value as that for the containing directory.
+        dirs.extend(DirectoryStructure::new(".".to_string(), DirectoryAttribute::DIRECTORY, dir_ptr.entry, 0).write());
+        dirs.extend(DirectoryStructure::parent(parent).write());
+    }
+    if let Some(volume_label) = volume_label {
+        dirs.extend(volume_label);
+    }
+    let current = DirectoryStructure::new(name.to_string(), DirectoryAttribute::DIRECTORY, dir_ptr.entry, 0);
+    for dir in dir {
+        match dir {
+            Directory::File { name, data } => {
+                let data_ptr = fat.allocate(data.len());
+                fat.write(data_ptr, &data);
+                dirs.extend(
+                    DirectoryStructure::new(
+                        name.to_string(),
+                        DirectoryAttribute::empty(),
+                        data_ptr.entry,
+                        data.len() as u32,
+                    )
+                    .write(),
+                );
+            }
+            Directory::Directory { name, child } => {
+                dirs.extend(write_dir(Some(current.clone()), name.to_string(), child, fat).write());
+            }
+        }
+    }
+
+    fat.write(dir_ptr, &dirs);
+    current
+}
+
+#[derive(Debug, Default)]
+struct Fat {
+    entries: Vec<u32>,
+    data: Vec<u8>,
+}
+
+impl Fat {
+    pub fn new() -> Self {
+        Self { entries: vec![0x0FFFFFF8, 0x08000000 | 0x04000000], data: Vec::new() }
+    }
+
+    pub fn write(&mut self, ptr: FatPtr, mut data: &[u8]) {
+        assert!(data.len() <= ptr.size);
+        let index = ptr.entry as usize;
+        let mut current_index = index;
+        loop {
+            let data_index = current_index - 2;
+            self.data[data_index * BYTES_PER_CLUSTER..][..data.len().min(BYTES_PER_CLUSTER)]
+                .copy_from_slice(&data[..data.len().min(BYTES_PER_CLUSTER)]);
+            data = &data[data.len().min(BYTES_PER_CLUSTER)..];
+            if self.entries[current_index] == 0xFFFFFFFF {
+                break;
+            }
+            current_index = self.entries[current_index] as usize;
+        }
+    }
+
+    pub fn allocate(&mut self, size: usize) -> FatPtr {
+        let start = self.entries.len() as u32;
+        let ptr = FatPtr { entry: start, size };
+        let required_entries = if size.is_multiple_of(BYTES_PER_CLUSTER) {
+            size / BYTES_PER_CLUSTER
+        } else {
+            size / BYTES_PER_CLUSTER + 1
+        };
+        for entry in 0..required_entries {
+            if entry == required_entries - 1 {
+                self.entries.push(0xFFFFFFFF);
+            } else {
+                // The push the next entry onto the fat, hence the +1
+                self.entries.push(start + entry as u32 + 1);
+            }
+        }
+        self.data.extend(iter::repeat_n(0u8, required_entries * BYTES_PER_CLUSTER));
+        ptr
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FatPtr {
+    entry: u32,
+    size: usize,
+}
+
+#[derive(Debug, Clone)]
+struct DirectoryStructure {
+    name: String,
+    attribute: DirectoryAttribute,
+    creation_date: DateTime<Local>,
+    last_acccessed: DateTime<Local>,
+    modification: DateTime<Local>,
+    data_cluster: u32,
+    file_size: u32,
+}
+
+impl DirectoryStructure {
+    fn parent(parent: DirectoryStructure) -> Self {
+        // The second directory entry must have the directory name set to “..”
+        // This dotdot entry refers to the parent of the current directory. Rules listed above for
+        // the DIR_Attr field and DIR_FileSize field must be followed. Since the dotdot
+        // entry refers to the parent of the current directory (the one containing the dotdot
+        // entry), the contents of the DIR_FstClusLO and DIR_FstClusHI fields must be the
+        // same as that of the parent of the current directory. If the parent of the current
+        // directory is the root directory (see below), the DIR_FstClusLO and
+        // DIR_FstClusHI contents must be set to 0. All date and time fields must be set to
+        // the same value as that for the containing directory.
+        let mut dotdot = Self { name: "..".to_string(), ..parent };
+        if parent.data_cluster == 2 {
+            dotdot.data_cluster = 0;
+        }
+        dotdot
+    }
+
+    fn new(name: String, attribute: DirectoryAttribute, data: u32, size: u32) -> Self {
+        Self {
+            name,
+            attribute,
+            creation_date: Local::now(),
+            last_acccessed: Local::now(),
+            modification: Local::now(),
+            data_cluster: data,
+            file_size: size,
+        }
+    }
+
+    fn write(&self) -> Vec<u8> {
+        let mut writer = Writer::new();
+        if self.name == "." || self.name == ".." {
+            writer.write_str_padded(&self.name, 11);
+        } else if !self.name.contains(".") {
+            writer.write_str_padded(&self.name, 11);
+        } else {
+            let name = self.name.split(".").nth(0).unwrap_or("");
+            let extension = self.name.split(".").nth(1).unwrap_or("");
+            writer.write_str_padded(name, 8);
+            writer.write_str_padded(extension, 3);
+        }
+        writer.write_u8(self.attribute.bits());
+        writer.write_u8(0);
+        writer.write_u8(0);
+        writer.write_u16(enc_time(self.creation_date));
+        writer.write_u16(enc_date(self.creation_date));
+        writer.write_u16(enc_date(self.last_acccessed));
+        writer.write_u16(self.data_cluster.get_bits(16..32) as u16);
+        writer.write_u16(enc_time(self.modification));
+        writer.write_u16(enc_date(self.modification));
+        writer.write_u16(self.data_cluster.get_bits(0..16) as u16);
+        writer.write_u32(self.file_size);
+        assert_eq!(writer.len(), 32);
+
+        writer.buffer_owned()
+    }
+}
+
+fn enc_time(date: DateTime<Local>) -> u16 {
+    let mut time_enc: u16 = 0;
+    time_enc.set_bits(0..=4, (date.second() / 2) as u16);
+    time_enc.set_bits(5..=10, date.minute() as u16);
+    time_enc.set_bits(11..=15, date.hour() as u16);
+    time_enc
+}
+
+fn enc_date(date: DateTime<Local>) -> u16 {
+    let mut date_enc: u16 = 0;
+    date_enc.set_bits(0..=4, date.day() as u16);
+    date_enc.set_bits(5..=8, date.month() as u16);
+    date_enc.set_bits(
+        9..=15,
+        date.to_utc()
+            .years_since(DateTime::from_naive_utc_and_offset(NaiveDate::from_ymd_opt(1900, 1, 1).unwrap().into(), Utc))
+            .unwrap() as u16,
+    );
+    date_enc
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    struct DirectoryAttribute: u8 {
+        const READ_ONLY = 1 << 0;
+        const HIDDEN = 1 << 1;
+        const SYSTEM = 1 << 2;
+        const VOLUME_ID = 1 << 3;
+        const DIRECTORY = 1 << 4;
+        const ARCHIVE = 1 << 5;
+        const LONG_NAME = Self::READ_ONLY.bits() | Self::HIDDEN.bits() | Self::SYSTEM.bits() | Self::VOLUME_ID.bits();
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FSInfo {
+    free_count: u32,
+    next_free: u32,
+}
+
+impl FSInfo {
+    pub fn write(&self, writer: &mut Writer) {
+        writer.write_u32(0x41615252); // Lead sig
+        writer.padded(480);
+        writer.write_u32(0x61417272); // Struct sig
+        writer.write_u32(self.free_count);
+        writer.write_u32(self.next_free);
+        writer.padded(12);
+        writer.write_u32(0xAA550000);
+        assert!(writer.len().is_multiple_of(512));
+    }
+}
+
+fn to_sector_aligned(bytes: usize) -> usize {
+    if bytes.is_multiple_of(BYTES_PER_SECTOR as usize) {
+        bytes / BYTES_PER_SECTOR as usize
+    } else {
+        bytes / BYTES_PER_SECTOR as usize + 1
+    }
 }
 
 #[derive(Debug, Clone)]
 struct BPB {
-    /// Count of bytes per sector. This value may take on only the following values: 512, 1024, 2048 or 4096
-    bytes_per_sector: u16,
-    /// Number of sectors per allocation unit. This value must be a power of 2 that is greater than 0.
-    /// The legal values are 1, 2, 4, 8, 16, 32, 64, and 128
-    sector_per_cluster: u8,
     /// Number of reserved sectors in the reserved region of the volume starting at the first sector of the volume.
     /// This field is used to align the start of the data area to integral multiples of the cluster size
     /// with respect to the start of the partition/media. This field must not be 0 and can be any non-zero
@@ -63,24 +363,15 @@ struct BPB {
     /// Interrupt 0x13 drive number. Set value to 0x80 or
     /// 0x00.
     drv_number: u8,
-    /// Extended boot signature. Set value to 0x29 if either of the following two fields are non-zero.
-    /// This is a signature byte that indicates that the following three fields in the boot sector are present
-    boot_signature: u8,
-    /// Volume serial number. This field, together with [Self::volume_lable], supports volume tracking on removable media.
-    /// These values allow FAT file system drivers to detect that the wrong disk is inserted in a removable drive.
-    /// This ID should be generated by simply combining the current date and time into a 32-bit value.
-    volume_serial_number: u32,
-    /// Volume label. This field matches the 11-byte volume label recorded in the root directory
-    volume_label: String,
+    serial_number: u32,
 }
 
 impl BPB {
     pub fn write(&self, writer: &mut Writer) {
         writer.write_u8(0xEB).write_u8(0xFF).write_u8(0x90); // Jmp boot
         writer.write_str_padded("RADIUM", 8); // OEM NAME
-        writer.write_u16(self.bytes_per_sector);
-        assert!(self.sector_per_cluster.is_power_of_two(), "Sector per cluster is not a power of 2");
-        writer.write_u8(self.sector_per_cluster);
+        writer.write_u16(BYTES_PER_SECTOR);
+        writer.write_u8(SECTOR_PER_CLUSTER);
         writer.write_u16(self.reserved_sector_count);
         writer.write_u8(self.fat_count);
         writer.write_u16(0); // zero for fat 32
@@ -97,15 +388,16 @@ impl BPB {
         writer.write_u32(self.root_cluster);
         writer.write_u16(self.fs_info);
         writer.write_u16(self.bk_boot_sec);
-        writer.padd(12);
+        writer.padded(12);
         writer.write_u8(self.drv_number);
-        writer.padd(1);
-        writer.write_u8(self.boot_signature);
-        writer.write_u32(self.volume_serial_number);
+        writer.padded(1);
+        writer.write_u8(0x29);
+        writer.write_u32(self.serial_number);
         writer.write_str_padded("RADIUM BOOT", 11);
         writer.write_str_padded("FAT32", 8);
-        writer.padd(420);
+        writer.padded(420);
         writer.write_u8(0x55).write_u8(0xAA); // Signature 
-        writer.padd(self.bytes_per_sector as usize - 512);
+        writer.padded(BYTES_PER_SECTOR as usize - 512);
+        assert!(writer.len().is_multiple_of(512));
     }
 }

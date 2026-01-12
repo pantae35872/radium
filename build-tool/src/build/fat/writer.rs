@@ -1,3 +1,5 @@
+use std::iter;
+
 #[derive(Debug, Clone, Default)]
 pub struct Writer {
     buffer: Vec<u8>,
@@ -69,10 +71,14 @@ impl Writer {
         self
     }
 
-    pub fn padd(&mut self, padd: usize) {
-        for _ in 0..padd {
-            self.write_u8(0);
-        }
+    /// Pad the buffer to the minimum size
+    pub fn padded_min(&mut self, min: usize) {
+        self.buffer.extend(iter::repeat_n(0u8, min - self.len()));
+    }
+
+    /// Pad the buffer
+    pub fn padded(&mut self, amount: usize) {
+        self.buffer.extend(iter::repeat_n(0u8, amount));
     }
 
     impl_write_type!(u16);
