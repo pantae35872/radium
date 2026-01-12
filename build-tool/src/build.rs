@@ -200,7 +200,6 @@ impl Builder<'_> {
                 command.args(["-enable-kvm", "-cpu", "host,+rdrand,+sse,+mmx"]);
             }
             command.args(["-cdrom", &format!("{}", self.build_path.join("radium.iso").display())]);
-            self.config.into_command(&mut command);
             self.executor.run(command.clone()).map_err(|error| Error::Qemu { error })?;
         }
 
