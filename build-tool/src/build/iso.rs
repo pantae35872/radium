@@ -52,7 +52,7 @@ pub fn make(root: &Vec<Directory>, uefi_fat: Option<Vec<u8>>) -> Vec<u8> {
             root_directory_entry: DirectoryEntry::root(root_extent, root_len),
             volume_set_identifier: IsoStrD::new(""),
             publisher_identifier: IsoStrA::new("radium"),
-            data_preparer_identifier: IsoStrA::new("dadium build-tool"),
+            data_preparer_identifier: IsoStrA::new("radium build-tool"),
             application_identifier: IsoStrA::new(""),
             copyright_file_identifier: IsoStrD::new(""),
             abstract_file_identifier: IsoStrD::new(""),

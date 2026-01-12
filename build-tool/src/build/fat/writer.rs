@@ -59,16 +59,14 @@ impl Writer {
         self.write_str_padded_with(value, length, 0x20)
     }
 
-    pub fn write_str_utf16(&mut self, value: impl AsRef<str>) -> &mut Self {
-        for utf16 in value.as_ref().encode_utf16() {
-            self.write_u16(utf16);
-        }
-        self
-    }
-
     pub fn write_str(&mut self, value: impl AsRef<str>) -> &mut Self {
         self.write_bytes(value.as_ref().as_bytes());
         self
+    }
+
+    /// Pad the buffer to the minimum size
+    pub fn padded_min_with(&mut self, min: usize, value: u8) {
+        self.buffer.extend(iter::repeat_n(value, min - self.len()));
     }
 
     /// Pad the buffer to the minimum size

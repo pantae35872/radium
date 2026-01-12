@@ -70,7 +70,7 @@ fn write_dir(
     fat: &mut Fat,
 ) -> DirectoryStructure {
     let volume_label = if parent.is_none() {
-        Some(DirectoryStructure::new("RADIUM BOOT".to_string(), DirectoryAttribute::VOLUME_ID, 0, 0).write())
+        Some(DirectoryStructure::new("RADIUM".to_string(), DirectoryAttribute::VOLUME_ID, 0, 0).write())
     } else {
         None
     };
@@ -138,6 +138,9 @@ impl Fat {
     }
 
     pub fn write(&mut self, ptr: FatPtr, mut data: &[u8]) {
+        if ptr.entry == 0 || ptr.size == 0 {
+            return;
+        }
         assert!(data.len() <= ptr.size);
         let index = ptr.entry as usize;
         let mut current_index = index;
@@ -154,6 +157,10 @@ impl Fat {
     }
 
     pub fn allocate(&mut self, size: usize) -> FatPtr {
+        if size == 0 {
+            return FatPtr { entry: 0, size: 0 };
+        }
+
         let start = self.entries.len() as u32;
         let ptr = FatPtr { entry: start, size };
         let required_entries = if size.is_multiple_of(BYTES_PER_CLUSTER) {
@@ -222,16 +229,17 @@ impl DirectoryStructure {
     }
 
     fn write(&self) -> Vec<u8> {
+        let (short_name, long_name) = to_name(&self.name);
         let mut writer = Writer::new();
+        if let Some(long_names) = long_name.as_ref() {
+            writer.write_bytes(long_names);
+        }
+
         if self.name == "." || self.name == ".." {
-            writer.write_str_padded(&self.name, 11);
-        } else if !self.name.contains(".") {
+            assert!(long_name.is_none());
             writer.write_str_padded(&self.name, 11);
         } else {
-            let name = self.name.split(".").nth(0).unwrap_or("");
-            let extension = self.name.split(".").nth(1).unwrap_or("");
-            writer.write_str_padded(name, 8);
-            writer.write_str_padded(extension, 3);
+            writer.write_bytes(&short_name);
         }
         writer.write_u8(self.attribute.bits());
         writer.write_u8(0);
@@ -244,9 +252,137 @@ impl DirectoryStructure {
         writer.write_u16(enc_date(self.modification));
         writer.write_u16(self.data_cluster.get_bits(0..16) as u16);
         writer.write_u32(self.file_size);
-        assert_eq!(writer.len(), 32);
+        assert!(writer.len().is_multiple_of(32));
 
         writer.buffer_owned()
+    }
+}
+
+fn to_name(s: &str) -> ([u8; 11], Option<Vec<u8>>) {
+    assert!(s.len() <= 255, "File name too long");
+
+    let mut split = s.split(".");
+    let (name, ext) = match (split.next(), split.last()) {
+        (Some(name), Some(ext)) if name.is_empty() => (ext, None),
+        (Some(name), Some(ext)) => (name, Some(ext)),
+        _ => (s, None),
+    };
+
+    if name.len() > 8 || ext.is_some_and(|e| e.len() > 3) {
+        let mut writer = Writer::new();
+        write_char_valid(name, &mut writer, 6);
+        writer.padded_min_with(6, 0x20);
+        writer.write_u8(b'~');
+        writer.write_u8(b'1');
+
+        assert_eq!(writer.len(), 8);
+        if let Some(ext) = ext {
+            write_char_valid(ext, &mut writer, 3);
+        }
+
+        writer.padded_min_with(11, 0x20);
+        let short_name: [u8; 11] = writer.buffer().try_into().unwrap();
+
+        assert_eq!(writer.buffer().len(), 11);
+        let mut cksum = 0u8;
+        for c in short_name.iter().copied() {
+            cksum = cksum.rotate_right(1).overflowing_add(c).0
+        }
+
+        //Names are also NULL terminated and padded with 0xFFFF characters in
+        // order to detect corruption of long name fields. A name that fits exactly in a set of long name
+        // directory entries (i.e. is an integer multiple of 13) is not NULL terminated and not padded with
+        // 0xFFFF.
+        let mut chunks = s.encode_utf16().array_chunks::<13>();
+        let mut entries = Vec::new();
+        let mut i = 0;
+        while let Some(chunk) = chunks.next() {
+            entries.push(LongNameEntry { ord: (i + 1) as u8, name: chunk, cksum });
+            i += 1;
+        }
+
+        let remainder = chunks.into_remainder();
+        let remainder = remainder.as_slice();
+        if !remainder.is_empty() {
+            let mut writer = Writer::new();
+            for remainder in remainder.iter().copied() {
+                writer.write_u16(remainder);
+            }
+            writer.write_u16(0x00); // NULL terminated
+            writer.padded_min_with(13 * 2, 0xFF); // FF padded
+            assert_eq!(writer.buffer().len(), 26);
+            let name: Vec<u16> =
+                writer.buffer().chunks_exact(2).map(|c| u16::from_le_bytes(c.try_into().unwrap())).collect();
+            entries.push(LongNameEntry {
+                ord: (entries.len() + 1) as u8 | 0x40,
+                name: name.try_into().unwrap(),
+                cksum,
+            });
+        } else {
+            entries.last_mut().unwrap().ord |= 0x40;
+        }
+
+        let mut writer = Writer::new();
+        for entry in entries.iter().rev() {
+            entry.write(&mut writer);
+        }
+        return (short_name, Some(writer.buffer_owned()));
+    }
+
+    let mut writer = Writer::new();
+    write_char_valid(&name, &mut writer, 8);
+    writer.padded_min_with(8, 0x20);
+    if let Some(ext) = ext {
+        write_char_valid(ext, &mut writer, 3);
+    }
+
+    writer.padded_min_with(11, 0x20);
+    (writer.buffer().try_into().unwrap(), None)
+}
+
+fn write_char_valid(s: &str, writer: &mut Writer, max: usize) {
+    let valid = "$%'-_@~`!(){}^#&";
+    let mut count = 0;
+    for c in s.to_ascii_uppercase().chars() {
+        count += 1;
+        if count > max {
+            break;
+        }
+        if c.is_ascii() {
+            match c {
+                c if valid.contains(c) || c.is_ascii_uppercase() || c.is_ascii_digit() || c as u8 == 0x20 => {
+                    writer.write_u8(c as u8)
+                }
+                _ => writer.write_u8(b'_'),
+            };
+        } else {
+            writer.write_u8(b'_');
+        }
+    }
+}
+
+struct LongNameEntry {
+    ord: u8,
+    name: [u16; 13],
+    cksum: u8,
+}
+
+impl LongNameEntry {
+    fn write(&self, writer: &mut Writer) {
+        writer.write_u8(self.ord);
+        for c in self.name[0..5].iter().copied() {
+            writer.write_u16(c);
+        }
+        writer.write_u8(DirectoryAttribute::LONG_NAME.bits());
+        writer.write_u8(0);
+        writer.write_u8(self.cksum);
+        for c in self.name[5..11].iter().copied() {
+            writer.write_u16(c);
+        }
+        writer.write_u16(0);
+        for c in self.name[11..13].iter().copied() {
+            writer.write_u16(c);
+        }
     }
 }
 
@@ -393,7 +529,7 @@ impl BPB {
         writer.padded(1);
         writer.write_u8(0x29);
         writer.write_u32(self.serial_number);
-        writer.write_str_padded("RADIUM BOOT", 11);
+        writer.write_str_padded("RADIUM", 11);
         writer.write_str_padded("FAT32", 8);
         writer.padded(420);
         writer.write_u8(0x55).write_u8(0xAA); // Signature 
