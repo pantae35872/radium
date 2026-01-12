@@ -60,13 +60,15 @@ pub enum Error {
     #[error("Failed to generate iso file, failed with error: {error}")]
     GenIso { error: io::Error },
     #[error("Failed to execute command with io error, {error}")]
-    CommandIoError { error: io::Error },
+    CommandIo { error: io::Error },
     #[error("Command `{command}` in dir `{dir}`, failed with exit status {status}")]
     CommandFailed { command: String, dir: String, status: ExitStatus },
     #[error("Failed to run QEMU, failed with: `{error}`")]
     Qemu { error: io::Error },
     #[error("Failed to download font, failed with: `{error}`")]
     DownloadFont { error: io::Error },
+    #[error("Failed to build ovmf, failed with: `{error}`")]
+    OvmfFailed { error: io::Error },
 }
 
 #[derive(Debug)]
@@ -99,6 +101,28 @@ impl Builder<'_> {
             command.cwd(&self.build_path);
             command.args(["-O", "kernel_font.ttf", "https://www.1001fonts.com/download/font/open-sans.regular.ttf"]);
             self.executor.run(command).map_err(|error| Error::DownloadFont { error })?;
+        }
+
+        let ovmf_file = self.root_path.join("OVMF.fd");
+
+        if !ovmf_file.exists() {
+            let mut command = CommandBuilder::new("bash");
+            command.cwd(&self.root_path);
+            command.args(["-c", "cd vendor/edk2 && make -C BaseTools && source edksetup.sh && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE"]);
+            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+            std::fs::copy(
+                self.root_path
+                    .join("vendor")
+                    .join("edk2")
+                    .join("Build")
+                    .join("OvmfX64")
+                    .join("RELEASE_GCC5")
+                    .join("FV")
+                    .join("OVMF")
+                    .with_extension("fd"),
+                ovmf_file,
+            )
+            .map_err(|error| Error::OvmfFailed { error })?;
         }
 
         let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;

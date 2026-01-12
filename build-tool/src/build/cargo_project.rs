@@ -71,7 +71,7 @@ impl<'a> CargoProject<'a> {
         command.cwd(self.path);
         command.arg("build");
         self.config.into_command(&mut command);
-        let status = self.executor.run(command.clone()).map_err(|error| super::Error::CommandIoError { error })?;
+        let status = self.executor.run(command.clone()).map_err(|error| super::Error::CommandIo { error })?;
 
         if !status.success() {
             let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
