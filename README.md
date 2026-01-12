@@ -10,14 +10,10 @@ Radium OS is currently in the very early stages of development and is no where n
 
 ## Build Dependices
 * ```rust``` (lastest nightly)
-* ```GNU Binutils``` (ld)
 * ```nasm``` 
-* ```xorriso```
-* ```GNU mtools```
-* ```dosfstools``` (mkfs.vfat)
-* ```qemu``` (optional: require if you want to test or run it in qemu)
+* ```fasm```
 * ```wget```
-* ```make```
+* ```qemu``` (optional: require if you want to test or run it in qemu)
 ## Getting the source code
 This project uses sub modules
 ```bash
@@ -25,16 +21,9 @@ git clone --recurse-submodules https://github.com/pantae35872/radium
 cd radium
 ```
 ## Build and Run
-Before building the OS, you might want to choose a font. It is recommended to use default font.
-but if you want to use custom font follow these step. 
-1. Copy your font file (`.ttf`) to the project directory and 
-2. rename it to ```kernel-font.ttf```
 ```bash
-# build the os (release mode. if you want debug mode change the make argument to "debug")
-make release
-
-# run using QEMU
-make run
+cargo run --release
 ```
+Then type command `build` into the prompt, it'll build and run the project, for more information on the build system, type command `help`
 ## Contributing
 At this time, I am not planning to accept contributions to the project.

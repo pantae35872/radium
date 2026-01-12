@@ -99,17 +99,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
-name = "baker"
-version = "0.1.0"
-dependencies = [
- "addr2line",
- "bakery",
- "gimli 0.27.3",
- "object",
- "rustc-demangle",
-]
-
-[[package]]
 name = "bakery"
 version = "0.1.0"
 dependencies = [
@@ -200,19 +189,28 @@ dependencies = [
 name = "build-tool"
 version = "0.1.0"
 dependencies = [
+ "addr2line",
  "arboard",
+ "bakery",
  "bit_field",
  "bitflags 2.10.0",
  "build-tool-proc",
  "chrono",
+ "gimli 0.27.3",
+ "is_executable",
+ "object",
  "oklab",
+ "packery",
  "paste",
  "portable-pty",
  "ratatui",
+ "rustc-demangle",
  "serde",
  "smart-default",
  "thiserror 2.0.17",
  "toml",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
@@ -1301,14 +1299,6 @@ checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "packer"
-version = "0.1.0"
-dependencies = [
- "is_executable",
- "packery",
 ]
 
 [[package]]

@@ -16,8 +16,21 @@ bit_field = "0.10.2"
 paste = "1.0.15"
 chrono = "0.4.42"
 bitflags = "2.4.1"
+object = "0.32"
+addr2line = "0.21"
+gimli = "0.27" 
+rustc-demangle = "0.1"
+is_executable = "1.0.5"
+bakery = { path = "../src/bakery" }
+unicode-segmentation = "1.12.0"
+unicode-width = "0.2.2"
 
 [dependencies.arboard]
 version = "3.6.1"
 features = ["wayland-data-control"]
 default-features = false
+
+[dependencies.packery]
+path = "../src/packery"
+default-features = false
+features = ["std"]

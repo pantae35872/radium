@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
 };
 
+use packery::Packery;
 use portable_pty::{CommandBuilder, ExitStatus};
 use thiserror::Error;
 
@@ -18,6 +19,7 @@ use crate::{
     config::{BuildMode, Config, ConfigRoot},
 };
 
+mod baker;
 mod cargo_project;
 mod fat;
 mod iso;
@@ -38,7 +40,7 @@ pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Erro
 pub fn project_dir() -> Result<PathBuf, Error> {
     let mut current_dir = env::current_dir().map_err(|error| Error::CurrentDir { error })?;
 
-    while !current_dir.file_name().is_some_and(|e| e == OsStr::new("radium")) {
+    while current_dir.file_name().is_some_and(|e| e != OsStr::new("radium")) {
         current_dir = current_dir.parent().expect("Failed to get to the project root!").to_path_buf();
     }
 
@@ -61,6 +63,10 @@ pub enum Error {
     CommandIoError { error: io::Error },
     #[error("Command `{command}` in dir `{dir}`, failed with exit status {status}")]
     CommandFailed { command: String, dir: String, status: ExitStatus },
+    #[error("Failed to run QEMU, failed with: `{error}`")]
+    Qemu { error: io::Error },
+    #[error("Failed to download font, failed with: `{error}`")]
+    DownloadFont { error: io::Error },
 }
 
 #[derive(Debug)]
@@ -87,13 +93,32 @@ impl Builder<'_> {
         make_build_dir()?;
         self.gen_config()?;
 
-        let build_tool = self.project(&self.root_path.join("build-tool")).build()?;
-        let kernel = self.project(&self.src("kernel")).build()?;
-        let bootloader = self.project(&self.src("bootloader")).build()?;
-        let init = self.project(&self.userland("init")).build()?;
+        let font_file = self.build_path.join("kernel_font.ttf");
+        if !font_file.exists() {
+            let mut command = CommandBuilder::new("wget");
+            command.cwd(&self.build_path);
+            command.args(["-O", "kernel_font.ttf", "https://www.1001fonts.com/download/font/open-sans.regular.ttf"]);
+            self.executor.run(command).map_err(|error| Error::DownloadFont { error })?;
+        }
+
+        let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;
+        if modified && self.config.config.reexec_build_tool {
+            ratatui::restore();
+            return Err(Error::ReExecFailed { error: Command::new(build_tool).arg("true").exec() });
+        }
+
+        let kernel = self.project(&self.src("kernel")).build()?.0;
+        let bootloader = self.project(&self.src("bootloader")).build()?.0;
+        let init = self.project(&self.userland("init")).build()?.0;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
+
         let kernel = self.read_file(kernel).map_err(|error| Error::GenIso { error })?;
         let bootloader = self.read_file(bootloader).map_err(|error| Error::GenIso { error })?;
+        let init = self.read_file(init).map_err(|error| Error::GenIso { error })?;
+        let font_file = self.read_file(font_file).map_err(|error| Error::GenIso { error })?;
+
+        let mut packery = Packery::new();
+        packery.push("init", &init);
 
         let mut root = DirectoryWriter::new();
         root.dir("EFI", |efi| {
@@ -102,17 +127,47 @@ impl Builder<'_> {
             });
         });
         root.dir(self.config.config.boot_loader.file_root.as_str().trim_prefix("\\"), |boot| {
+            boot.file(self.config.config.boot_loader.dwarf_file.as_str(), baker::bake(&kernel));
+            boot.file(self.config.config.boot_loader.packed_file.as_str(), packery.pack());
+            boot.file(self.config.config.boot_loader.font_file.as_str(), font_file);
             boot.file(self.config.config.boot_loader.kernel_file.as_str(), kernel);
         });
 
-        let fat = fat::make(&root.directory);
-        self.write_file(&self.build_path.join("radium.img"), &fat).map_err(|error| Error::GenIso { error })?;
-        let iso = iso::make(&root.directory, Some(fat));
-        self.write_file(&self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
+        self.executor.running_cmd::<Result<_, _>>("Generating iso image...", || {
+            write!(self.executor, "Creating bootable iso image...");
+            let fat = fat::make(&root.directory);
+            let iso = iso::make(&root.directory, Some(fat));
+            write!(self.executor, "Writing the iso image to disk...");
+            self.write_file(self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
+            write!(self.executor, "Done!");
+            Ok(())
+        })?;
 
-        if self.config.reexec_build_tool {
-            ratatui::restore();
-            return Err(Error::ReExecFailed { error: Command::new(build_tool).exec() });
+        if self.config.config.qemu.run_qemu {
+            let mut command = CommandBuilder::new("qemu-system-x86_64");
+            command.cwd(self.root_path);
+            command.args(["-m", &format!("{}M", self.config.config.qemu.memory)]);
+            command.args(["-smp", &format!("cores={}", self.config.config.qemu.core_count)]);
+            command.args([
+                "-bios",
+                "OVMF.fd",
+                "-usb",
+                "-device",
+                "usb-ehci,id=ehci",
+                "-device",
+                "usb-tablet,bus=usb-bus.0",
+                "-no-reboot",
+                "-serial",
+                "stdio",
+                "-display",
+                "sdl",
+            ]);
+            if self.config.config.qemu.enable_kvm {
+                command.args(["-enable-kvm", "-cpu", "host,+rdrand,+sse,+mmx"]);
+            }
+            command.args(["-cdrom", &format!("{}", self.build_path.join("radium.iso").display())]);
+            self.config.into_command(&mut command);
+            self.executor.run(command.clone()).map_err(|error| Error::Qemu { error })?;
         }
 
         Ok(())
@@ -131,7 +186,7 @@ impl Builder<'_> {
         if path.exists() {
             remove_file(path)?;
         }
-        OpenOptions::new().create(true).write(true).truncate(true).open(path).and_then(|mut f| f.write_all(&data))
+        OpenOptions::new().create(true).write(true).truncate(true).open(path).and_then(|mut f| f.write_all(data))
     }
 
     fn gen_config(&self) -> Result<(), Error> {
@@ -165,14 +220,13 @@ pub const fn config() -> ConfigRoot {{
     }
 
     fn project<'a>(&'a mut self, path: &'a Path) -> CargoProject<'a> {
-        CargoProject::new(path, &self.build_path, &self.config, &mut self.executor)
+        CargoProject::new(path, &self.build_path, &self.config, self.executor)
     }
 }
 
 #[derive(Debug)]
 pub struct BuildConfig {
     pub config: Arc<ConfigRoot>,
-    pub reexec_build_tool: bool,
 }
 
 impl BuildConfig {

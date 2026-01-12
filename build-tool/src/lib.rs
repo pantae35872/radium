@@ -6,6 +6,7 @@
 
 use std::{
     ffi::OsStr,
+    fmt::{self, Arguments, Write},
     io::{self, BufRead, BufReader, stdout},
     sync::{
         Arc, Mutex,
@@ -15,7 +16,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
+use portable_pty::{ChildKiller, CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
     crossterm::event::{self, Event, KeyCode, KeyModifiers},
@@ -26,6 +27,8 @@ use ratatui::{
     widgets::{Block, BorderType, Padding},
 };
 use thiserror::Error;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     config::ConfigRoot,
@@ -48,6 +51,11 @@ pub enum Error {
     BuildDirFailed { error: io::Error },
     #[error("Run command, failed with error {error}")]
     RunCommand { error: io::Error },
+    #[error("Build error, failed with error {error}")]
+    Build {
+        #[from]
+        error: build::Error,
+    },
 }
 
 pub struct App {
@@ -58,9 +66,12 @@ pub struct App {
     running_cmd_name: Option<String>,
     output_collected: Vec<String>,
 
+    child_killer_receiver: Receiver<Box<dyn ChildKiller + Send + Sync>>,
+    child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
+
     last_command: Option<String>,
-    build_cmd_handle: Option<JoinHandle<Result<(), build::Error>>>,
-    build_error: Option<build::Error>,
+    cmd_handle: Option<JoinHandle<Result<(), Error>>>,
+    build_error: Option<Error>,
 
     previous_render_start: Instant,
     delta_time: Duration,
@@ -83,9 +94,28 @@ enum MainScreen {
 struct CmdExecutor {
     output_stream: Sender<String>,
     running_cmd_name: Sender<Option<String>>,
+    child_killer_sender: Sender<Box<dyn ChildKiller + Send + Sync>>,
+}
+
+impl Write for CmdExecutor {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.output_stream.send(s.to_string()).map_err(|_| fmt::Error)?;
+        Ok(())
+    }
 }
 
 impl CmdExecutor {
+    pub fn write_fmt(&self, args: Arguments) {
+        let _ = self.output_stream.send(format!("{args}"));
+    }
+
+    pub fn running_cmd<R>(&self, name: &str, f: impl FnOnce() -> R) -> R {
+        let _ = self.running_cmd_name.send(Some(name.to_string()));
+        let res = f();
+        let _ = self.running_cmd_name.send(None);
+        res
+    }
+
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(Default::default()).unwrap();
@@ -105,6 +135,7 @@ impl CmdExecutor {
                 let _ = stream.send(line);
             }
         });
+        let _ = self.child_killer_sender.send(process.clone_killer());
 
         let result = process.wait()?;
 
@@ -118,7 +149,8 @@ impl App {
     pub fn new() -> Self {
         let (output_stream, child_output) = channel();
         let (running_cmd_name, child_process_name) = channel();
-        let executor = Arc::new(CmdExecutor { output_stream, running_cmd_name }.into());
+        let (child_killer_sender, child_killer_receiver) = channel();
+        let executor = Arc::new(CmdExecutor { child_killer_sender, output_stream, running_cmd_name }.into());
 
         let config = config::load();
 
@@ -128,10 +160,12 @@ impl App {
             child_output,
             child_process_name,
             running_cmd_name: None,
-            build_cmd_handle: None,
+            cmd_handle: None,
+            child_killer_receiver,
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
+            child_killer: None,
             previous_render_start: Instant::now(),
             delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
@@ -144,7 +178,7 @@ impl App {
         }
     }
 
-    pub fn run(mut self, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
+    pub fn run(mut self, from_rebuild: bool, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
         let backend = CrosstermBackend::new(stdout());
         let mut repl_terminal =
             Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
@@ -152,6 +186,10 @@ impl App {
         repl_terminal
             .insert_before(main_terminal.size().map_err(|error| Error::Tui { error })?.height, |_frame| {})
             .map_err(|error| Error::Tui { error })?;
+
+        if from_rebuild {
+            self.eval("build".to_string());
+        }
 
         loop {
             let event_handle_duration = Instant::now() - self.previous_render_start;
@@ -162,10 +200,14 @@ impl App {
 
             let start = Instant::now();
 
-            if self.build_cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
-                self.build_error = self.build_cmd_handle.unwrap().join().expect("Builder panicked").err();
-                self.build_cmd_handle = None;
+            if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
+                self.build_error = self.cmd_handle.unwrap().join().expect("Builder panicked").err();
+                self.cmd_handle = None;
                 self.last_command = None;
+            }
+
+            while let Ok(name) = self.child_killer_receiver.try_recv() {
+                self.child_killer = Some(name);
             }
 
             while let Ok(name) = self.child_process_name.try_recv() {
@@ -174,11 +216,7 @@ impl App {
 
             while let Ok(line) = self.child_output.try_recv() {
                 self.output_collected.push(line.clone());
-                repl_terminal
-                    .insert_before(1, |buf| {
-                        buf[(0, 0)].set_symbol(&line);
-                    })
-                    .unwrap();
+                Self::insert_before_lines(&line, &mut repl_terminal)?;
             }
 
             self.draw(&mut repl_terminal, &mut main_terminal)?;
@@ -214,11 +252,19 @@ impl App {
                 }
                 Event::Key(key) => {
                     match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let (Some(_handle), Some(killer)) =
+                                (self.cmd_handle.as_ref(), self.child_killer.as_mut())
+                            {
+                                let _ = killer.kill();
+                            } else {
+                                return Ok(());
+                            }
+                        }
                         _ => {}
                     }
 
-                    if self.build_cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
+                    if self.cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
                         continue;
                     }
 
@@ -248,21 +294,12 @@ impl App {
             "config" | "c" => {
                 self.main_screen = MainScreen::Config;
             }
-            "br" | "build-reexec" => {
+            "build" | "b" if self.cmd_handle.is_none() => {
                 self.build_error = None;
                 let config = Arc::clone(&self.config);
-                self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config, reexec_build_tool: true })
-                }));
-            }
-            "run" | "r" => {
-                todo!("Run!");
-            }
-            "build" | "b" if self.build_cmd_handle.is_none() => {
-                self.build_error = None;
-                let config = Arc::clone(&self.config);
-                self.build_cmd_handle = Some(thread::spawn(move || {
-                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config, reexec_build_tool: false })
+                self.cmd_handle = Some(thread::spawn(move || {
+                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config })?;
+                    Ok(())
                 }));
             }
             "help" | "h" => {
@@ -277,13 +314,43 @@ impl App {
         self.last_command = Some(command);
     }
 
+    fn insert_before_lines(line: &str, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
+        for mut line in line.split("\n") {
+            while !line.is_empty() {
+                let mut current_width = 0;
+                let mut split_idx = 0;
+
+                for (byte_idx, grapheme) in line.grapheme_indices(true) {
+                    let w = UnicodeWidthStr::width(grapheme);
+                    if current_width + w > repl_terminal.get_frame().area().width.into() {
+                        break;
+                    }
+                    current_width += w;
+                    split_idx = byte_idx + grapheme.len();
+                }
+
+                if split_idx == 0 {
+                    // fallback: at least consume something to avoid infinite loops
+                    split_idx = line.len();
+                }
+
+                let chunk = &line[..split_idx];
+
+                repl_terminal
+                    .insert_before(1, |buf| {
+                        buf[(0, 0)].set_symbol(chunk);
+                    })
+                    .map_err(|error| Error::Tui { error })?;
+
+                line = &line[split_idx..];
+            }
+        }
+        Ok(())
+    }
+
     fn redraw_child_output(&mut self, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
         for line in self.output_collected.iter() {
-            repl_terminal
-                .insert_before(1, |buf| {
-                    buf[(0, 0)].set_symbol(&line);
-                })
-                .map_err(|error| Error::Tui { error })?;
+            Self::insert_before_lines(line, repl_terminal)?;
         }
         Ok(())
     }
@@ -341,13 +408,13 @@ impl App {
             Line::from("The avaiables commands are:"),
             Line::from("  `h` or `help` to show this popup"),
             Line::from("  `b` or `build` to build the project"),
-            Line::from("  `r` or `run` to run with qemu"),
-            Line::from("  `br` or `build-reexec` to build and re execute the build tool"),
             Line::from(
                 "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
             ),
             Line::from("Also the controls are:"),
-            Line::from("  Press `CTRL-C` to quit the build tool"),
+            Line::from(
+                "  Press `CTRL-C` to quit the build tool, if the build is running this will terminate the build build",
+            ),
             Line::from("  and the prompt controls is similar to a normal readline control"),
         ];
 
@@ -382,7 +449,7 @@ impl App {
     fn draw_repl(&mut self, frame: &mut Frame) {
         let [status, prompt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
-        let command_status = if self.build_cmd_handle.is_some() || !matches!(self.main_screen, MainScreen::None) {
+        let command_status = if self.cmd_handle.is_some() || !matches!(self.main_screen, MainScreen::None) {
             CommandStatus::Busy
         } else if self.build_error.is_some() {
             CommandStatus::Errored
@@ -390,8 +457,7 @@ impl App {
             CommandStatus::Idle
         };
         let display = self.build_error.as_ref().map(|e| e.to_string());
-        let display =
-            display.unwrap_or_else(|| self.running_cmd_name.as_ref().map(|e| e.as_str()).unwrap_or("Idle").to_string());
+        let display = display.unwrap_or_else(|| self.running_cmd_name.as_deref().unwrap_or("Idle").to_string());
         let mut display = display.to_line().centered().style(Style::default().bold());
         if matches!(command_status, CommandStatus::Errored) {
             display = display.red();
@@ -399,7 +465,7 @@ impl App {
         frame.render_widget(display, status);
         frame.render_stateful_widget(
             Promt {
-                running_cmd: self.last_command.as_ref().map(|e| e.as_str()).unwrap_or(""),
+                running_cmd: self.last_command.as_deref().unwrap_or(""),
                 delta_time: self.delta_time,
                 command_status,
                 ..Default::default()

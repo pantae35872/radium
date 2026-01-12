@@ -11,14 +11,35 @@ use thiserror::Error;
 
 use crate::build::{self, make_build_dir};
 
-#[derive(Config, Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
 pub struct ConfigRoot {
     #[config_name = "Build Mode"]
     pub build_mode: BuildMode,
+    #[config_name = "ReExec when build-tool changed"]
+    #[default = true]
+    pub reexec_build_tool: bool,
+    #[config_name = "QEMU"]
+    pub qemu: Qemu,
     #[config_name = "Bootloader"]
     pub boot_loader: Bootloader,
     #[config_name = "Kernel"]
     pub kernel: Kernel,
+}
+
+#[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
+pub struct Qemu {
+    #[config_name = "Run qemu when build finished"]
+    #[default = true]
+    pub run_qemu: bool,
+    #[config_name = "QEMU Guest Memory (in MB)"]
+    #[default = 1024]
+    pub memory: i32,
+    #[config_name = "SMP Core count"]
+    #[default = 8]
+    pub core_count: i32,
+    #[config_name = "Enable KVM"]
+    #[default = true]
+    pub enable_kvm: bool,
 }
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]
@@ -27,15 +48,6 @@ pub enum BuildMode {
     Debug,
     Release,
 }
-
-//file_root = "\\boot"
-//kernel_file = "kernel.bin"
-//font_file = "kernel-font.ttf"
-//dwarf_file = "dwarf.baker"
-//packed_file = "usr_bin.pak"
-//screen_resolution = { width = 1920, height = 1080 }
-//any_key_boot = false
-//early_boot_kernel_page_table_page_count = 64 # 64 Pages for kernel elf
 
 #[derive(Config, Serialize, SmartDefault, Deserialize, Debug, Clone)]
 pub struct Bootloader {

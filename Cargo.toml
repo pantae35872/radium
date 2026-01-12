@@ -13,9 +13,6 @@ members = [
 
     "userland/init",
 
-    "post-processor/packer", 
-    "post-processor/baker", 
-
     "build-tool", "build-tool-proc", 
 ]
 resolver = "2"
