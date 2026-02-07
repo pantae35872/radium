@@ -5,18 +5,17 @@
 #![feature(iter_array_chunks)]
 
 use std::{
-    ffi::OsStr,
     fmt::{self, Arguments, Write},
-    io::{self, BufRead, BufReader, stdout},
+    io::{self, stdout},
     sync::{
-        Arc, Mutex,
+        Arc,
         mpsc::{Receiver, Sender, channel},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
-use portable_pty::{ChildKiller, CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
+use portable_pty::ChildKiller;
 use ratatui::{
     DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
     crossterm::event::{self, Event, KeyCode, KeyModifiers},
@@ -62,7 +61,10 @@ enum AppEvent {
     Ui(Event, Duration),
     Render(Duration),
     Output(String),
-    RunningCmd(Option<String>),
+    RunningCmd(String),
+    ChildProcessStarted(Box<dyn ChildKiller + Send + Sync>),
+    CmdStopped,
+    Terminated,
 }
 
 pub struct App {
@@ -72,12 +74,12 @@ pub struct App {
 
     running_cmd_name: Option<String>,
     output_collected: Vec<String>,
+    child_process_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
 
     last_command: Option<String>,
     cmd_handle: Option<JoinHandle<Result<(), Error>>>,
     build_error: Option<Error>,
 
-    previous_render_start: Instant,
     main_screen: MainScreen,
 
     config: Arc<ConfigRoot>,
@@ -107,7 +109,7 @@ impl App {
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
-            previous_render_start: Instant::now(),
+            child_process_killer: None,
             main_screen: MainScreen::None,
             config_area: ConfigAreaState {
                 config_staging: config.clone().into(),
@@ -137,7 +139,17 @@ impl App {
         loop {
             frame_start = Instant::now();
             let delta = last_start.elapsed();
-            self.handle_event(&mut repl_terminal, &mut main_terminal, event);
+            let should_terminated = matches!(event, AppEvent::Terminated);
+            self.handle_event(&mut repl_terminal, &mut main_terminal, event)?;
+            if should_terminated {
+                return Ok(());
+            }
+
+            if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
+                self.build_error = self.cmd_handle.unwrap().join().expect("Builder panicked").err();
+                self.cmd_handle = None;
+                self.last_command = None;
+            }
             event = self.poll_event_timeout(Duration::from_millis(1).saturating_sub(frame_start.elapsed()), delta)?;
             last_start = frame_start;
         }
@@ -178,12 +190,19 @@ impl App {
                 self.draw(repl_terminal, main_terminal, delta_time)?;
             }
             AppEvent::RunningCmd(new_running_cmd) => {
-                self.running_cmd_name = new_running_cmd;
+                self.running_cmd_name = Some(new_running_cmd);
+            }
+            AppEvent::ChildProcessStarted(killer) => {
+                self.child_process_killer = Some(killer);
+            }
+            AppEvent::CmdStopped => {
+                self.running_cmd_name = None;
             }
             AppEvent::Output(line) => {
                 self.output_collected.push(line.clone());
                 Self::insert_before_lines(&line, repl_terminal)?;
             }
+            AppEvent::Terminated => {}
         };
         Ok(())
     }
@@ -217,7 +236,13 @@ impl App {
             Event::Key(key) => {
                 match key.code {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        todo!();
+                        if let (Some(_handle), Some(killer)) =
+                            (self.cmd_handle.as_ref(), self.child_process_killer.as_mut())
+                        {
+                            let _ = killer.kill();
+                        } else {
+                            let _ = self.event_sender.send(AppEvent::Terminated);
+                        }
                     }
                     _ => {}
                 }
@@ -246,8 +271,6 @@ impl App {
     }
 
     fn eval(&mut self, command: String) {
-        let executor = self.executor.clone();
-
         match command.as_str() {
             "config" | "c" => {
                 self.main_screen = MainScreen::Config;
@@ -255,8 +278,9 @@ impl App {
             "build" | "b" if self.cmd_handle.is_none() => {
                 self.build_error = None;
                 let config = Arc::clone(&self.config);
+                let event = self.event_sender.clone();
                 self.cmd_handle = Some(thread::spawn(move || {
-                    build::build(&mut executor.lock().unwrap(), build::BuildConfig { config })?;
+                    build::build(event, build::BuildConfig { config })?;
                     Ok(())
                 }));
             }
@@ -443,5 +467,27 @@ impl App {
             }
         }
         Ok(())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct AppFormatter(pub Sender<AppEvent>);
+
+impl From<&Sender<AppEvent>> for AppFormatter {
+    fn from(value: &Sender<AppEvent>) -> Self {
+        Self(value.clone())
+    }
+}
+
+impl fmt::Write for AppFormatter {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.send(AppEvent::Output(s.to_string())).map_err(|_| fmt::Error)?;
+        Ok(())
+    }
+}
+
+impl AppFormatter {
+    pub fn write_fmt(&mut self, args: Arguments) -> std::fmt::Result {
+        Write::write_fmt(self, args)
     }
 }

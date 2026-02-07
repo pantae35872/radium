@@ -2,11 +2,11 @@ use std::{
     env,
     ffi::OsStr,
     fs::{OpenOptions, create_dir, remove_file},
-    io::{self, BufReader, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
     thread,
 };
 
@@ -15,7 +15,7 @@ use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use thiserror::Error;
 
 use crate::{
-    CmdExecutor,
+    AppEvent, AppFormatter,
     build::cargo_project::CargoProject,
     config::{BuildMode, Config, ConfigRoot},
 };
@@ -25,7 +25,7 @@ mod cargo_project;
 mod fat;
 mod iso;
 
-pub fn build(config: BuildConfig) -> Result<(), Error> {
+pub fn build(event: Sender<AppEvent>, config: BuildConfig) -> Result<(), Error> {
     let current_dir = project_dir()?;
 
     Builder {
@@ -34,6 +34,10 @@ pub fn build(config: BuildConfig) -> Result<(), Error> {
         build_path: current_dir.join("build"),
         src_path: current_dir.join("src"),
         userland_path: current_dir.join("userland"),
+
+        formatter: AppFormatter::from(&event),
+        executor: CmdExecutor::from(&event),
+        event,
     }
     .build()
 }
@@ -73,17 +77,18 @@ pub enum Error {
 }
 
 #[derive(Debug)]
-struct Builder<'a> {
-    executor: CmdExecutor,
-
+struct Builder {
     config: BuildConfig,
     src_path: PathBuf,
     userland_path: PathBuf,
     build_path: PathBuf,
     root_path: PathBuf,
+    event: Sender<AppEvent>,
+    executor: CmdExecutor,
+    formatter: AppFormatter,
 }
 
-impl Builder<'_> {
+impl Builder {
     fn userland(&self, name: &str) -> PathBuf {
         self.userland_path.join(name)
     }
@@ -168,13 +173,14 @@ impl Builder<'_> {
             boot.file(self.config.config.boot_loader.kernel_file.as_str(), kernel);
         });
 
-        self.executor.running_cmd::<Result<_, _>>("Generating iso image...", || {
-            write!(self.executor, "Creating bootable iso image...");
+        let mut formatter = self.formatter.clone();
+        self.executor.psudo_cmd::<Result<_, _>>("Generating iso image...", || {
+            let _ = write!(formatter, "Creating bootable iso image...");
             let fat = fat::make(&root.directory);
             let iso = iso::make(&root.directory, Some(fat));
-            write!(self.executor, "Writing the iso image to disk...");
+            let _ = write!(formatter, "Writing the iso image to disk...");
             self.write_file(self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
-            write!(self.executor, "Done!");
+            let _ = write!(formatter, "Done!");
             Ok(())
         })?;
 
@@ -254,7 +260,7 @@ pub const fn config() -> ConfigRoot {{
     }
 
     fn project<'a>(&'a mut self, path: &'a Path) -> CargoProject<'a> {
-        CargoProject::new(path, &self.build_path, &self.config, self.executor)
+        CargoProject::new(path, &self.build_path, &self.config, self.executor.clone())
     }
 }
 
@@ -336,30 +342,22 @@ pub fn make_build_dir() -> Result<PathBuf, Error> {
     Ok(build_path)
 }
 
-#[derive(Debug)]
-struct CmdExecutor {
-    output_stream: Sender<String>,
-    running_cmd_name: Sender<Option<String>>,
-    child_killer_sender: Sender<Box<dyn ChildKiller + Send + Sync>>,
-}
+#[derive(Debug, Clone)]
+struct CmdExecutor(Sender<AppEvent>);
 
-impl Write for CmdExecutor {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.output_stream.send(s.to_string()).map_err(|_| fmt::Error)?;
-        Ok(())
+impl From<&Sender<AppEvent>> for CmdExecutor {
+    fn from(value: &Sender<AppEvent>) -> Self {
+        Self(value.clone())
     }
 }
 
 impl CmdExecutor {
-    pub fn write_fmt(&self, args: Arguments) {
-        let _ = self.output_stream.send(format!("{args}"));
-    }
+    pub fn psudo_cmd<R>(&self, name: &str, runner: impl FnOnce() -> R) -> R {
+        let _ = self.0.send(AppEvent::RunningCmd(name.to_string()));
+        let result = runner();
+        let _ = self.0.send(AppEvent::CmdStopped);
 
-    pub fn running_cmd<R>(&self, name: &str, f: impl FnOnce() -> R) -> R {
-        let _ = self.running_cmd_name.send(Some(name.to_string()));
-        let res = f();
-        let _ = self.running_cmd_name.send(None);
-        res
+        result
     }
 
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
@@ -371,21 +369,21 @@ impl CmdExecutor {
 
         let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
         let cmd_cwd = command.get_cwd().and_then(|e| e.to_str()).unwrap_or("unknown");
-        let _ = self.output_stream.send(format!("Running `{command_display}` in {cmd_cwd}"));
-        let _ = self.running_cmd_name.send(Some(format!("`{command_display}` in {cmd_cwd}")));
+        let _ = self.0.send(AppEvent::Output(format!("Running `{command_display}` in {cmd_cwd}")));
+        let _ = self.0.send(AppEvent::RunningCmd(format!("`{command_display}` in {cmd_cwd}")));
 
-        let stream = self.output_stream.clone();
+        let event_stream = self.0.clone();
         thread::spawn(move || {
             let reader = BufReader::new(reader);
             for line in reader.lines().flatten() {
-                let _ = stream.send(line);
+                let _ = event_stream.send(AppEvent::Output(line));
             }
         });
-        let _ = self.child_killer_sender.send(process.clone_killer());
+        let _ = self.0.send(AppEvent::ChildProcessStarted(process.clone_killer()));
 
         let result = process.wait()?;
 
-        let _ = self.running_cmd_name.send(None);
+        let _ = self.0.send(AppEvent::CmdStopped);
 
         Ok(result)
     }

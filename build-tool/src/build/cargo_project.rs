@@ -7,18 +7,18 @@ use std::{
 use portable_pty::CommandBuilder;
 use toml::Table;
 
-use crate::{CmdExecutor, build::BuildConfig};
+use crate::build::{BuildConfig, CmdExecutor};
 
 #[derive(Debug)]
 pub struct CargoProject<'a> {
     path: &'a Path,
     build_path: &'a Path,
     config: &'a BuildConfig,
-    executor: &'a mut CmdExecutor,
+    executor: CmdExecutor,
 }
 
 impl<'a> CargoProject<'a> {
-    pub fn new(path: &'a Path, build_path: &'a Path, config: &'a BuildConfig, executor: &'a mut CmdExecutor) -> Self {
+    pub fn new(path: &'a Path, build_path: &'a Path, config: &'a BuildConfig, executor: CmdExecutor) -> Self {
         Self { path, build_path, config, executor }
     }
 
