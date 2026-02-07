@@ -9,7 +9,7 @@
 //! to the thread resources, This is done because directly giving a reference to the thread resources
 //! can causes borrow checker problems.
 
-use core::{assert_matches::assert_matches, mem::zeroed, num::NonZeroUsize};
+use core::{assert_matches, mem::zeroed, num::NonZeroUsize};
 
 use alloc::vec::Vec;
 use kernel_proc::IPPacket;
