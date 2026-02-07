@@ -2,15 +2,16 @@ use std::{
     env,
     ffi::OsStr,
     fs::{OpenOptions, create_dir, remove_file},
-    io::{self, Read, Write},
+    io::{self, BufReader, Read, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
     sync::Arc,
+    thread,
 };
 
 use packery::Packery;
-use portable_pty::{CommandBuilder, ExitStatus};
+use portable_pty::{CommandBuilder, ExitStatus, NativePtySystem, PtySystem};
 use thiserror::Error;
 
 use crate::{
@@ -24,11 +25,11 @@ mod cargo_project;
 mod fat;
 mod iso;
 
-pub fn build(executor: &mut CmdExecutor, config: BuildConfig) -> Result<(), Error> {
+pub fn build(config: BuildConfig) -> Result<(), Error> {
     let current_dir = project_dir()?;
+
     Builder {
         config,
-        executor,
         root_path: current_dir.clone(),
         build_path: current_dir.join("build"),
         src_path: current_dir.join("src"),
@@ -73,7 +74,7 @@ pub enum Error {
 
 #[derive(Debug)]
 struct Builder<'a> {
-    executor: &'a mut CmdExecutor,
+    executor: CmdExecutor,
 
     config: BuildConfig,
     src_path: PathBuf,
@@ -333,4 +334,59 @@ pub fn make_build_dir() -> Result<PathBuf, Error> {
     gitignore.flush().map_err(|error| Error::CreateDir { error })?;
 
     Ok(build_path)
+}
+
+#[derive(Debug)]
+struct CmdExecutor {
+    output_stream: Sender<String>,
+    running_cmd_name: Sender<Option<String>>,
+    child_killer_sender: Sender<Box<dyn ChildKiller + Send + Sync>>,
+}
+
+impl Write for CmdExecutor {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.output_stream.send(s.to_string()).map_err(|_| fmt::Error)?;
+        Ok(())
+    }
+}
+
+impl CmdExecutor {
+    pub fn write_fmt(&self, args: Arguments) {
+        let _ = self.output_stream.send(format!("{args}"));
+    }
+
+    pub fn running_cmd<R>(&self, name: &str, f: impl FnOnce() -> R) -> R {
+        let _ = self.running_cmd_name.send(Some(name.to_string()));
+        let res = f();
+        let _ = self.running_cmd_name.send(None);
+        res
+    }
+
+    pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
+        let pty_system = NativePtySystem::default();
+        let pair = pty_system.openpty(Default::default()).unwrap();
+        let reader = pair.master.try_clone_reader().unwrap();
+
+        let mut process = pair.slave.spawn_command(command.clone()).unwrap();
+
+        let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
+        let cmd_cwd = command.get_cwd().and_then(|e| e.to_str()).unwrap_or("unknown");
+        let _ = self.output_stream.send(format!("Running `{command_display}` in {cmd_cwd}"));
+        let _ = self.running_cmd_name.send(Some(format!("`{command_display}` in {cmd_cwd}")));
+
+        let stream = self.output_stream.clone();
+        thread::spawn(move || {
+            let reader = BufReader::new(reader);
+            for line in reader.lines().flatten() {
+                let _ = stream.send(line);
+            }
+        });
+        let _ = self.child_killer_sender.send(process.clone_killer());
+
+        let result = process.wait()?;
+
+        let _ = self.running_cmd_name.send(None);
+
+        Ok(result)
+    }
 }

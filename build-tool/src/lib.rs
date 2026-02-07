@@ -58,23 +58,26 @@ pub enum Error {
     },
 }
 
+enum AppEvent {
+    Ui(Event, Duration),
+    Render(Duration),
+    Output(String),
+    RunningCmd(Option<String>),
+}
+
 pub struct App {
     prompt: PromtState,
-    executor: Arc<Mutex<CmdExecutor>>,
-    child_output: Receiver<String>,
-    child_process_name: Receiver<Option<String>>,
+    event: Receiver<AppEvent>,
+    event_sender: Sender<AppEvent>,
+
     running_cmd_name: Option<String>,
     output_collected: Vec<String>,
-
-    child_killer_receiver: Receiver<Box<dyn ChildKiller + Send + Sync>>,
-    child_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
 
     last_command: Option<String>,
     cmd_handle: Option<JoinHandle<Result<(), Error>>>,
     build_error: Option<Error>,
 
     previous_render_start: Instant,
-    delta_time: Duration,
     main_screen: MainScreen,
 
     config: Arc<ConfigRoot>,
@@ -90,84 +93,21 @@ enum MainScreen {
     Error(String),
 }
 
-#[derive(Debug)]
-struct CmdExecutor {
-    output_stream: Sender<String>,
-    running_cmd_name: Sender<Option<String>>,
-    child_killer_sender: Sender<Box<dyn ChildKiller + Send + Sync>>,
-}
-
-impl Write for CmdExecutor {
-    fn write_str(&mut self, s: &str) -> std::fmt::Result {
-        self.output_stream.send(s.to_string()).map_err(|_| fmt::Error)?;
-        Ok(())
-    }
-}
-
-impl CmdExecutor {
-    pub fn write_fmt(&self, args: Arguments) {
-        let _ = self.output_stream.send(format!("{args}"));
-    }
-
-    pub fn running_cmd<R>(&self, name: &str, f: impl FnOnce() -> R) -> R {
-        let _ = self.running_cmd_name.send(Some(name.to_string()));
-        let res = f();
-        let _ = self.running_cmd_name.send(None);
-        res
-    }
-
-    pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
-        let pty_system = NativePtySystem::default();
-        let pair = pty_system.openpty(Default::default()).unwrap();
-        let reader = pair.master.try_clone_reader().unwrap();
-
-        let mut process = pair.slave.spawn_command(command.clone()).unwrap();
-
-        let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
-        let cmd_cwd = command.get_cwd().and_then(|e| e.to_str()).unwrap_or("unknown");
-        let _ = self.output_stream.send(format!("Running `{command_display}` in {cmd_cwd}"));
-        let _ = self.running_cmd_name.send(Some(format!("`{command_display}` in {cmd_cwd}")));
-
-        let stream = self.output_stream.clone();
-        thread::spawn(move || {
-            let reader = BufReader::new(reader);
-            for line in reader.lines().flatten() {
-                let _ = stream.send(line);
-            }
-        });
-        let _ = self.child_killer_sender.send(process.clone_killer());
-
-        let result = process.wait()?;
-
-        let _ = self.running_cmd_name.send(None);
-
-        Ok(result)
-    }
-}
-
 impl App {
     pub fn new() -> Self {
-        let (output_stream, child_output) = channel();
-        let (running_cmd_name, child_process_name) = channel();
-        let (child_killer_sender, child_killer_receiver) = channel();
-        let executor = Arc::new(CmdExecutor { child_killer_sender, output_stream, running_cmd_name }.into());
-
+        let (event_sender, event) = channel();
         let config = config::load();
 
         Self {
             prompt: PromtState::default(),
-            executor,
-            child_output,
-            child_process_name,
             running_cmd_name: None,
+            event,
+            event_sender,
             cmd_handle: None,
-            child_killer_receiver,
             output_collected: Default::default(),
             build_error: None,
             last_command: None,
-            child_killer: None,
             previous_render_start: Instant::now(),
-            delta_time: Duration::from_millis(1),
             main_screen: MainScreen::None,
             config_area: ConfigAreaState {
                 config_staging: config.clone().into(),
@@ -191,100 +131,118 @@ impl App {
             self.eval("build".to_string());
         }
 
+        let mut frame_start;
+        let mut last_start = Instant::now();
+        let mut event = AppEvent::Render(Duration::from_millis(1));
         loop {
-            let event_handle_duration = Instant::now() - self.previous_render_start;
-            std::thread::sleep(Duration::from_millis(1).saturating_sub(event_handle_duration));
+            frame_start = Instant::now();
+            let delta = last_start.elapsed();
+            self.handle_event(&mut repl_terminal, &mut main_terminal, event);
+            event = self.poll_event_timeout(Duration::from_millis(1).saturating_sub(frame_start.elapsed()), delta)?;
+            last_start = frame_start;
+        }
+    }
 
-            self.delta_time = Instant::now() - self.previous_render_start;
-            self.previous_render_start = Instant::now();
+    /// Polls for event until timeout
+    fn poll_event_timeout(&mut self, timeout: Duration, delta_time: Duration) -> Result<AppEvent, Error> {
+        let start = Instant::now();
 
-            let start = Instant::now();
-
-            if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
-                self.build_error = self.cmd_handle.unwrap().join().expect("Builder panicked").err();
-                self.cmd_handle = None;
-                self.last_command = None;
+        loop {
+            if let Ok(ev) = self.event.try_recv() {
+                return Ok(ev);
             }
 
-            while let Ok(name) = self.child_killer_receiver.try_recv() {
-                self.child_killer = Some(name);
+            let elapsed = start.elapsed();
+            if elapsed >= timeout {
+                return Ok(AppEvent::Render(delta_time));
             }
 
-            while let Ok(name) = self.child_process_name.try_recv() {
-                self.running_cmd_name = name;
-            }
+            let remaining = timeout - elapsed;
 
-            while let Ok(line) = self.child_output.try_recv() {
-                self.output_collected.push(line.clone());
-                Self::insert_before_lines(&line, &mut repl_terminal)?;
-            }
-
-            self.draw(&mut repl_terminal, &mut main_terminal)?;
-            let render_duration = Instant::now() - start;
-
-            if !event::poll(Duration::from_millis(1).saturating_sub(render_duration))
-                .map_err(|error| Error::Tui { error })?
-            {
-                continue;
-            }
-
-            match event::read().map_err(|error| Error::Tui { error })? {
-                // We don't do release event
-                Event::Key(event) if event.is_release() => {
-                    continue;
-                }
-                Event::Key(key) if matches!(self.main_screen, MainScreen::Config) => {
-                    if let Some(new_config_root) = self.config_area.key_event(key) {
-                        self.main_screen = MainScreen::None;
-                        self.last_command = None;
-                        self.config = Arc::new(new_config_root);
-                        if let Err(err) = config::save(&self.config) {
-                            self.main_screen = MainScreen::Error(format!("{err}"));
-                        }
-                        self.redraw(&mut repl_terminal, &mut main_terminal)?;
-                    }
-                    continue;
-                }
-                Event::Key(_) if matches!(self.main_screen, MainScreen::Error(_) | MainScreen::Help) => {
-                    self.main_screen = MainScreen::None;
-                    self.last_command = None;
-                    self.redraw(&mut repl_terminal, &mut main_terminal)?;
-                }
-                Event::Key(key) => {
-                    match key.code {
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if let (Some(_handle), Some(killer)) =
-                                (self.cmd_handle.as_ref(), self.child_killer.as_mut())
-                            {
-                                let _ = killer.kill();
-                            } else {
-                                return Ok(());
-                            }
-                        }
-                        _ => {}
-                    }
-
-                    if self.cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
-                        continue;
-                    }
-
-                    let command = match self.prompt.key_event(key) {
-                        Some(command) => command,
-                        None => continue,
-                    };
-
-                    self.eval(command);
-                    repl_terminal.clear().map_err(|error| Error::Tui { error })?;
-                }
-                Event::Resize(_col, row) => {
-                    main_terminal.autoresize().map_err(|error| Error::Tui { error })?;
-                    repl_terminal.autoresize().map_err(|error| Error::Tui { error })?;
-                    repl_terminal.insert_before(row, |buf| buf.reset()).unwrap();
-                    self.redraw(&mut repl_terminal, &mut main_terminal)?;
-                }
-                _ => {}
+            if event::poll(remaining).map_err(|error| Error::Tui { error })? {
+                let ev = event::read().map_err(|error| Error::Tui { error })?;
+                return Ok(AppEvent::Ui(ev, delta_time));
             }
         }
+    }
+
+    fn handle_event(
+        &mut self,
+        repl_terminal: &mut DefaultTerminal,
+        main_terminal: &mut DefaultTerminal,
+        event: AppEvent,
+    ) -> Result<(), Error> {
+        match event {
+            AppEvent::Ui(event, delta_time) => self.handle_ui_event(repl_terminal, main_terminal, event, delta_time)?,
+            AppEvent::Render(delta_time) => {
+                self.draw(repl_terminal, main_terminal, delta_time)?;
+            }
+            AppEvent::RunningCmd(new_running_cmd) => {
+                self.running_cmd_name = new_running_cmd;
+            }
+            AppEvent::Output(line) => {
+                self.output_collected.push(line.clone());
+                Self::insert_before_lines(&line, repl_terminal)?;
+            }
+        };
+        Ok(())
+    }
+
+    fn handle_ui_event(
+        &mut self,
+        repl_terminal: &mut DefaultTerminal,
+        main_terminal: &mut DefaultTerminal,
+        event: Event,
+        delta_time: Duration,
+    ) -> Result<(), Error> {
+        match event {
+            // We don't do release event
+            Event::Key(event) if event.is_release() => return Ok(()),
+            Event::Key(key) if matches!(self.main_screen, MainScreen::Config) => {
+                if let Some(new_config_root) = self.config_area.key_event(key) {
+                    self.main_screen = MainScreen::None;
+                    self.last_command = None;
+                    self.config = Arc::new(new_config_root);
+                    if let Err(err) = config::save(&self.config) {
+                        self.main_screen = MainScreen::Error(format!("{err}"));
+                    }
+                    self.redraw(repl_terminal, main_terminal, delta_time)?;
+                }
+            }
+            Event::Key(_) if matches!(self.main_screen, MainScreen::Error(_) | MainScreen::Help) => {
+                self.main_screen = MainScreen::None;
+                self.last_command = None;
+                self.redraw(repl_terminal, main_terminal, delta_time)?;
+            }
+            Event::Key(key) => {
+                match key.code {
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        todo!();
+                    }
+                    _ => {}
+                }
+
+                if self.cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
+                    return Ok(());
+                }
+
+                let command = match self.prompt.key_event(key) {
+                    Some(command) => command,
+                    None => return Ok(()),
+                };
+
+                self.eval(command);
+                repl_terminal.clear().map_err(|error| Error::Tui { error })?;
+            }
+            Event::Resize(_col, row) => {
+                main_terminal.autoresize().map_err(|error| Error::Tui { error })?;
+                repl_terminal.autoresize().map_err(|error| Error::Tui { error })?;
+                repl_terminal.insert_before(row, |buf| buf.reset()).unwrap();
+                self.redraw(repl_terminal, main_terminal, delta_time)?;
+            }
+            _ => {}
+        };
+        Ok(())
     }
 
     fn eval(&mut self, command: String) {
@@ -314,40 +272,6 @@ impl App {
         self.last_command = Some(command);
     }
 
-    fn insert_before_lines(line: &str, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
-        for mut line in line.split("\n") {
-            while !line.is_empty() {
-                let mut current_width = 0;
-                let mut split_idx = 0;
-
-                for (byte_idx, grapheme) in line.grapheme_indices(true) {
-                    let w = UnicodeWidthStr::width(grapheme);
-                    if current_width + w > repl_terminal.get_frame().area().width.into() {
-                        break;
-                    }
-                    current_width += w;
-                    split_idx = byte_idx + grapheme.len();
-                }
-
-                if split_idx == 0 {
-                    // fallback: at least consume something to avoid infinite loops
-                    split_idx = line.len();
-                }
-
-                let chunk = &line[..split_idx];
-
-                repl_terminal
-                    .insert_before(1, |buf| {
-                        buf[(0, 0)].set_symbol(chunk);
-                    })
-                    .map_err(|error| Error::Tui { error })?;
-
-                line = &line[split_idx..];
-            }
-        }
-        Ok(())
-    }
-
     fn redraw_child_output(&mut self, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
         for line in self.output_collected.iter() {
             Self::insert_before_lines(line, repl_terminal)?;
@@ -359,22 +283,30 @@ impl App {
         &mut self,
         repl_terminal: &mut DefaultTerminal,
         main_terminal: &mut DefaultTerminal,
+        delta_time: Duration,
     ) -> Result<(), Error> {
         main_terminal.clear().map_err(|error| Error::Tui { error })?;
         repl_terminal.clear().map_err(|error| Error::Tui { error })?;
 
         self.redraw_child_output(repl_terminal)?;
-        self.draw(repl_terminal, main_terminal)?;
+        self.draw(repl_terminal, main_terminal, delta_time)?;
 
         Ok(())
     }
 
-    fn draw(&mut self, repl_terminal: &mut DefaultTerminal, main_terminal: &mut DefaultTerminal) -> Result<(), Error> {
-        repl_terminal.draw(|frame| self.draw_repl(frame)).map_err(|error| Error::Tui { error })?;
+    fn draw(
+        &mut self,
+        repl_terminal: &mut DefaultTerminal,
+        main_terminal: &mut DefaultTerminal,
+        delta_time: Duration,
+    ) -> Result<(), Error> {
+        repl_terminal.draw(|frame| self.draw_repl(frame, delta_time)).map_err(|error| Error::Tui { error })?;
 
         match self.main_screen {
             MainScreen::Config => {
-                main_terminal.draw(|frame| self.draw_config(frame)).map_err(|error| Error::Tui { error })?;
+                main_terminal
+                    .draw(|frame| self.draw_config(frame, delta_time))
+                    .map_err(|error| Error::Tui { error })?;
             }
             MainScreen::Help => {
                 main_terminal.draw(|frame| self.draw_help(frame)).map_err(|error| Error::Tui { error })?;
@@ -389,13 +321,13 @@ impl App {
         Ok(())
     }
 
-    fn draw_config(&mut self, frame: &mut Frame) {
+    fn draw_config(&mut self, frame: &mut Frame, delta_time: Duration) {
         let vertical = Layout::vertical([Constraint::Percentage(80)]).flex(Flex::Center);
         let horizontal = Layout::horizontal([Constraint::Percentage(60)]).flex(Flex::Center);
         let [area] = vertical.areas(frame.area());
         let [area] = horizontal.areas(area);
 
-        frame.render_stateful_widget(ConfigArea { delta_time: self.delta_time }, area, &mut self.config_area);
+        frame.render_stateful_widget(ConfigArea { delta_time }, area, &mut self.config_area);
     }
 
     fn draw_help(&mut self, frame: &mut Frame) {
@@ -446,7 +378,7 @@ impl App {
         );
     }
 
-    fn draw_repl(&mut self, frame: &mut Frame) {
+    fn draw_repl(&mut self, frame: &mut Frame, delta_time: Duration) {
         let [status, prompt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
         let command_status = if self.cmd_handle.is_some() || !matches!(self.main_screen, MainScreen::None) {
@@ -466,7 +398,7 @@ impl App {
         frame.render_stateful_widget(
             Promt {
                 running_cmd: self.last_command.as_deref().unwrap_or(""),
-                delta_time: self.delta_time,
+                delta_time,
                 command_status,
                 ..Default::default()
             },
@@ -477,5 +409,39 @@ impl App {
         if matches!(self.main_screen, MainScreen::None) {
             self.prompt.set_cursor_pos(prompt, frame);
         }
+    }
+
+    fn insert_before_lines(line: &str, repl_terminal: &mut DefaultTerminal) -> Result<(), Error> {
+        for mut line in line.split("\n") {
+            while !line.is_empty() {
+                let mut current_width = 0;
+                let mut split_idx = 0;
+
+                for (byte_idx, grapheme) in line.grapheme_indices(true) {
+                    let w = UnicodeWidthStr::width(grapheme);
+                    if current_width + w > repl_terminal.get_frame().area().width.into() {
+                        break;
+                    }
+                    current_width += w;
+                    split_idx = byte_idx + grapheme.len();
+                }
+
+                if split_idx == 0 {
+                    // fallback: at least consume something to avoid infinite loops
+                    split_idx = line.len();
+                }
+
+                let chunk = &line[..split_idx];
+
+                repl_terminal
+                    .insert_before(1, |buf| {
+                        buf[(0, 0)].set_symbol(chunk);
+                    })
+                    .map_err(|error| Error::Tui { error })?;
+
+                line = &line[split_idx..];
+            }
+        }
+        Ok(())
     }
 }
