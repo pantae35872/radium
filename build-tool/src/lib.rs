@@ -12,7 +12,7 @@ use std::{
         Arc,
         mpsc::{Receiver, Sender, channel},
     },
-    thread::{self, JoinHandle},
+    thread::{self, JoinHandle, sleep},
     time::{Duration, Instant},
 };
 
@@ -61,6 +61,31 @@ pub enum Error {
     },
 }
 
+#[macro_export]
+macro_rules! result_err_ext {
+    (
+        $method:ident,
+        $err_ty:ty,
+        $variant:path
+    ) => {
+        paste::paste! {
+            pub trait [<$method:camel ResultExt>]<T> {
+                fn $method(self) -> Result<T, Error>;
+            }
+
+            impl<T> [<$method:camel ResultExt>]<T> for Result<T, $err_ty> {
+                #[inline]
+                fn $method(self) -> Result<T, Error> {
+                    self.map_err(|error| $variant { error })
+                }
+            }
+        }
+    };
+}
+
+result_err_ext!(tui_err, std::io::Error, Error::Tui);
+
+#[derive(Debug)]
 enum AppEvent {
     Ui(Event),
     Render(Duration),
@@ -134,10 +159,8 @@ impl App {
         let backend = CrosstermBackend::new(stdout());
         let mut repl_terminal =
             Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
-                .map_err(|error| Error::Tui { error })?;
-        repl_terminal
-            .insert_before(main_terminal.size().map_err(|error| Error::Tui { error })?.height, |_frame| {})
-            .map_err(|error| Error::Tui { error })?;
+                .tui_err()?;
+        repl_terminal.insert_before(main_terminal.size().tui_err()?.height, |_frame| {}).tui_err()?;
         let mut parser = vt100::Parser::new(
             main_terminal.get_frame().area().height - repl_terminal.get_frame().area().height,
             main_terminal.get_frame().area().width,
@@ -153,47 +176,45 @@ impl App {
 
         let mut frame_start;
         let mut last_start = Instant::now();
-        let mut event = AppEvent::Render(Duration::from_millis(1));
+        let mut events = Vec::new();
         loop {
             frame_start = Instant::now();
             let delta = last_start.elapsed();
-            let should_terminated = matches!(event, AppEvent::Terminated);
-            self.handle_event(&mut repl_terminal, &mut main_terminal, &mut parser, event)?;
-            if should_terminated {
-                return Ok(());
+
+            for event in events {
+                let should_terminated = matches!(event, AppEvent::Terminated);
+                self.handle_event(&mut repl_terminal, &mut main_terminal, &mut parser, event)?;
+                if should_terminated {
+                    return Ok(());
+                }
             }
 
-            if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
-                self.build_error = self.cmd_handle.unwrap().join().expect("Builder panicked").err();
-                self.cmd_handle = None;
-                self.last_command = None;
-            }
-            event = self.poll_event_timeout(Duration::from_millis(1), delta)?;
+            events = self.poll_event_timeout(Duration::from_millis(16).saturating_sub(frame_start.elapsed()), delta)?;
             last_start = frame_start;
         }
     }
 
     /// Polls for event until timeout
-    fn poll_event_timeout(&mut self, timeout: Duration, delta_time: Duration) -> Result<AppEvent, Error> {
+    fn poll_event_timeout(&mut self, timeout: Duration, delta_time: Duration) -> Result<Vec<AppEvent>, Error> {
         let start = Instant::now();
+        let mut events = Vec::new();
 
-        loop {
-            if let Ok(ev) = self.event.try_recv() {
-                return Ok(ev);
-            }
-
-            let elapsed = start.elapsed();
-            if elapsed >= timeout {
-                return Ok(AppEvent::Render(delta_time));
-            }
-
-            let remaining = timeout - elapsed;
-
-            if event::poll(remaining).map_err(|error| Error::Tui { error })? {
-                let ev = event::read().map_err(|error| Error::Tui { error })?;
-                return Ok(AppEvent::Ui(ev));
-            }
+        while let Ok(ev) = self.event.try_recv() {
+            events.push(ev);
         }
+
+        if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
+            self.build_error = self.cmd_handle.take().unwrap().join().expect("Builder panicked").err();
+            self.cmd_handle = None;
+            self.last_command = None;
+        }
+
+        if event::poll(timeout.saturating_sub(start.elapsed())).tui_err()? {
+            events.push(AppEvent::Ui(event::read().tui_err()?));
+        }
+
+        events.push(AppEvent::Render(delta_time));
+        Ok(events)
     }
 
     fn handle_event(
@@ -234,18 +255,18 @@ impl App {
         let screen = parser.screen();
         let main_area = main_terminal.get_frame().area();
         let backend = main_terminal.backend_mut();
-        backend.hide_cursor().map_err(|error| Error::Tui { error })?;
-        backend.queue(SavePosition).map_err(|error| Error::Tui { error })?;
+        backend.hide_cursor().tui_err()?;
+        backend.queue(SavePosition).tui_err()?;
         let rows: Vec<Vec<u8>> = match &self.prev_screen {
             Some(prev) => screen.rows_diff(prev, 0, main_area.width).collect(),
             None => screen.rows_formatted(0, main_area.width).collect(),
         };
         for (i, row) in rows.iter().enumerate() {
-            backend.set_cursor_position((0, i as u16)).map_err(|error| Error::Tui { error })?;
-            backend.write_all(row).map_err(|error| Error::Tui { error })?;
+            backend.set_cursor_position((0, i as u16)).tui_err()?;
+            backend.write_all(row).tui_err()?;
         }
         self.prev_screen = Some(screen.clone());
-        backend.queue(RestorePosition).map_err(|error| Error::Tui { error })?;
+        backend.queue(RestorePosition).tui_err()?;
         Ok(())
     }
 
@@ -322,8 +343,8 @@ impl App {
                 }
             },
             Event::Resize(_, _) => {
-                main_terminal.autoresize().map_err(|error| Error::Tui { error })?;
-                repl_terminal.autoresize().map_err(|error| Error::Tui { error })?;
+                main_terminal.autoresize().tui_err()?;
+                repl_terminal.autoresize().tui_err()?;
                 parser.screen_mut().set_size(
                     main_terminal.get_frame().area().height - repl_terminal.get_frame().area().height,
                     main_terminal.get_frame().area().width,
@@ -367,12 +388,10 @@ impl App {
         main_terminal: &mut DefaultTerminal,
     ) -> Result<(), Error> {
         self.prev_screen = None;
-        repl_terminal
-            .insert_before(main_terminal.size().map_err(|error| Error::Tui { error })?.height, |_frame| {})
-            .map_err(|error| Error::Tui { error })?;
+        repl_terminal.insert_before(main_terminal.size().tui_err()?.height, |_frame| {}).tui_err()?;
 
-        main_terminal.clear().map_err(|error| Error::Tui { error })?;
-        repl_terminal.clear().map_err(|error| Error::Tui { error })?;
+        main_terminal.clear().tui_err()?;
+        repl_terminal.clear().tui_err()?;
 
         Ok(())
     }
@@ -383,20 +402,18 @@ impl App {
         main_terminal: &mut DefaultTerminal,
         delta_time: Duration,
     ) -> Result<(), Error> {
-        repl_terminal.draw(|frame| self.draw_repl(frame, delta_time)).map_err(|error| Error::Tui { error })?;
+        repl_terminal.draw(|frame| self.draw_repl(frame, delta_time)).tui_err()?;
 
         match self.current_screen {
             AppScreen::Config => {
-                main_terminal
-                    .draw(|frame| self.draw_config(frame, delta_time))
-                    .map_err(|error| Error::Tui { error })?;
+                main_terminal.draw(|frame| self.draw_config(frame, delta_time)).tui_err()?;
             }
             AppScreen::Help => {
-                main_terminal.draw(|frame| self.draw_help(frame)).map_err(|error| Error::Tui { error })?;
+                main_terminal.draw(|frame| self.draw_help(frame)).tui_err()?;
             }
             AppScreen::Error(ref error) => {
                 let error = error.clone();
-                main_terminal.draw(|frame| self.draw_error(frame, error)).map_err(|error| Error::Tui { error })?;
+                main_terminal.draw(|frame| self.draw_error(frame, error)).tui_err()?;
             }
             AppScreen::None => {}
         };

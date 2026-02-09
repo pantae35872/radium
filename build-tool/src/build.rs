@@ -18,6 +18,7 @@ use crate::{
     AppEvent, AppFormatter,
     build::cargo_project::CargoProject,
     config::{BuildMode, Config, ConfigRoot},
+    result_err_ext,
 };
 
 mod baker;
@@ -75,6 +76,12 @@ pub enum Error {
     OvmfFailed { error: io::Error },
 }
 
+result_err_ext!(iso_err, std::io::Error, Error::GenIso);
+result_err_ext!(config_err, std::io::Error, Error::GenConfig);
+result_err_ext!(ovmf_err, std::io::Error, Error::OvmfFailed);
+result_err_ext!(command_io_err, std::io::Error, Error::CommandIo);
+result_err_ext!(create_dir_err, std::io::Error, Error::CreateDir);
+
 #[derive(Debug)]
 struct Builder {
     config: BuildConfig,
@@ -113,17 +120,17 @@ impl Builder {
             let mut command = CommandBuilder::new("git");
             command.cwd(&self.root_path);
             command.args(["submodule", "update", "--init"]);
-            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+            self.executor.run(command).ovmf_err()?;
 
             let mut command = CommandBuilder::new("git");
             command.cwd(self.root_path.join("vendor").join("edk2"));
             command.args(["submodule", "update", "--init"]);
-            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+            self.executor.run(command).ovmf_err()?;
 
             let mut command = CommandBuilder::new("bash");
             command.cwd(&self.root_path);
             command.args(["-c", "cd vendor/edk2 && make -C BaseTools && source edksetup.sh && build -a X64 -t GCC5 -p OvmfPkg/OvmfPkgX64.dsc -b RELEASE"]);
-            self.executor.run(command).map_err(|error| Error::OvmfFailed { error })?;
+            self.executor.run(command).ovmf_err()?;
             std::fs::copy(
                 self.root_path
                     .join("vendor")
@@ -136,7 +143,7 @@ impl Builder {
                     .with_extension("fd"),
                 ovmf_file,
             )
-            .map_err(|error| Error::OvmfFailed { error })?;
+            .ovmf_err()?;
         }
 
         let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;
@@ -150,10 +157,10 @@ impl Builder {
         let init = self.project(&self.userland("init")).build()?.0;
         assert!(kernel.exists() && bootloader.exists() && init.exists() && build_tool.exists());
 
-        let kernel = self.read_file(kernel).map_err(|error| Error::GenIso { error })?;
-        let bootloader = self.read_file(bootloader).map_err(|error| Error::GenIso { error })?;
-        let init = self.read_file(init).map_err(|error| Error::GenIso { error })?;
-        let font_file = self.read_file(font_file).map_err(|error| Error::GenIso { error })?;
+        let kernel = self.read_file(kernel).iso_err()?;
+        let bootloader = self.read_file(bootloader).iso_err()?;
+        let init = self.read_file(init).iso_err()?;
+        let font_file = self.read_file(font_file).iso_err()?;
 
         let mut packery = Packery::new();
         packery.push("init", &init);
@@ -177,7 +184,7 @@ impl Builder {
             let fat = fat::make(&root.directory);
             let iso = iso::make(&root.directory, Some(fat));
             let _ = writeln!(formatter, "Writing the iso image to disk...\r");
-            self.write_file(self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
+            self.write_file(self.build_path.join("radium.iso"), &iso).iso_err()?;
             let _ = writeln!(formatter, "Done!\r");
             Ok(())
         })?;
@@ -244,7 +251,7 @@ pub const fn config() -> ConfigRoot {{
         );
         let config_rs = self.build_path.join("config.rs");
         if config_rs.exists() {
-            remove_file(config_rs).map_err(|error| Error::GenConfig { error })?;
+            remove_file(config_rs).config_err()?;
         }
         OpenOptions::new()
             .create(true)
@@ -252,7 +259,7 @@ pub const fn config() -> ConfigRoot {{
             .truncate(true)
             .open(self.build_path.join("config.rs"))
             .and_then(|mut f| f.write_all(config.trim().as_bytes()))
-            .map_err(|error| Error::GenConfig { error })?;
+            .config_err()?;
 
         Ok(())
     }
@@ -325,7 +332,7 @@ pub fn build_path() -> Result<PathBuf, Error> {
 pub fn make_build_dir() -> Result<PathBuf, Error> {
     let build_path = build_path()?;
     if !build_path.exists() {
-        create_dir(&build_path).map_err(|error| Error::CreateDir { error })?;
+        create_dir(&build_path).create_dir_err()?;
     }
 
     let mut gitignore = OpenOptions::new()
@@ -333,9 +340,9 @@ pub fn make_build_dir() -> Result<PathBuf, Error> {
         .write(true)
         .truncate(true)
         .open(build_path.join(".gitignore"))
-        .map_err(|error| Error::CreateDir { error })?;
-    gitignore.write_all("*".as_bytes()).map_err(|error| Error::CreateDir { error })?;
-    gitignore.flush().map_err(|error| Error::CreateDir { error })?;
+        .create_dir_err()?;
+    gitignore.write_all("*".as_bytes()).create_dir_err()?;
+    gitignore.flush().create_dir_err()?;
 
     Ok(build_path)
 }
