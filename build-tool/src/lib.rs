@@ -141,7 +141,7 @@ impl App {
         let mut parser = vt100::Parser::new(
             main_terminal.get_frame().area().height - repl_terminal.get_frame().area().height,
             main_terminal.get_frame().area().width,
-            1000,
+            self.config.build_tool.max_scrollback_size as usize,
         );
         for _ in 0..parser.screen().size().0 {
             parser.process("\r\n".as_bytes());
@@ -168,7 +168,7 @@ impl App {
                 self.cmd_handle = None;
                 self.last_command = None;
             }
-            event = self.poll_event_timeout(Duration::from_millis(1).saturating_sub(frame_start.elapsed()), delta)?;
+            event = self.poll_event_timeout(Duration::from_millis(1), delta)?;
             last_start = frame_start;
         }
     }
@@ -227,6 +227,10 @@ impl App {
     }
 
     fn draw_output(&mut self, main_terminal: &mut DefaultTerminal, parser: &mut vt100::Parser) -> Result<(), Error> {
+        if !matches!(self.current_screen, AppScreen::None) {
+            return Ok(());
+        }
+
         let screen = parser.screen();
         let main_area = main_terminal.get_frame().area();
         let backend = main_terminal.backend_mut();
@@ -263,9 +267,9 @@ impl App {
                     if let Err(err) = config::save(&self.config) {
                         self.current_screen = AppScreen::Error(format!("{err}"));
                     }
-                }
 
-                self.scheduled_redraw(repl_terminal, main_terminal)?;
+                    self.scheduled_redraw(repl_terminal, main_terminal)?;
+                }
             }
             Event::Key(_) if matches!(self.current_screen, AppScreen::Error(_) | AppScreen::Help) => {
                 self.current_screen = AppScreen::None;

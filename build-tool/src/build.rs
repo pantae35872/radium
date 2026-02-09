@@ -140,7 +140,7 @@ impl Builder {
         }
 
         let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;
-        if modified && self.config.config.reexec_build_tool {
+        if modified && self.config.config.build_tool.reexec {
             ratatui::restore();
             return Err(Error::ReExecFailed { error: Command::new(build_tool).arg("true").exec() });
         }

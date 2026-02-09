@@ -15,15 +15,24 @@ use crate::build::{self, make_build_dir};
 pub struct ConfigRoot {
     #[config_name = "Build Mode"]
     pub build_mode: BuildMode,
-    #[config_name = "ReExec when build-tool changed"]
-    #[default = true]
-    pub reexec_build_tool: bool,
+    #[config_name = "Build Tool"]
+    pub build_tool: BuildTool,
     #[config_name = "QEMU"]
     pub qemu: Qemu,
     #[config_name = "Bootloader"]
     pub boot_loader: Bootloader,
     #[config_name = "Kernel"]
     pub kernel: Kernel,
+}
+
+#[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
+pub struct BuildTool {
+    #[config_name = "Scrollback size"]
+    #[default = 10000]
+    pub max_scrollback_size: i32,
+    #[config_name = "ReExec when build-tool changed"]
+    #[default = true]
+    pub reexec: bool,
 }
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
