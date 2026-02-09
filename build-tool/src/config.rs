@@ -53,8 +53,8 @@ pub struct Qemu {
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]
 pub enum BuildMode {
-    #[default]
     Debug,
+    #[default]
     Release,
 }
 
