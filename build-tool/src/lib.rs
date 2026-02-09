@@ -7,6 +7,7 @@
 
 use std::{
     fmt::{self, Arguments},
+    fs::remove_dir_all,
     io::{self, Write, stdout},
     sync::{
         Arc,
@@ -34,6 +35,7 @@ use thiserror::Error;
 use vt100::Screen;
 
 use crate::{
+    build::build_path,
     config::ConfigRoot,
     widget::{
         CenteredParagraph,
@@ -50,11 +52,13 @@ mod widget;
 pub enum Error {
     #[error("Tui failed, with error `{error}`")]
     Tui { error: io::Error },
-    #[error("Failed to create dir, with error {error}")]
+    #[error("Failed to create dir, with error `{error}`")]
     BuildDirFailed { error: io::Error },
-    #[error("Run command, failed with error {error}")]
+    #[error("Run command, failed with error `{error}`")]
     RunCommand { error: io::Error },
-    #[error("Build error, failed with error {error}")]
+    #[error("Io error, failed with `{error}`")]
+    GenericIo { error: io::Error },
+    #[error("Build error, failed with error `{error}`")]
     Build {
         #[from]
         error: build::Error,
@@ -84,6 +88,7 @@ macro_rules! result_err_ext {
 }
 
 result_err_ext!(tui_err, std::io::Error, Error::Tui);
+result_err_ext!(io_err, std::io::Error, Error::GenericIo);
 
 #[derive(Debug)]
 enum AppEvent {
@@ -171,7 +176,7 @@ impl App {
         }
 
         if from_rebuild {
-            self.eval("build".to_string());
+            self.eval("build".to_string())?;
         }
 
         let mut frame_start;
@@ -183,7 +188,15 @@ impl App {
 
             for event in events {
                 let should_terminated = matches!(event, AppEvent::Terminated);
-                self.handle_event(&mut repl_terminal, &mut main_terminal, &mut parser, event)?;
+
+                match self.handle_event(&mut repl_terminal, &mut main_terminal, &mut parser, event) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        self.current_screen = AppScreen::Error(format!("`{err}`"));
+                        break;
+                    }
+                }
+
                 if should_terminated {
                     return Ok(());
                 }
@@ -263,6 +276,7 @@ impl App {
         }
         self.prev_screen = Some(screen.clone());
         backend.queue(RestorePosition).tui_err()?;
+        backend.show_cursor().tui_err()?;
         Ok(())
     }
 
@@ -335,7 +349,7 @@ impl App {
                         Some(command) => command,
                         None => return Ok(()),
                     };
-                    self.eval(command);
+                    self.eval(command)?;
                 }
             },
             Event::Resize(_, _) => {
@@ -352,10 +366,13 @@ impl App {
         Ok(())
     }
 
-    fn eval(&mut self, command: String) {
+    fn eval(&mut self, command: String) -> Result<(), Error> {
         match command.as_str() {
             "config" | "c" => {
                 self.current_screen = AppScreen::Config;
+            }
+            "clean" => {
+                remove_dir_all(build_path()?).io_err()?;
             }
             "build" | "b" if self.cmd_handle.is_none() => {
                 self.build_error = None;
@@ -376,6 +393,7 @@ impl App {
         };
 
         self.last_command = Some(command);
+        Ok(())
     }
 
     fn scheduled_redraw(

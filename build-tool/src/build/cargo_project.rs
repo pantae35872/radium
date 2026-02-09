@@ -7,7 +7,7 @@ use std::{
 use portable_pty::CommandBuilder;
 use toml::Table;
 
-use crate::build::{BuildConfig, CmdExecutor};
+use crate::build::{BuildConfig, CmdExecutor, detect_change};
 
 #[derive(Debug)]
 pub struct CargoProject<'a> {
@@ -62,10 +62,7 @@ impl<'a> CargoProject<'a> {
     /// and return the executable bin path, and if the executeable has changed!
     pub fn build(&mut self) -> Result<(PathBuf, bool), super::Error> {
         let package_name = self.package_name().expect("Invalid cargo project name");
-        let target_name = self.target_dir().join(package_name);
-
-        let before_modified_date =
-            if target_name.exists() { target_name.metadata().unwrap().modified().ok() } else { None };
+        let target = self.target_dir().join(package_name);
 
         let mut command = CommandBuilder::new("cargo");
         command.cwd(self.path);
@@ -82,23 +79,24 @@ impl<'a> CargoProject<'a> {
             });
         }
 
-        let built_executeable = if target_name.exists() {
-            target_name
-        } else {
-            match (target_name.with_extension("so").exists(), target_name.with_extension("efi").exists()) {
-                (true, true) => todo!("pick one!?"),
-                (true, ..) => target_name.with_extension("so"),
-                (.., true) => target_name.with_extension("efi"),
-                _ => panic!(
-                    "Cargo built an unknown executeable format, {} with or without extension .so or .efi doesn't exists",
-                    target_name.with_extension("").display()
-                ),
-            }
-        };
+        let built_executeable = find_executable(&target)?;
+        let changed = detect_change(&built_executeable)?;
+        Ok((built_executeable, changed))
+    }
+}
 
-        let modified = built_executeable
-            .metadata()
-            .is_ok_and(|m| m.modified().is_ok_and(|m| before_modified_date.is_some_and(|e| m != e)));
-        Ok((built_executeable, modified))
+fn find_executable(base: &Path) -> Result<PathBuf, super::Error> {
+    if base.exists() {
+        return Ok(base.to_path_buf());
+    }
+
+    let so = base.with_extension("so");
+    let efi = base.with_extension("efi");
+
+    match (so.exists(), efi.exists()) {
+        (true, false) => Ok(so),
+        (false, true) => Ok(efi),
+        (true, true) => Err(super::Error::AmbiguousExecutable { exe: base.display().to_string() }),
+        (false, false) => panic!("Cargo built no known executable: {}(.so|.efi)", base.display()),
     }
 }

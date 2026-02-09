@@ -1,7 +1,7 @@
 use std::{
     env,
     ffi::OsStr,
-    fs::{OpenOptions, create_dir, remove_file},
+    fs::{self, OpenOptions, create_dir, remove_file},
     io::{self, Read, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
@@ -74,6 +74,10 @@ pub enum Error {
     DownloadFont { error: io::Error },
     #[error("Failed to build ovmf, failed with: `{error}`")]
     OvmfFailed { error: io::Error },
+    #[error("cargo ambiguously built the executeable (cannot determine if it's .so or .efi or exe), `{exe}`")]
+    AmbiguousExecutable { exe: String },
+    #[error("Failed to detect for file changes, failed with: `{error}`")]
+    FileChange { error: io::Error },
 }
 
 result_err_ext!(iso_err, std::io::Error, Error::GenIso);
@@ -81,6 +85,7 @@ result_err_ext!(config_err, std::io::Error, Error::GenConfig);
 result_err_ext!(ovmf_err, std::io::Error, Error::OvmfFailed);
 result_err_ext!(command_io_err, std::io::Error, Error::CommandIo);
 result_err_ext!(create_dir_err, std::io::Error, Error::CreateDir);
+result_err_ext!(file_changed_error, std::io::Error, Error::FileChange);
 
 #[derive(Debug)]
 struct Builder {
@@ -345,6 +350,24 @@ pub fn make_build_dir() -> Result<PathBuf, Error> {
     gitignore.flush().create_dir_err()?;
 
     Ok(build_path)
+}
+
+fn detect_change(file: &Path) -> Result<bool, Error> {
+    let bytes = fs::read(file).file_changed_error()?;
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+
+    let name = file.file_name().expect("file has no name").to_string_lossy();
+    let hash_file = file.with_file_name(format!("{name}.hash"));
+
+    let changed = match fs::read_to_string(&hash_file) {
+        Ok(old) => old != hash,
+        Err(err) if matches!(err.kind(), io::ErrorKind::NotFound) => true,
+        Err(error) => return Err(Error::FileChange { error }),
+    };
+
+    fs::write(hash_file, hash).file_changed_error()?;
+
+    Ok(changed)
 }
 
 #[derive(Debug, Clone)]
