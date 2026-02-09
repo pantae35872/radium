@@ -2,7 +2,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::{OpenOptions, create_dir, remove_file},
-    io::{self, BufRead, BufReader, Read, Write},
+    io::{self, Read, Write},
     os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::Command,
@@ -37,7 +37,6 @@ pub fn build(event: Sender<AppEvent>, config: BuildConfig) -> Result<(), Error> 
 
         formatter: AppFormatter::from(&event),
         executor: CmdExecutor::from(&event),
-        event,
     }
     .build()
 }
@@ -83,7 +82,6 @@ struct Builder {
     userland_path: PathBuf,
     build_path: PathBuf,
     root_path: PathBuf,
-    event: Sender<AppEvent>,
     executor: CmdExecutor,
     formatter: AppFormatter,
 }
@@ -175,12 +173,12 @@ impl Builder {
 
         let mut formatter = self.formatter.clone();
         self.executor.psudo_cmd::<Result<_, _>>("Generating iso image...", || {
-            let _ = write!(formatter, "Creating bootable iso image...");
+            let _ = writeln!(formatter, "Creating bootable iso image...\r");
             let fat = fat::make(&root.directory);
             let iso = iso::make(&root.directory, Some(fat));
-            let _ = write!(formatter, "Writing the iso image to disk...");
+            let _ = writeln!(formatter, "Writing the iso image to disk...\r");
             self.write_file(self.build_path.join("radium.iso"), &iso).map_err(|error| Error::GenIso { error })?;
-            let _ = write!(formatter, "Done!");
+            let _ = writeln!(formatter, "Done!\r");
             Ok(())
         })?;
 
@@ -363,20 +361,23 @@ impl CmdExecutor {
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(Default::default()).unwrap();
-        let reader = pair.master.try_clone_reader().unwrap();
-
+        let mut reader = pair.master.try_clone_reader().unwrap();
         let mut process = pair.slave.spawn_command(command.clone()).unwrap();
 
         let command_display = command.get_argv().join(OsStr::new(" ")).to_str().unwrap_or("").to_string();
         let cmd_cwd = command.get_cwd().and_then(|e| e.to_str()).unwrap_or("unknown");
-        let _ = self.0.send(AppEvent::Output(format!("Running `{command_display}` in {cmd_cwd}")));
+        let _ =
+            self.0.send(AppEvent::Output(format!("Running `{command_display}` in {cmd_cwd}\r\n").as_bytes().to_vec()));
         let _ = self.0.send(AppEvent::RunningCmd(format!("`{command_display}` in {cmd_cwd}")));
 
         let event_stream = self.0.clone();
         thread::spawn(move || {
-            let reader = BufReader::new(reader);
-            for line in reader.lines().flatten() {
-                let _ = event_stream.send(AppEvent::Output(line));
+            let mut buffer = [0u8; 64];
+            while let Ok(readed) = reader.read(&mut buffer) {
+                if readed == 0 {
+                    break;
+                }
+                let _ = event_stream.send(AppEvent::Output(buffer[0..readed].to_vec()));
             }
         });
         let _ = self.0.send(AppEvent::ChildProcessStarted(process.clone_killer()));
