@@ -12,7 +12,7 @@ use std::{
         Arc,
         mpsc::{Receiver, Sender, channel},
     },
-    thread::{self, JoinHandle, sleep},
+    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -248,10 +248,6 @@ impl App {
     }
 
     fn draw_output(&mut self, main_terminal: &mut DefaultTerminal, parser: &mut vt100::Parser) -> Result<(), Error> {
-        if !matches!(self.current_screen, AppScreen::None) {
-            return Ok(());
-        }
-
         let screen = parser.screen();
         let main_area = main_terminal.get_frame().area();
         let backend = main_terminal.backend_mut();
@@ -444,6 +440,7 @@ impl App {
                 "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
             ),
             Line::from("Also the controls are:"),
+            Line::from("  Press `PAGE-UP` `PAGE-DOWN` ↑↓ to scroll up and down, CTRL+PAGE-DOWN to go back down"),
             Line::from(
                 "  Press `CTRL-C` to quit the build tool, if the build is running this will terminate the build build",
             ),
