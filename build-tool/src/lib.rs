@@ -23,7 +23,7 @@ use ratatui::{
     crossterm::{
         QueueableCommand,
         cursor::{RestorePosition, SavePosition},
-        event::{self, Event, KeyCode, KeyModifiers},
+        event::{self, Event, KeyCode, KeyModifiers, MouseEvent},
     },
     layout::{Constraint, Flex, Layout},
     prelude::{Backend, CrosstermBackend},
@@ -290,6 +290,14 @@ impl App {
         match event {
             // We don't do release event
             Event::Key(event) if event.is_release() => return Ok(()),
+            Event::Mouse(MouseEvent { kind: event::MouseEventKind::ScrollUp, .. }) => {
+                let scroll_back = parser.screen().scrollback() + 1;
+                parser.screen_mut().set_scrollback(scroll_back);
+            }
+            Event::Mouse(MouseEvent { kind: event::MouseEventKind::ScrollDown, .. }) => {
+                let scroll_back = parser.screen().scrollback().saturating_sub(1);
+                parser.screen_mut().set_scrollback(scroll_back);
+            }
             Event::Key(key) if matches!(self.current_screen, AppScreen::Config) => {
                 if let Some(new_config_root) = self.config_area.key_event(key) {
                     self.current_screen = AppScreen::None;
