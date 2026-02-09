@@ -28,7 +28,7 @@ pub struct ConfigRoot {
 #[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
 pub struct BuildTool {
     #[config_name = "Scrollback size"]
-    #[default = 10000]
+    #[default = 1000]
     pub max_scrollback_size: i32,
     #[config_name = "ReExec when build-tool changed"]
     #[default = true]

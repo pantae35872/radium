@@ -6,9 +6,10 @@
 #![allow(dead_code)]
 
 use std::{
+    collections::VecDeque,
     fmt::{self, Arguments},
     fs::remove_dir_all,
-    io::{self, Write, stdout},
+    io::{self, Write},
     sync::{
         Arc,
         mpsc::{Receiver, Sender, channel},
@@ -19,20 +20,20 @@ use std::{
 
 use portable_pty::ChildKiller;
 use ratatui::{
-    DefaultTerminal, Frame, Terminal, TerminalOptions, Viewport,
+    DefaultTerminal, Frame,
     crossterm::{
         QueueableCommand,
         cursor::{RestorePosition, SavePosition},
         event::{self, Event, KeyCode, KeyModifiers, MouseEvent},
     },
     layout::{Constraint, Flex, Layout},
-    prelude::{Backend, CrosstermBackend},
+    prelude::Backend,
     style::{Style, Stylize},
     text::{Line, ToLine},
     widgets::{Block, BorderType, Padding},
 };
 use thiserror::Error;
-use vt100::Screen;
+use vt100::{Parser, Screen};
 
 use crate::{
     build::build_path,
@@ -112,12 +113,15 @@ pub struct App {
     last_command: Option<String>,
     cmd_handle: Option<JoinHandle<Result<(), Error>>>,
     build_error: Option<Error>,
-    prev_screen: Option<Screen>,
+    prev_output_screen: Option<Screen>,
 
     current_screen: AppScreen,
 
     config: Arc<ConfigRoot>,
     config_area: ConfigAreaState,
+
+    collected_output: VecDeque<u8>,
+    parser: Parser,
 }
 
 #[derive(Default)]
@@ -148,7 +152,7 @@ impl App {
             cmd_handle: None,
             build_error: None,
             last_command: None,
-            prev_screen: None,
+            prev_output_screen: None,
             child_process_killer: None,
             current_screen: AppScreen::None,
             config_area: ConfigAreaState {
@@ -156,23 +160,21 @@ impl App {
                 config: config.clone().into(),
                 ..Default::default()
             },
+            collected_output: VecDeque::with_capacity(config.build_tool.max_scrollback_size as usize),
             config: config.into(),
+            parser: Parser::new(100, 100, 0),
         }
     }
 
     pub fn run(mut self, from_rebuild: bool, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
-        let backend = CrosstermBackend::new(stdout());
-        let mut repl_terminal =
-            Terminal::with_options(backend, TerminalOptions { viewport: Viewport::Inline(4), ..Default::default() })
-                .tui_err()?;
-        repl_terminal.insert_before(main_terminal.size().tui_err()?.height, |_frame| {}).tui_err()?;
-        let mut parser = vt100::Parser::new(
-            main_terminal.get_frame().area().height - repl_terminal.get_frame().area().height,
+        self.parser = vt100::Parser::new(
+            main_terminal.get_frame().area().height - 4,
             main_terminal.get_frame().area().width,
             self.config.build_tool.max_scrollback_size as usize,
         );
-        for _ in 0..parser.screen().size().0 {
-            parser.process("\r\n".as_bytes());
+        for _ in 0..self.parser.screen().size().0 {
+            self.collected_output.extend("\r\n".as_bytes().iter().copied());
+            self.parser.process("\r\n".as_bytes());
         }
 
         if from_rebuild {
@@ -189,7 +191,7 @@ impl App {
             for event in events {
                 let should_terminated = matches!(event, AppEvent::Terminated);
 
-                match self.handle_event(&mut repl_terminal, &mut main_terminal, &mut parser, event) {
+                match self.handle_event(&mut main_terminal, event) {
                     Ok(_) => {}
                     Err(err) => {
                         self.current_screen = AppScreen::Error(format!("`{err}`"));
@@ -230,18 +232,11 @@ impl App {
         Ok(events)
     }
 
-    fn handle_event(
-        &mut self,
-        repl_terminal: &mut DefaultTerminal,
-        main_terminal: &mut DefaultTerminal,
-        parser: &mut vt100::Parser,
-        event: AppEvent,
-    ) -> Result<(), Error> {
+    fn handle_event(&mut self, main_terminal: &mut DefaultTerminal, event: AppEvent) -> Result<(), Error> {
         match event {
-            AppEvent::Ui(event) => self.handle_ui_event(repl_terminal, main_terminal, parser, event)?,
+            AppEvent::Ui(event) => self.handle_ui_event(main_terminal, event)?,
             AppEvent::Render(delta_time) => {
-                self.draw_output(main_terminal, parser)?;
-                self.draw(repl_terminal, main_terminal, delta_time)?;
+                self.draw(main_terminal, delta_time)?;
             }
             AppEvent::RunningCmd(new_running_cmd) => {
                 self.running_cmd_name = Some(new_running_cmd);
@@ -253,20 +248,27 @@ impl App {
                 self.running_cmd_name = None;
             }
             AppEvent::Output(line) => {
-                parser.process(&line);
+                self.collected_output.extend(line.iter().copied());
+                while self.collected_output.len()
+                    > self.config.build_tool.max_scrollback_size as usize
+                        * main_terminal.get_frame().area().width as usize
+                {
+                    self.collected_output.pop_front();
+                }
+                self.parser.process(&line);
             }
             AppEvent::Terminated => {}
         };
         Ok(())
     }
 
-    fn draw_output(&mut self, main_terminal: &mut DefaultTerminal, parser: &mut vt100::Parser) -> Result<(), Error> {
-        let screen = parser.screen();
+    fn draw_output(&mut self, main_terminal: &mut DefaultTerminal) -> Result<(), Error> {
+        let screen = self.parser.screen();
         let main_area = main_terminal.get_frame().area();
         let backend = main_terminal.backend_mut();
         backend.hide_cursor().tui_err()?;
         backend.queue(SavePosition).tui_err()?;
-        let rows: Vec<Vec<u8>> = match &self.prev_screen {
+        let rows: Vec<Vec<u8>> = match &self.prev_output_screen {
             Some(prev) => screen.rows_diff(prev, 0, main_area.width).collect(),
             None => screen.rows_formatted(0, main_area.width).collect(),
         };
@@ -274,29 +276,23 @@ impl App {
             backend.set_cursor_position((0, i as u16)).tui_err()?;
             backend.write_all(row).tui_err()?;
         }
-        self.prev_screen = Some(screen.clone());
+        self.prev_output_screen = Some(screen.clone());
         backend.queue(RestorePosition).tui_err()?;
         backend.show_cursor().tui_err()?;
         Ok(())
     }
 
-    fn handle_ui_event(
-        &mut self,
-        repl_terminal: &mut DefaultTerminal,
-        main_terminal: &mut DefaultTerminal,
-        parser: &mut vt100::Parser,
-        event: Event,
-    ) -> Result<(), Error> {
+    fn handle_ui_event(&mut self, main_terminal: &mut DefaultTerminal, event: Event) -> Result<(), Error> {
         match event {
             // We don't do release event
             Event::Key(event) if event.is_release() => return Ok(()),
             Event::Mouse(MouseEvent { kind: event::MouseEventKind::ScrollUp, .. }) => {
-                let scroll_back = parser.screen().scrollback() + 1;
-                parser.screen_mut().set_scrollback(scroll_back);
+                let scroll_back = self.parser.screen().scrollback() + 1;
+                self.parser.screen_mut().set_scrollback(scroll_back);
             }
             Event::Mouse(MouseEvent { kind: event::MouseEventKind::ScrollDown, .. }) => {
-                let scroll_back = parser.screen().scrollback().saturating_sub(1);
-                parser.screen_mut().set_scrollback(scroll_back);
+                let scroll_back = self.parser.screen().scrollback().saturating_sub(1);
+                self.parser.screen_mut().set_scrollback(scroll_back);
             }
             Event::Key(key) if matches!(self.current_screen, AppScreen::Config) => {
                 if let Some(new_config_root) = self.config_area.key_event(key) {
@@ -307,14 +303,14 @@ impl App {
                         self.current_screen = AppScreen::Error(format!("{err}"));
                     }
 
-                    self.scheduled_redraw(repl_terminal, main_terminal)?;
+                    self.scheduled_redraw(main_terminal)?;
                 }
             }
             Event::Key(_) if matches!(self.current_screen, AppScreen::Error(_) | AppScreen::Help) => {
                 self.current_screen = AppScreen::None;
                 self.last_command = None;
 
-                self.scheduled_redraw(repl_terminal, main_terminal)?;
+                self.scheduled_redraw(main_terminal)?;
             }
             Event::Key(key) => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -327,26 +323,30 @@ impl App {
                     }
                 }
                 KeyCode::PageUp => {
-                    let scroll_back = parser.screen().scrollback() + main_terminal.get_frame().area().height as usize;
-                    parser.screen_mut().set_scrollback(scroll_back);
+                    let scroll_back =
+                        self.parser.screen().scrollback() + main_terminal.get_frame().area().height as usize;
+                    self.parser.screen_mut().set_scrollback(scroll_back);
                 }
                 KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    let scroll_back = parser.screen().scrollback() + 1;
-                    parser.screen_mut().set_scrollback(scroll_back);
+                    let scroll_back = self.parser.screen().scrollback() + 1;
+                    self.parser.screen_mut().set_scrollback(scroll_back);
                 }
                 KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    let scroll_back = parser.screen().scrollback().saturating_sub(1);
-                    parser.screen_mut().set_scrollback(scroll_back);
+                    let scroll_back = self.parser.screen().scrollback().saturating_sub(1);
+                    self.parser.screen_mut().set_scrollback(scroll_back);
                 }
                 KeyCode::PageDown => {
                     if key.modifiers.contains(KeyModifiers::CONTROL) {
-                        parser.screen_mut().set_scrollback(0);
+                        self.parser.screen_mut().set_scrollback(0);
                         return Ok(());
                     }
 
-                    let scroll_back =
-                        parser.screen().scrollback().saturating_sub(main_terminal.get_frame().area().height as usize);
-                    parser.screen_mut().set_scrollback(scroll_back);
+                    let scroll_back = self
+                        .parser
+                        .screen()
+                        .scrollback()
+                        .saturating_sub(main_terminal.get_frame().area().height as usize);
+                    self.parser.screen_mut().set_scrollback(scroll_back);
                 }
                 _ => {
                     if self.cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
@@ -362,12 +362,13 @@ impl App {
             },
             Event::Resize(_, _) => {
                 main_terminal.autoresize().tui_err()?;
-                repl_terminal.autoresize().tui_err()?;
-                parser.screen_mut().set_size(
-                    main_terminal.get_frame().area().height - repl_terminal.get_frame().area().height,
+                self.parser = vt100::Parser::new(
+                    main_terminal.get_frame().area().height - 4,
                     main_terminal.get_frame().area().width,
+                    self.config.build_tool.max_scrollback_size as usize,
                 );
-                self.scheduled_redraw(repl_terminal, main_terminal)?;
+                self.parser.process(self.collected_output.make_contiguous());
+                self.scheduled_redraw(main_terminal)?;
             }
             _ => {}
         };
@@ -404,42 +405,37 @@ impl App {
         Ok(())
     }
 
-    fn scheduled_redraw(
-        &mut self,
-        repl_terminal: &mut DefaultTerminal,
-        main_terminal: &mut DefaultTerminal,
-    ) -> Result<(), Error> {
-        self.prev_screen = None;
-        repl_terminal.insert_before(main_terminal.size().tui_err()?.height, |_frame| {}).tui_err()?;
+    fn scheduled_redraw(&mut self, main_terminal: &mut DefaultTerminal) -> Result<(), Error> {
+        self.prev_output_screen = None;
 
         main_terminal.clear().tui_err()?;
-        repl_terminal.clear().tui_err()?;
 
         Ok(())
     }
 
-    fn draw(
-        &mut self,
-        repl_terminal: &mut DefaultTerminal,
-        main_terminal: &mut DefaultTerminal,
-        delta_time: Duration,
-    ) -> Result<(), Error> {
-        repl_terminal.draw(|frame| self.draw_repl(frame, delta_time)).tui_err()?;
+    fn draw(&mut self, main_terminal: &mut DefaultTerminal, delta_time: Duration) -> Result<(), Error> {
+        self.draw_output(main_terminal)?;
 
-        match self.current_screen {
-            AppScreen::Config => {
-                main_terminal.draw(|frame| self.draw_config(frame, delta_time)).tui_err()?;
-            }
-            AppScreen::Help => {
-                main_terminal.draw(|frame| self.draw_help(frame)).tui_err()?;
-            }
-            AppScreen::Error(ref error) => {
-                let error = error.clone();
-                main_terminal.draw(|frame| self.draw_error(frame, error)).tui_err()?;
-            }
-            AppScreen::None => {}
-        };
-
+        main_terminal
+            .draw(|frame| match self.current_screen {
+                AppScreen::Config => {
+                    self.draw_repl(frame, delta_time);
+                    self.draw_config(frame, delta_time);
+                }
+                AppScreen::Help => {
+                    self.draw_repl(frame, delta_time);
+                    self.draw_help(frame);
+                }
+                AppScreen::Error(ref error) => {
+                    let error = error.clone();
+                    self.draw_repl(frame, delta_time);
+                    self.draw_error(frame, error);
+                }
+                AppScreen::None => {
+                    self.draw_repl(frame, delta_time);
+                }
+            })
+            .tui_err()?;
         Ok(())
     }
 
@@ -502,7 +498,8 @@ impl App {
     }
 
     fn draw_repl(&mut self, frame: &mut Frame, delta_time: Duration) {
-        let [status, prompt] = Layout::vertical([Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
+        let [_, status, prompt] =
+            Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
         let command_status = if self.cmd_handle.is_some() || !matches!(self.current_screen, AppScreen::None) {
             CommandStatus::Busy
