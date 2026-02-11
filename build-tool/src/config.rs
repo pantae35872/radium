@@ -39,7 +39,7 @@ pub struct BuildTool {
 pub struct Qemu {
     #[config_name = "Run qemu when build finished"]
     #[default = true]
-    pub run_qemu: bool,
+    pub run: bool,
     #[config_name = "QEMU Guest Memory (in MB)"]
     #[default = 1024]
     pub memory: i32,

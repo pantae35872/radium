@@ -196,7 +196,7 @@ impl Builder {
             Ok(())
         })?;
 
-        if self.config.config.qemu.run_qemu {
+        if self.config.config.qemu.run {
             let mut command = CommandBuilder::new("qemu-system-x86_64");
             command.cwd(self.root_path);
             command.args(["-m", &format!("{}M", self.config.config.qemu.memory)]);
