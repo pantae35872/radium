@@ -1,6 +1,7 @@
 use std::{
     fs::remove_dir_all,
     io,
+    iter::Peekable,
     sync::Arc,
     thread::{self, JoinHandle},
 };
@@ -27,6 +28,8 @@ pub enum Error {
     ConfigNoValue(String),
     #[error("Unknown command `{0}` try `help` for more info")]
     UnknownCommand(String),
+    #[error("Invalid command `{0}` try `help` for more info")]
+    InvalidCommand(String),
     #[error("Build error, failed with error `{error}`")]
     Build {
         #[from]
@@ -78,8 +81,8 @@ pub fn eval(app: &mut App, command: &str) -> Result<Option<ExecutionToken>, Erro
 // build -build_mode release -qemu.run false
 
 fn parse_command(command: &str, config: &mut ConfigRoot) -> Result<Option<Command>, Error> {
-    let mut tokens = command.split_whitespace();
-    let command = match tokens.next() {
+    let mut tokens = command.split_whitespace().peekable();
+    let parsed_command = match tokens.next() {
         Some("config" | "c") => Command::Config,
         Some("build" | "b") => Command::Build,
         Some("help" | "h") => Command::Help,
@@ -87,9 +90,12 @@ fn parse_command(command: &str, config: &mut ConfigRoot) -> Result<Option<Comman
         Some(unknown) => return Err(Error::UnknownCommand(unknown.to_string())),
         None => return Ok(None),
     };
-    parse_config_modifier(tokens, config)?;
+    parse_config_modifier(&mut tokens, config)?;
+    if tokens.next().is_some() {
+        return Err(Error::InvalidCommand(command.to_string()));
+    }
 
-    Ok(Some(command))
+    Ok(Some(parsed_command))
 }
 
 fn run_command(
@@ -122,14 +128,18 @@ fn run_command(
     Ok(Some(ExecutionToken { command: original_command, handle }))
 }
 
-fn parse_config_modifier<'a>(tokens: impl IntoIterator<Item = &'a str>, config: &mut ConfigRoot) -> Result<(), Error> {
-    let mut tokens = tokens.into_iter();
-    while let Some(config_tokens) = tokens.next()
+fn parse_config_modifier<'a>(
+    tokens: &mut Peekable<impl Iterator<Item = &'a str>>,
+    config: &mut ConfigRoot,
+) -> Result<(), Error> {
+    while let Some(config_tokens) = tokens.peek()
         && config_tokens.chars().next().is_some_and(|c| c == '-')
     {
+        let config_tokens = config_tokens.to_string();
+        tokens.next();
         let value = match tokens.next() {
             Some(config) => config,
-            None => return Err(Error::ConfigNoValue(config_tokens.to_string())),
+            None => return Err(Error::ConfigNoValue(config_tokens)),
         };
 
         config.modifier_config(config_tokens[1..].split("."), value)?;

@@ -484,8 +484,8 @@ impl ConfigReference {
 
         for group_index in self.group.iter() {
             current_tree = match current_tree.get(*group_index) {
-                Some(ConfigTree::Group { members, name, .. }) => {
-                    path.push(format!("{name}"));
+                Some(ConfigTree::Group { members, name, overwriting_name, .. }) => {
+                    path.push(format!("{name} ({overwriting_name})"));
                     members
                 }
                 _ => return path,
