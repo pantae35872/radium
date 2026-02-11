@@ -1,3 +1,4 @@
+use convert_case::{Case, Casing};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{
@@ -54,7 +55,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
 
         copied_field.push_str(&format!(
             "    pub {}: {},\n",
-            field_name.to_token_stream().to_string(),
+            field_name.to_token_stream(),
             // TODO: Hard coded for now
             match field_type.to_token_stream().to_string() {
                 t if &t == "String" => "&'static str".to_string(),
@@ -82,7 +83,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                 result
             }
         ));
-        copied_value.push_str(&format!("\n    {}: {{}},", field_name.to_token_stream().to_string()));
+        copied_value.push_str(&format!("\n    {}: {{}},", field_name.to_token_stream()));
         type_gen.push(quote! {
             accum.push_str(&self.#field_name.into_const_rust_types());
         });
@@ -93,7 +94,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
     };
     Ok(quote! {
         const _: () = {
-            use crate::config::{Config, ConfigTree};
+            use crate::config::{Config, ConfigTree, Error};
 
             #[automatically_derived]
             impl Config for #name
@@ -102,6 +103,15 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
             {
                 fn into_tree(self, name: String) -> ConfigTree {
                     ConfigTree::Group { name, members: Into::<Vec<ConfigTree>>::into(self) }
+                }
+
+                fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error> {
+                    let mut config = config.into_iter();
+                    match config.next().ok_or(Error::CannotModifyWholeGroup)? {
+                        #( stringify!(#field_names) => self.#field_names.modifier_config(config, value)?,)*
+                        unknown => return Err(Error::UnknownConfig(unknown.to_string())),
+                    };
+                    Ok(())
                 }
 
                 fn into_const_rust(&self) -> String {
@@ -165,6 +175,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
 fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
     let mut try_from_tree_match = Vec::new();
     let mut from_self_match = Vec::new();
+    let mut from_overwrite_match = Vec::new();
     let mut value_fields = Vec::new();
 
     let mut match_gen = Vec::new();
@@ -190,7 +201,12 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
             #variant_str.to_string()
         });
 
-        let value = format!("{}::{}", name.to_token_stream().to_string(), variant_name.to_token_stream().to_string());
+        let variant_str_snake = variant_str.to_case(Case::Snake);
+        from_overwrite_match.push(quote! {
+            #variant_str_snake => #name::#variant_name
+        });
+
+        let value = format!("{}::{}", name.to_token_stream(), variant_name.to_token_stream());
         match_gen.push(quote! {
             #name::#variant_name => #value.to_string()
         });
@@ -212,6 +228,14 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
                     match self {
                         #(#match_gen,)*
                     }
+                }
+
+                fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error> {
+                    *self = match value {
+                        #(#from_overwrite_match,)*
+                        invalid => return Err(Error::InvalidValue(invalid.to_string())),
+                    };
+                    Ok(())
                 }
 
                 fn into_const_rust_types(&self) -> String {

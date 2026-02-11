@@ -26,7 +26,7 @@ mod cargo_project;
 mod fat;
 mod iso;
 
-pub fn build(event: Sender<AppEvent>, config: BuildConfig) -> Result<(), Error> {
+pub fn build(event: Sender<AppEvent>, config: BuildConfig, reexec_command: String) -> Result<(), Error> {
     let current_dir = project_dir()?;
 
     Builder {
@@ -38,6 +38,7 @@ pub fn build(event: Sender<AppEvent>, config: BuildConfig) -> Result<(), Error> 
 
         formatter: AppFormatter::from(&event),
         executor: CmdExecutor::from(&event),
+        reexec_command,
     }
     .build()
 }
@@ -96,6 +97,7 @@ struct Builder {
     root_path: PathBuf,
     executor: CmdExecutor,
     formatter: AppFormatter,
+    reexec_command: String,
 }
 
 impl Builder {
@@ -154,7 +156,7 @@ impl Builder {
         let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;
         if modified && self.config.config.build_tool.reexec {
             ratatui::restore();
-            return Err(Error::ReExecFailed { error: Command::new(build_tool).arg("true").exec() });
+            return Err(Error::ReExecFailed { error: Command::new(build_tool).arg(self.reexec_command).exec() });
         }
 
         let kernel = self.project(&self.src("kernel")).build()?.0;

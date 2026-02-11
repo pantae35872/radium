@@ -8,13 +8,11 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Arguments},
-    fs::remove_dir_all,
     io::{self, Write},
     sync::{
         Arc,
         mpsc::{Receiver, Sender, channel},
     },
-    thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
 
@@ -36,8 +34,8 @@ use thiserror::Error;
 use vt100::{Parser, Screen};
 
 use crate::{
-    build::build_path,
     config::ConfigRoot,
+    repl::ExecutionToken,
     widget::{
         CenteredParagraph,
         config_area::{ConfigArea, ConfigAreaState},
@@ -47,24 +45,18 @@ use crate::{
 
 mod build;
 mod config;
+mod repl;
 mod widget;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("Tui failed, with error `{error}`")]
     Tui { error: io::Error },
-    #[error("Failed to create dir, with error `{error}`")]
-    BuildDirFailed { error: io::Error },
-    #[error("Run command, failed with error `{error}`")]
-    RunCommand { error: io::Error },
-    #[error("Io error, failed with `{error}`")]
-    GenericIo { error: io::Error },
-    #[error("Build error, failed with error `{error}`")]
-    Build {
-        #[from]
-        error: build::Error,
-    },
+    #[error("failed to execute command `{command}`, failed with error `{error}`")]
+    Repl { command: String, error: repl::Error },
 }
+
+result_err_ext!(tui_err, std::io::Error, Error::Tui);
 
 #[macro_export]
 macro_rules! result_err_ext {
@@ -88,9 +80,6 @@ macro_rules! result_err_ext {
     };
 }
 
-result_err_ext!(tui_err, std::io::Error, Error::Tui);
-result_err_ext!(io_err, std::io::Error, Error::GenericIo);
-
 #[derive(Debug)]
 enum AppEvent {
     Ui(Event),
@@ -110,8 +99,7 @@ pub struct App {
     running_cmd_name: Option<String>,
     child_process_killer: Option<Box<dyn ChildKiller + Send + Sync>>,
 
-    last_command: Option<String>,
-    cmd_handle: Option<JoinHandle<Result<(), Error>>>,
+    current_command: Option<ExecutionToken>,
     build_error: Option<Error>,
     prev_output_screen: Option<Screen>,
 
@@ -149,9 +137,8 @@ impl App {
             running_cmd_name: None,
             event,
             event_sender,
-            cmd_handle: None,
             build_error: None,
-            last_command: None,
+            current_command: None,
             prev_output_screen: None,
             child_process_killer: None,
             current_screen: AppScreen::None,
@@ -166,7 +153,7 @@ impl App {
         }
     }
 
-    pub fn run(mut self, from_rebuild: bool, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
+    pub fn run(mut self, from_rebuild: Option<String>, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
         self.parser = vt100::Parser::new(
             main_terminal.get_frame().area().height - 4,
             main_terminal.get_frame().area().width,
@@ -177,8 +164,8 @@ impl App {
             self.parser.process("\r\n".as_bytes());
         }
 
-        if from_rebuild {
-            self.eval("build".to_string())?;
+        if let Some(command) = from_rebuild {
+            self.eval(command)?;
         }
 
         let mut frame_start;
@@ -218,10 +205,11 @@ impl App {
             events.push(ev);
         }
 
-        if self.cmd_handle.as_ref().is_some_and(|handle| handle.is_finished()) {
-            self.build_error = self.cmd_handle.take().unwrap().join().expect("Builder panicked").err();
-            self.cmd_handle = None;
-            self.last_command = None;
+        if let Some((command, Some(result))) =
+            self.current_command.as_mut().map(|c| (c.original_command().to_string(), c.poll()))
+        {
+            self.build_error = result.map_err(|error| Error::Repl { command, error }).err();
+            self.current_command = None;
         }
 
         if event::poll(timeout.saturating_sub(start.elapsed())).tui_err()? {
@@ -297,7 +285,7 @@ impl App {
             Event::Key(key) if matches!(self.current_screen, AppScreen::Config) => {
                 if let Some(new_config_root) = self.config_area.key_event(key) {
                     self.current_screen = AppScreen::None;
-                    self.last_command = None;
+                    self.current_command = None;
                     self.config = Arc::new(new_config_root);
                     if let Err(err) = config::save(&self.config) {
                         self.current_screen = AppScreen::Error(format!("{err}"));
@@ -308,14 +296,14 @@ impl App {
             }
             Event::Key(_) if matches!(self.current_screen, AppScreen::Error(_) | AppScreen::Help) => {
                 self.current_screen = AppScreen::None;
-                self.last_command = None;
+                self.current_command = None;
 
                 self.scheduled_redraw(main_terminal)?;
             }
             Event::Key(key) => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let (Some(_handle), Some(killer)) =
-                        (self.cmd_handle.as_ref(), self.child_process_killer.as_mut())
+                    if let Some(killer) = self.child_process_killer.as_mut()
+                        && self.current_command.as_ref().is_some_and(|command| !command.is_finished())
                     {
                         let _ = killer.kill();
                     } else {
@@ -349,7 +337,7 @@ impl App {
                     self.parser.screen_mut().set_scrollback(scroll_back);
                 }
                 _ => {
-                    if self.cmd_handle.as_ref().is_some_and(|cmd| !cmd.is_finished()) {
+                    if self.current_command.as_ref().is_some_and(|e| !e.is_finished()) {
                         return Ok(());
                     }
 
@@ -376,32 +364,8 @@ impl App {
     }
 
     fn eval(&mut self, command: String) -> Result<(), Error> {
-        match command.as_str() {
-            "config" | "c" => {
-                self.current_screen = AppScreen::Config;
-            }
-            "clean" => {
-                remove_dir_all(build_path()?).io_err()?;
-            }
-            "build" | "b" if self.cmd_handle.is_none() => {
-                self.build_error = None;
-                let config = Arc::clone(&self.config);
-                let event = self.event_sender.clone();
-                self.cmd_handle = Some(thread::spawn(move || {
-                    build::build(event, build::BuildConfig { config })?;
-                    Ok(())
-                }));
-            }
-            "help" | "h" => {
-                self.current_screen = AppScreen::Help;
-            }
-            "" => {}
-            cmd => {
-                self.current_screen = AppScreen::Error(format!("Unknown command `{cmd}` type `help` for more info."));
-            }
-        };
-
-        self.last_command = Some(command);
+        self.current_command =
+            repl::eval(self, &command).map_err(|error| Error::Repl { command: command.clone(), error })?;
         Ok(())
     }
 
@@ -501,7 +465,9 @@ impl App {
         let [_, status, prompt] =
             Layout::vertical([Constraint::Fill(1), Constraint::Length(1), Constraint::Length(3)]).areas(frame.area());
 
-        let command_status = if self.cmd_handle.is_some() || !matches!(self.current_screen, AppScreen::None) {
+        let command_status = if self.current_command.as_ref().is_some_and(|e| !e.is_finished())
+            || !matches!(self.current_screen, AppScreen::None)
+        {
             CommandStatus::Busy
         } else if self.build_error.is_some() {
             CommandStatus::Errored
@@ -517,7 +483,7 @@ impl App {
         frame.render_widget(display, status);
         frame.render_stateful_widget(
             Promt {
-                running_cmd: self.last_command.as_deref().unwrap_or(""),
+                running_cmd: self.current_command.as_ref().map(|e| e.original_command()).unwrap_or(""),
                 delta_time,
                 command_status,
                 ..Default::default()

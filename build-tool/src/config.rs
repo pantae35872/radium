@@ -125,6 +125,19 @@ pub trait Config: TryFrom<ConfigTree, Error = ConfigTree> {
     fn into_tree(self, name: String) -> ConfigTree;
     fn into_const_rust(&self) -> String;
     fn into_const_rust_types(&self) -> String;
+    fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error>;
+}
+
+impl ConfigRoot {
+    fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error> {
+        let mut config = config.into_iter();
+        match config.next().ok_or(Error::CannotModifyWholeGroup)? {
+            "build_mode" => self.build_mode.modifier_config(config, value)?,
+            "build_tool" => self.build_tool.modifier_config(config, value)?,
+            unknown => return Err(Error::UnknownConfig(unknown.to_string())),
+        };
+        Ok(())
+    }
 }
 
 pub fn load() -> ConfigRoot {
@@ -151,8 +164,14 @@ pub enum Error {
     SerializeFailed(#[from] toml::ser::Error),
     #[error("Build dir failed, failed with `{0}`")]
     BuildDir(#[from] build::Error),
-    #[error("failed to save config, failed with `{0}`")]
+    #[error("Failed to save config, failed with `{0}`")]
     SaveConfig(#[from] io::Error),
+    #[error("The selected config is not a unit value (not a group)")]
+    CannotModifyWholeGroup,
+    #[error("Unknown config {0}")]
+    UnknownConfig(String),
+    #[error("Invalid value provided {0}")]
+    InvalidValue(String),
 }
 
 pub fn save(config: &ConfigRoot) -> Result<(), Error> {
@@ -187,7 +206,7 @@ pub enum ConfigValue {
 }
 
 macro_rules! cfg_value_impl {
-    ($variant: ident($ty: ty), $formatter: literal) => {
+    ($variant: ident($ty: ty), $formatter: literal, $modifier_impl: expr) => {
         impl From<$ty> for ConfigValue {
             fn from(value: $ty) -> Self {
                 Self::$variant(value)
@@ -201,6 +220,14 @@ macro_rules! cfg_value_impl {
 
             fn into_const_rust(&self) -> String {
                 format!($formatter, self)
+            }
+
+            fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(
+                &mut self,
+                _config: C,
+                value: &str,
+            ) -> Result<(), Error> {
+                $modifier_impl(self, value)
             }
 
             fn into_const_rust_types(&self) -> String {
@@ -221,9 +248,24 @@ macro_rules! cfg_value_impl {
     };
 }
 
-cfg_value_impl!(Number(i32), "{}");
-cfg_value_impl!(Bool(bool), "{}");
-cfg_value_impl!(Text(String), "r\"{}\"");
+cfg_value_impl!(Number(i32), "{}", |s: &mut i32, value: &str| -> Result<(), Error> {
+    *s = value.parse().map_err(|_| Error::InvalidValue(value.to_string()))?;
+    Ok(())
+});
+
+cfg_value_impl!(Bool(bool), "{}", |s: &mut bool, value: &str| -> Result<(), Error> {
+    *s = match value {
+        "true" => true,
+        "false" => false,
+        invalid => return Err(Error::InvalidValue(invalid.to_string())),
+    };
+    Ok(())
+});
+
+cfg_value_impl!(Text(String), "r\"{}\"", |s: &mut String, value: &str| -> Result<(), Error> {
+    *s = value.to_string();
+    Ok(())
+});
 
 impl Display for ConfigValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
