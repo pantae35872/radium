@@ -133,7 +133,7 @@ impl App {
         let config = config::load();
 
         Self {
-            prompt: PromtState::default(),
+            prompt: PromtState::load(),
             running_cmd_name: None,
             event,
             event_sender,

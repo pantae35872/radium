@@ -1,4 +1,8 @@
-use std::time::Duration;
+use std::{
+    fs::{OpenOptions, remove_file},
+    io::{Read, Write},
+    time::Duration,
+};
 
 use arboard::Clipboard;
 use ratatui::{
@@ -10,8 +14,12 @@ use ratatui::{
     text::Line,
     widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget},
 };
+use serde::{Deserialize, Serialize};
 
-use crate::widget::{RainbowInterpolateState, interpolate_rainbow};
+use crate::{
+    build::make_build_dir,
+    widget::{RainbowInterpolateState, interpolate_rainbow},
+};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct Promt<'s> {
@@ -31,12 +39,54 @@ pub enum CommandStatus {
     Errored,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct PromtState {
     history: Vec<String>,
     current_input: usize,
     character_index: usize,
+    #[serde(skip)]
     rainbow_interpolate: RainbowInterpolateState,
+}
+
+impl PromtState {
+    pub fn load() -> Self {
+        let Some(config_path) = make_build_dir().ok().map(|p| p.join("promt_history.toml")) else {
+            return Self::default();
+        };
+        if !config_path.exists() {
+            return Self::default();
+        }
+
+        let mut buf = String::new();
+        let Some(_readed) =
+            OpenOptions::new().read(true).open(config_path).and_then(|mut config| config.read_to_string(&mut buf)).ok()
+        else {
+            return Self::default();
+        };
+
+        toml::from_str(&buf).unwrap_or_default()
+    }
+
+    pub fn save(&self) {
+        let Ok(config_path) = make_build_dir().map(|p| p.join("promt_history.toml")) else {
+            return;
+        };
+        let Ok(toml_string) = toml::to_string_pretty(self) else {
+            return;
+        };
+
+        if config_path.exists() {
+            let Ok(_) = remove_file(&config_path) else {
+                return;
+            };
+        }
+        let _ = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(config_path)
+            .and_then(|mut config| config.write_all(toml_string.as_bytes()));
+    }
 }
 
 impl PromtState {
@@ -119,49 +169,51 @@ impl PromtState {
 
     pub fn key_event(&mut self, event: KeyEvent) -> Option<String> {
         self.expand_history();
-
-        match event.kind {
-            KeyEventKind::Press => match event.code {
-                KeyCode::Char('v')
-                    if event.modifiers.contains(KeyModifiers::CONTROL)
-                        && let Ok(text) = Clipboard::new().and_then(|mut c| c.get_text()) =>
-                {
-                    self.paste_string(text.as_str());
-                }
-                KeyCode::Char('r') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                    todo!("Reverse search!")
-                }
-                KeyCode::Enter => {
-                    let ret = self.input_mut().clone();
-                    if self.current_input == self.history.len() - 1 {
-                        self.history.push(String::new());
-                        self.current_input = self.history.len() - 1;
-                    } else {
-                        self.history.insert(self.history.len() - 1, self.input().to_string());
-                        self.current_input = self.history.len() - 1;
-                        self.input_mut().clear();
-                    }
-
-                    self.character_index = 0;
-                    return Some(ret);
-                }
-                KeyCode::Char(to_insert) => self.enter_char(to_insert),
-                KeyCode::Backspace => self.delete_char(),
-                KeyCode::Delete => self.delete_char_back(),
-                KeyCode::Left => self.move_cursor_left(),
-                KeyCode::Right => self.move_cursor_right(),
-                KeyCode::Up => {
-                    self.current_input = self.current_input.saturating_sub(1);
-                    self.character_index = self.input().len();
-                }
-                KeyCode::Down => {
-                    self.current_input = self.current_input.saturating_add(1).clamp(0, self.history.len() - 1);
-                    self.character_index = self.input().len();
-                }
-                _ => {}
-            },
-            _ => {}
+        if event.kind != KeyEventKind::Press {
+            return None;
         }
+
+        match event.code {
+            KeyCode::Char('v')
+                if event.modifiers.contains(KeyModifiers::CONTROL)
+                    && let Ok(text) = Clipboard::new().and_then(|mut c| c.get_text()) =>
+            {
+                self.paste_string(text.as_str());
+            }
+            KeyCode::Char('r') if event.modifiers.contains(KeyModifiers::CONTROL) => {
+                todo!("Reverse search!")
+            }
+            KeyCode::Enter => {
+                let ret = self.input_mut().clone();
+                if self.current_input == self.history.len() - 1 {
+                    self.history.push(String::new());
+                    self.current_input = self.history.len() - 1;
+                } else {
+                    self.history.insert(self.history.len() - 1, self.input().to_string());
+                    self.current_input = self.history.len() - 1;
+                    self.input_mut().clear();
+                }
+
+                self.character_index = 0;
+                self.save();
+                return Some(ret);
+            }
+            KeyCode::Char(to_insert) => self.enter_char(to_insert),
+            KeyCode::Backspace => self.delete_char(),
+            KeyCode::Delete => self.delete_char_back(),
+            KeyCode::Left => self.move_cursor_left(),
+            KeyCode::Right => self.move_cursor_right(),
+            KeyCode::Up => {
+                self.current_input = self.current_input.saturating_sub(1);
+                self.character_index = self.input().len();
+            }
+            KeyCode::Down => {
+                self.current_input = self.current_input.saturating_add(1).clamp(0, self.history.len() - 1);
+                self.character_index = self.input().len();
+            }
+            _ => {}
+        };
+
         None
     }
 }
