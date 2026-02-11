@@ -77,8 +77,10 @@ impl StatefulWidget for ConfigArea {
         let mut config_values = Vec::new();
 
         for (i, (group, group_unmodified)) in group.iter().zip(group_unmodified).enumerate() {
-            let name = match group {
-                ConfigTree::Group { name, .. } | ConfigTree::Value { name, .. } => name,
+            let (name, overwriting_name) = match group {
+                ConfigTree::Group { name, overwriting_name, .. } | ConfigTree::Value { name, overwriting_name, .. } => {
+                    (name, overwriting_name)
+                }
             };
             let value_formatted = match group {
                 ConfigTree::Group { .. } => "|─────> Group <─────|".to_string(),
@@ -96,7 +98,7 @@ impl StatefulWidget for ConfigArea {
             let style =
                 if state.current.index == i { Style::default().fg(Color::Cyan).bold() } else { Style::default() };
 
-            config_names.push(name.to_line().style(style).left_aligned());
+            config_names.push(Line::from(format!("{name} ({overwriting_name})")).style(style).left_aligned());
             config_values.push(Line::from(value_formatted).style(style).right_aligned());
         }
 
@@ -131,7 +133,7 @@ impl StatefulWidget for ConfigArea {
             &mut state.vertical_scroll_state,
         );
 
-        if let Some(ConfigTree::Value { value, name }) =
+        if let Some(ConfigTree::Value { value, name, .. }) =
             state.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut state.config_staging))
         {
             let text = match value {

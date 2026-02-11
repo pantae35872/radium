@@ -122,7 +122,7 @@ pub enum LogLevel {
 }
 
 pub trait Config: TryFrom<ConfigTree, Error = ConfigTree> {
-    fn into_tree(self, name: String) -> ConfigTree;
+    fn into_tree(self, name: String, overwriting_name: String) -> ConfigTree;
     fn into_const_rust(&self) -> String;
     fn into_const_rust_types(&self) -> String;
     fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error>;
@@ -193,8 +193,8 @@ pub fn save(config: &ConfigRoot) -> Result<(), Error> {
 
 #[derive(Debug, Clone)]
 pub enum ConfigTree {
-    Group { name: String, members: Vec<ConfigTree> },
-    Value { name: String, value: ConfigValue },
+    Group { name: String, overwriting_name: String, members: Vec<ConfigTree> },
+    Value { name: String, overwriting_name: String, value: ConfigValue },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,8 +214,8 @@ macro_rules! cfg_value_impl {
         }
 
         impl Config for $ty {
-            fn into_tree(self, name: String) -> ConfigTree {
-                ConfigTree::Value { name, value: ConfigValue::$variant(self) }
+            fn into_tree(self, name: String, overwriting_name: String) -> ConfigTree {
+                ConfigTree::Value { name, overwriting_name, value: ConfigValue::$variant(self) }
             }
 
             fn into_const_rust(&self) -> String {

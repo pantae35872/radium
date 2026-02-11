@@ -101,8 +101,8 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
             where
                 #(#field_where_clause,)*
             {
-                fn into_tree(self, name: String) -> ConfigTree {
-                    ConfigTree::Group { name, members: Into::<Vec<ConfigTree>>::into(self) }
+                fn into_tree(self, name: String, overwriting_name: String) -> ConfigTree {
+                    ConfigTree::Group { name, overwriting_name, members: Into::<Vec<ConfigTree>>::into(self) }
                 }
 
                 fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(&mut self, config: C, value: &str) -> Result<(), Error> {
@@ -150,8 +150,8 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
                 type Error = ConfigTree;
                 fn try_from(value: ConfigTree) -> Result<Self, Self::Error> {
                     match value {
-                        ConfigTree::Group { name, members, .. } => TryInto::<Self>::try_into(members)
-                            .map_err(|error| ConfigTree::Group { name, members: error }),
+                        ConfigTree::Group { name, overwriting_name, members, .. } => TryInto::<Self>::try_into(members)
+                            .map_err(|error| ConfigTree::Group { name, overwriting_name, members: error }),
                         t => Err(t),
                     }
                 }
@@ -164,7 +164,7 @@ fn gen_struct(name: Ident, data: DataStruct) -> Result<TokenStream, Error> {
             {
                 fn from(value: #name) -> Self {
                     vec![
-                        #( value.#field_names.into_tree(#field_config_names.to_string()),)*
+                        #( value.#field_names.into_tree(#field_config_names.to_string(), stringify!(#field_names).to_string()),)*
                     ]
                 }
             }
@@ -220,8 +220,8 @@ fn gen_enum(name: Ident, data: DataEnum) -> Result<TokenStream, Error> {
 
             #[automatically_derived]
             impl Config for #name {
-                fn into_tree(self, name: String) -> ConfigTree {
-                    ConfigTree::Value { name, value: Into::<ConfigValue>::into(self) }
+                fn into_tree(self, name: String, overwriting_name: String) -> ConfigTree {
+                    ConfigTree::Value { name, overwriting_name, value: Into::<ConfigValue>::into(self) }
                 }
 
                 fn into_const_rust(&self) -> String {
