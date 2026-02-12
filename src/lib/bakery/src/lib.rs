@@ -1,15 +1,15 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
 
 #[cfg(feature = "std")]
 extern crate std;
 
-#[cfg(feature = "alloc")]
-extern crate alloc;
-
 #[cfg(feature = "std")]
 pub use std::{string::String, vec::Vec};
 
-#[cfg(all(not(feature = "std"), feature = "alloc"))]
+#[cfg(not(feature = "std"))]
+extern crate alloc;
+
+#[cfg(not(feature = "std"))]
 pub use alloc::{string::String, vec::Vec};
 
 use pager::{DataBuffer, IdentityMappable, IdentityReplaceable};

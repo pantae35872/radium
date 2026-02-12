@@ -1,0 +1,13 @@
+[package]
+name = "bootbridge"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitflags = "2.4.1"
+
+c_enum  = { workspace = true }
+santa   = { workspace = true }
+pager   = { workspace = true }
+packery = { workspace = true }
+bakery  = { workspace = true }

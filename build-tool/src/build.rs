@@ -34,7 +34,7 @@ pub fn build(event: Sender<AppEvent>, config: BuildConfig, reexec_command: Strin
         root_path: current_dir.clone(),
         build_path: current_dir.join("build"),
         src_path: current_dir.join("src"),
-        userland_path: current_dir.join("userland"),
+        userland_path: current_dir.join("src").join("userland"),
 
         formatter: AppFormatter::from(&event),
         executor: CmdExecutor::from(&event),
@@ -79,6 +79,8 @@ pub enum Error {
     AmbiguousExecutable { exe: String },
     #[error("Failed to detect for file changes, failed with: `{error}`")]
     FileChange { error: io::Error },
+    #[error("Project directory `{error}` doesn't exists")]
+    ProjectDir { error: PathBuf },
 }
 
 result_err_ext!(iso_err, std::io::Error, Error::GenIso);

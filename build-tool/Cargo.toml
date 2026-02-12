@@ -9,7 +9,6 @@ portable-pty = "0.9.0"
 ratatui = "0.30.0"
 thiserror = "2.0.17"
 toml = "0.9.10"
-build-tool-proc = { path = "../build-tool-proc" }
 smart-default = "0.7.1"
 serde = { version = "1.0.228", features = ["derive"]}
 bit_field = "0.10.2"
@@ -21,18 +20,16 @@ addr2line = "0.21"
 gimli = "0.27" 
 rustc-demangle = "0.1"
 is_executable = "1.0.5"
-bakery = { path = "../src/bakery" }
 unicode-segmentation = "1.12.0"
 unicode-width = "0.2.2"
 vt100 = "0.16.2"
 blake3 = "1.8.3"
 
+build_tool_proc = { workspace = true }
+bakery = { workspace = true, features = ["std"] }
+packery = { workspace = true, features = ["std"] }
+
 [dependencies.arboard]
 version = "3.6.1"
 features = ["wayland-data-control"]
 default-features = false
-
-[dependencies.packery]
-path = "../src/packery"
-default-features = false
-features = ["std"]

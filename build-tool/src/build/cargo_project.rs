@@ -61,6 +61,10 @@ impl<'a> CargoProject<'a> {
     /// Build the binary at the provided path with cargo build,
     /// and return the executable bin path, and if the executeable has changed!
     pub fn build(&mut self) -> Result<(PathBuf, bool), super::Error> {
+        if !self.path.exists() {
+            return Err(super::Error::ProjectDir { error: self.path.to_path_buf() });
+        }
+
         let package_name = self.package_name().expect("Invalid cargo project name");
         let target = self.target_dir().join(package_name);
 

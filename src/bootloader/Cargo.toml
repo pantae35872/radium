@@ -8,17 +8,9 @@ uefi = "0.27.0"
 uefi-raw = "0.5.1"
 uefi-services = "0.24.0"
 uart_16550 = "0.2.0"
-pager = { path = "../pager" }
-sentinel = { path = "../sentinel" }
-packery = { path = "../packery" }
-
-[dependencies.bootbridge]
-path = "../bootbridge"
-
-[dependencies.bakery]
-path = "../bakery"
-default-features = false
-features = ["alloc"]
-
-[dependencies.santa]
-path = "../santa"
+pager = { workspace = true }
+sentinel = { workspace = true }
+packery = { workspace = true }
+bakery = { workspace = true }
+bootbridge = { workspace = true }
+santa = { workspace = true }

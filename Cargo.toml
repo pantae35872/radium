@@ -1,19 +1,25 @@
 [workspace]
 members = [
+    # Build tool
+    "build-tool", 
+
     "src/kernel", 
     "src/bootloader", 
-    "src/bootbridge", 
-    "src/santa", 
-    "src/c_enum", 
-    "src/bakery", 
-    "src/kernel_proc", 
-    "src/pager", 
-    "src/sentinel", 
-    "src/packery", 
 
-    "userland/init",
+    # static libs
+    "src/lib/bootbridge", 
+    "src/lib/santa", 
+    "src/lib/c_enum", 
+    "src/lib/bakery", 
+    "src/lib/pager", 
+    "src/lib/sentinel", 
+    "src/lib/packery", 
 
-    "build-tool", "build-tool-proc", 
+    # proc macros
+    "src/proc/kernel", 
+    "src/proc/build-tool",
+
+    "src/userland/init",
 ]
 resolver = "2"
 default-members = ["build-tool"]
@@ -25,3 +31,16 @@ opt-level = 0
 [profile.release]
 panic = "unwind"
 opt-level = 3
+
+[workspace.dependencies]
+# static libs
+bakery      = { path = "src/lib/bakery" }
+bootbridge  = { path = "src/lib/bootbridge" }
+c_enum      = { path = "src/lib/c_enum" }
+packery     = { path = "src/lib/packery" }
+pager       = { path = "src/lib/pager" }
+santa       = { path = "src/lib/santa" }
+sentinel    = { path = "src/lib/sentinel" }
+# proc macros
+kernel_proc     = { path = "src/proc/kernel" }
+build_tool_proc = { path = "src/proc/build-tool" }

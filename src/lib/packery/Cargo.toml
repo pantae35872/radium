@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["alloc"]
 std = []
-alloc = []
 
 [dependencies]
-pager = { path = "../pager" }
+pager = { workspace = true }
 
 [dependencies.thiserror]
 version = "2.0.12"

@@ -24,13 +24,14 @@ hashbrown = "0.14.5"
 getrandom = "0.3.1"
 raw-cpuid = "11.5.0"
 paste = "1.0.15"
-bootbridge = { path = "../bootbridge"}
-santa = { path = "../santa"}
-c_enum = { path = "../c_enum"}
-kernel_proc = { path = "../kernel_proc" }
-pager = { path = "../pager" }
-sentinel = { path = "../sentinel" }
-packery = { path = "../packery" }
+bootbridge = { workspace = true}
+santa = { workspace = true }
+c_enum = { workspace = true }
+kernel_proc = { workspace = true }
+pager = { workspace = true }
+sentinel = { workspace = true }
+packery = { workspace = true }
+bakery = { workspace = true }
 
 [dependencies.bincode]
 version = "2.0.1"
@@ -45,11 +46,6 @@ default-features = false
 version = "2.2.0"
 default-features = false
 features = ["use_core"]
-
-[dependencies.bakery]
-path = "../bakery"
-default-features = false
-features = ["alloc"]
 
 [dependencies.unwinding]
 version = "0.2.6"
