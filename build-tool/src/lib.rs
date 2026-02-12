@@ -155,8 +155,8 @@ impl App {
 
     pub fn run(mut self, from_rebuild: Option<String>, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
         self.parser = vt100::Parser::new(
-            main_terminal.get_frame().area().height - 4,
-            main_terminal.get_frame().area().width,
+            main_terminal.get_frame().area().height.max(5) - 4,
+            main_terminal.get_frame().area().width.max(1),
             self.config.build_tool.max_scrollback_size as usize,
         );
         for _ in 0..self.parser.screen().size().0 {
