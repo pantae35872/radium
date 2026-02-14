@@ -94,7 +94,6 @@ pub trait Mapper {
     ///
     /// # Panics
     /// The implementaions may panic if end_frame < start_frame.
-    /// the implementation must panic if the range is already mapped and not marked OVERWRITEABLE
     unsafe fn identity_map_range(&mut self, start_frame: Frame, end_frame: Frame, entry_flags: EntryFlags);
 
     unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags);

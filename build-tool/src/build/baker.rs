@@ -26,7 +26,7 @@ pub fn bake(target_binary: &[u8]) -> Vec<u8> {
         sorted.push((addr, addr + symbol.size(), line_num, name, location_str));
     }
 
-    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    sorted.sort_by_key(|e| e.0);
 
     sorted.iter().for_each(|(addr, end, line_num, name, location)| bakery.push(*addr, *end, *line_num, name, location));
 
