@@ -301,16 +301,3 @@ pub enum PageLevel {
     Page2M, // 2 MiB pages (huge)
     Page1G, // 1 GiB pages (huge)
 }
-
-pub fn page_table_size(memory_bytes: usize, plevel: PageLevel) -> usize {
-    const PTE_SIZE: usize = 8;
-
-    let page_size = match plevel {
-        PageLevel::Page4K => 4 * 1024,               // 4 KiB
-        PageLevel::Page2M => 2 * 1024 * 1024,        // 2 MiB
-        PageLevel::Page1G => 1 * 1024 * 1024 * 1024, // 1 GiB
-    };
-
-    let num_pages = (memory_bytes + page_size - 1) / page_size;
-    num_pages * PTE_SIZE
-}

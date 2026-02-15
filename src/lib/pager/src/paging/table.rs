@@ -2,6 +2,7 @@ use core::marker::PhantomData;
 use core::ops::{Index, IndexMut, Range};
 use core::ptr::Unique;
 
+use crate::address::{Size1G, Size2M, Size4K};
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
 use crate::paging::{ActivePageTable, InactivePageTable, TableManipulationContext};
@@ -10,14 +11,15 @@ use crate::registers::tlb;
 use super::{ENTRY_COUNT, Entry, EntryFlags};
 
 macro_rules! level {
-    ($level: ty, $marker: ty) => {
+    ($level: ty[$size: ty], $marker: ty) => {
         impl TableLevel for $level {
             type Marker = RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>;
+            type FrameSize = $size;
         }
 
         impl AnyLevel for Table<$level> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries
+            fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
+                todo!()
             }
 
             fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
@@ -28,18 +30,23 @@ macro_rules! level {
 }
 
 macro_rules! hierarchical_level {
-    ($current: ty => $next: ty, $marker: ty) => {
-        impl HierarchicalLevel for $current {
+    ($current: ty[$current_size:ty] => $next: ty[$next_size:ty], $marker: ty) => {
+        impl HierarchicalLevel for $current
+        where
+            $next: TableLevel<FrameSize = $next_size>,
+        {
             type NextLevel = $next;
         }
 
         impl TableLevel for $current {
             type Marker = $marker;
+            type FrameSize = $current_size;
         }
 
         impl AnyLevel for Table<$current> {
-            fn entries(&self) -> [Entry; ENTRY_COUNT as usize] {
-                self.entries
+            fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
+                todo!()
+                //self.entries
             }
 
             fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
@@ -51,27 +58,27 @@ macro_rules! hierarchical_level {
 
 macro_rules! impl_level_recurse {
     // Base case: nothing more to implement
-    ($last:ty) => {
-        level!($last, RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
+    ($last:ty[$size:ty]) => {
+        level!($last[$size], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
     };
 
     // Recursive case
-    ($current:ty => $next:ty $(=> $rest:ty)*) => {
-        hierarchical_level!($current => $next, RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
-        impl_level_recurse!($next $(=> $rest)*);
+    ($current:ty[$current_size:ty] => $next:ty[$next_size:ty] $(=> $rest:ty[$rest_size:ty])*) => {
+        hierarchical_level!($current[$current_size] => $next[$next_size], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
+        impl_level_recurse!($next[$next_size] $(=> $rest[$rest_size])*);
     };
 }
 
 macro_rules! impl_level_direct {
     // Base case: nothing more to implement
-    ($last:ty) => {
-        level!($last, DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
+    ($last:ty[$size:ty]) => {
+        level!($last[$size], DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
     };
 
     // Recursive case
-    ($current:ty => $next:ty $(=> $rest:ty)*) => {
-        hierarchical_level!($current => $next, DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
-        impl_level_direct!($next $(=> $rest)*);
+    ($current:ty[$current_size:ty] => $next:ty[$next_size:ty] $(=> $rest:ty[$rest_size:ty])*) => {
+        hierarchical_level!($current[$current_size] => $next[$next_size], DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
+        impl_level_direct!($next[$next_size] $(=> $rest[$rest_size])*);
     };
 }
 
@@ -82,7 +89,7 @@ pub trait NextTableAddress {
 }
 
 pub struct Table<L: TableLevel> {
-    pub entries: [Entry; ENTRY_COUNT as usize],
+    pub entries: [Entry<L>; ENTRY_COUNT as usize],
     level: PhantomData<L>,
 }
 
@@ -114,24 +121,28 @@ where
         self.next_table_address(index).map(|address| unsafe { &mut *(address as *mut _) })
     }
 
-    pub fn next_table_create<A>(&mut self, index: u64, allocator: &mut A) -> &mut Table<L::NextLevel>
+    pub fn is_huge_page(&self, index: u64) -> bool {
+        self.entries[index as usize].flags().contains(EntryFlags::HUGE_PAGE)
+    }
+
+    pub fn next_table_create<A>(
+        &mut self,
+        index: u64,
+        allocator: &mut A,
+    ) -> Result<&mut Table<L::NextLevel>, &mut Entry<L>>
     where
         A: FrameAllocator,
     {
+        if self.is_huge_page(index) {
+            return Err(&mut self.entries[index as usize]);
+        }
         if self.next_table(index).is_none() {
-            assert!(
-                !self.entries[index as usize].flags().contains(EntryFlags::HUGE_PAGE),
-                "mapping code does not support huge pages"
-            );
             let frame = allocator.allocate_frame().expect("no frames available");
-            self.entries[index as usize].set(
-                frame,
-                // SUS: This might seem wrong, but if the p1 entry is not ua it will be fine right??
-                EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE,
-            );
+            self.entries[index as usize]
+                .set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE);
             self.next_table_mut(index).unwrap().zero();
         }
-        self.next_table_mut(index).unwrap()
+        Ok(self.next_table_mut(index).unwrap())
     }
 }
 
@@ -139,7 +150,7 @@ impl<L> Index<Range<usize>> for Table<L>
 where
     L: TableLevel,
 {
-    type Output = [Entry];
+    type Output = [Entry<L>];
 
     fn index(&self, range: Range<usize>) -> &Self::Output {
         &self.entries[range]
@@ -159,9 +170,9 @@ impl<L> Index<usize> for Table<L>
 where
     L: TableLevel,
 {
-    type Output = Entry;
+    type Output = Entry<L>;
 
-    fn index(&self, index: usize) -> &Entry {
+    fn index(&self, index: usize) -> &Entry<L> {
         &self.entries[index]
     }
 }
@@ -170,13 +181,14 @@ impl<L> IndexMut<usize> for Table<L>
 where
     L: TableLevel,
 {
-    fn index_mut(&mut self, index: usize) -> &mut Entry {
+    fn index_mut(&mut self, index: usize) -> &mut Entry<L> {
         &mut self.entries[index]
     }
 }
 
 pub trait TableLevel {
     type Marker: NextTableAddress;
+    type FrameSize;
 }
 
 pub trait TableLevel4: TableLevel
@@ -191,7 +203,7 @@ pub trait HierarchicalLevel: TableLevel {
 }
 
 pub trait AnyLevel {
-    fn entries(&self) -> [Entry; ENTRY_COUNT as usize];
+    fn entries(&self) -> [u64; ENTRY_COUNT as usize];
 
     fn next(&self, index: u64) -> Option<&dyn AnyLevel>;
 }
@@ -282,7 +294,7 @@ impl TableLevel4 for RecurseLevel4 {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4 => RecurseLevel3, RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
+hierarchical_level!(RecurseLevel4[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
 
 pub enum RecurseLevel4LowerHalf {}
 
@@ -290,7 +302,7 @@ impl TableLevel4 for RecurseLevel4LowerHalf {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4LowerHalf => RecurseLevel3, RecurseHierarchicalLevelMarker<0, 256>);
+hierarchical_level!(RecurseLevel4LowerHalf[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<0, 256>);
 
 pub enum RecurseLevel4UpperHalf {}
 
@@ -298,13 +310,13 @@ impl TableLevel4 for RecurseLevel4UpperHalf {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4UpperHalf => RecurseLevel3, RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
+hierarchical_level!(RecurseLevel4UpperHalf[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
 
 pub enum RecurseLevel3 {}
 pub enum RecurseLevel2 {}
 pub enum RecurseLevel1 {}
 
-impl_level_recurse!(RecurseLevel3 => RecurseLevel2 => RecurseLevel1);
+impl_level_recurse!(RecurseLevel3[Size1G] => RecurseLevel2[Size2M] => RecurseLevel1[Size4K]);
 
 pub struct DirectHierarchicalLevelMarker<const START: u64, const END: u64>;
 
@@ -316,7 +328,7 @@ impl<const START: u64, const END: u64> NextTableAddress for DirectHierarchicalLe
         assert!(index >= START && index < END, "Page table index out of the accessable bounds");
         let entry_flags = table[index as usize].flags();
         if entry_flags.contains(EntryFlags::PRESENT) && !entry_flags.contains(EntryFlags::HUGE_PAGE) {
-            Some(table[index as usize].0 & 0x000fffff_fffff000)
+            Some(table[index as usize].value & 0x000fffff_fffff000)
         } else {
             None
         }
@@ -346,4 +358,4 @@ pub enum DirectLevel3 {}
 pub enum DirectLevel2 {}
 pub enum DirectLevel1 {}
 
-impl_level_direct!(DirectLevel4 => DirectLevel3 => DirectLevel2 => DirectLevel1);
+impl_level_direct!(DirectLevel4[()] => DirectLevel3[Size1G] => DirectLevel2[Size2M] => DirectLevel1[Size4K]);

@@ -1,10 +1,10 @@
 use sentinel::log;
 
-use crate::address::{Frame, FrameIter, Page, PhysAddr, VirtAddr};
+use crate::address::{Frame, FrameIter, Page, PageSize, PhysAddr, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::table::{DirectP4Create, RecurseHierarchicalLevelMarker, RecurseP4Create};
 use crate::registers::tlb;
-use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE};
+use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE, PageLevel};
 
 use super::table::{HierarchicalLevel, NextTableAddress, Table, TableLevel, TableLevel4};
 use super::{ENTRY_COUNT, EntryFlags};
@@ -106,14 +106,14 @@ where
     pub fn populate_p4_lower_half(&mut self, allocator: &mut impl FrameAllocator) {
         let p4 = self.p4_mut();
         for i in 0..256 {
-            p4.next_table_create(i, allocator);
+            p4.next_table_create(i, allocator).expect("P4 Huge page is not supported");
         }
     }
 
     pub fn populate_p4_upper_half(&mut self, allocator: &mut impl FrameAllocator) {
         let p4 = self.p4_mut();
         for i in 256..512 {
-            p4.next_table_create(i, allocator);
+            p4.next_table_create(i, allocator).expect("P4 Huge page is not supported");
         }
     }
 
@@ -215,29 +215,30 @@ where
     ///
     /// The caller must ensure that the frame will not overwrite any other pages otherwise panic
     /// if the frame has been map with OVERWRITEABLE flags this will not panic
-    pub unsafe fn map_to<A>(&mut self, page: Page, frame: Frame, flags: EntryFlags, allocator: &mut A)
+    pub unsafe fn map_to<A, S>(&mut self, page: Page<S>, frame: Frame<S>, flags: EntryFlags, allocator: &mut A)
     where
         A: FrameAllocator,
+        S: PageSize,
     {
         let p4 = self.p4_mut();
-        let p3 = p4.next_table_create(page.p4_index(), allocator);
-        let p2 = p3.next_table_create(page.p3_index(), allocator);
-        let p1 = p2.next_table_create(page.p2_index(), allocator);
+        let p3 = p4.next_table_create(page.p4_index(), allocator).expect("P4 huge page is unsupported");
+        match S::LEVEL {
+            PageLevel::Page1G => {
+                p3[page.p3_index() as usize].set(frame, flags | EntryFlags::PRESENT | EntryFlags::HUGE_PAGE);
+            }
+            PageLevel::Page2M => {
+                let p2 = p3.next_table_create(page.p3_index(), allocator).expect("P3 is already huge page mapped");
 
-        if !(p1[page.p1_index() as usize].is_unused() || p1[page.p1_index() as usize].overwriteable()) {
-            log!(
-                Error,
-                "Trying to map to a used frame, Page {:#x}, Frame: {:#x}",
-                page.start_address(),
-                p1[page.p1_index() as usize]
-                    .pointed_frame()
-                    .unwrap_or(Frame::containing_address(PhysAddr::new(0)))
-                    .start_address()
-            );
-            log!(Error, "Trying to map: {:x?}", p1[page.p1_index() as usize]);
+                p2[page.p2_index() as usize].set(frame, flags | EntryFlags::PRESENT | EntryFlags::HUGE_PAGE);
+            }
+            PageLevel::Page4K => {
+                let p2 = p3.next_table_create(page.p3_index(), allocator).expect("P3 is already huge page mapped");
+                let p1 = p2.next_table_create(page.p2_index(), allocator).expect("P2 is already huge page mapped");
+
+                assert!(p1[page.p1_index() as usize].is_unused());
+                p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
+            }
         }
-        assert!(p1[page.p1_index() as usize].is_unused() || p1[page.p1_index() as usize].overwriteable());
-        p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
     }
 
     /// Allocate a frame and map the page to the allocated frame

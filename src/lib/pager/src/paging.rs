@@ -1,4 +1,4 @@
-use crate::address::Frame;
+use crate::address::{Frame, Size4K};
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::{TopLevelP4, TopLevelRecurse};
 use crate::paging::table::{
@@ -95,11 +95,11 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
     ///
     /// # Safety
     /// [`temporary_page::TemporaryPage::map_table_frame`] Safety section
-    pub unsafe fn map_temporary_page<'b, P4: TopLevelP4>(
+    pub unsafe fn map_temporary_page<'b, P4: TopLevelP4, MapP4: TopLevelP4>(
         &'b mut self,
-        frame: Frame,
+        frame: Frame<Size4K>,
         active_table: &mut ActivePageTable<P4>,
-    ) -> (&'b mut Table<RecurseLevel1>, &'b mut A) {
+    ) -> (&'b mut Table<MapP4>, &'b mut A) {
         (
             unsafe {
                 match self.temporary_page_mapper.as_mut() {
@@ -260,48 +260,48 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     where
         Table<P4>: AnyLevel,
     {
-        log!(Debug, "Current mappings: ");
-        log_dyn_recursive(self.p4(), 4, 0);
+        //log!(Debug, "Current mappings: ");
+        //log_dyn_recursive(self.p4(), 4, 0);
 
-        fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
-            if level == 1 {
-                let (mut last_phys, mut last_virt, mut last_flags) = (0u64, 0u64, EntryFlags::empty());
-                let mut is_first = true;
-                for (index, entry) in
-                    table.entries().iter().enumerate().filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
-                {
-                    let virt = base_addr as usize | (index << 12);
-                    if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
-                        == (entry.mask_flags(), virt as u64, entry.flags())
-                    {
-                        if is_first && (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
-                            if last_virt.get_bit(47) {
-                                last_virt |= 0xffff << 48;
-                            }
-                            log!(Debug, "-----------------------------------------");
-                            log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
-                            log!(Debug, "..........................................");
-                            is_first = false;
-                        }
+        //fn log_dyn_recursive(table: &dyn AnyLevel, level: u8, base_addr: u64) {
+        //    if level == 1 {
+        //        let (mut last_phys, mut last_virt, mut last_flags) = (0u64, 0u64, EntryFlags::empty());
+        //        let mut is_first = true;
+        //        for (index, entry) in
+        //            table.entries().iter().enumerate().filter(|(_, e)| e.flags().contains(EntryFlags::PRESENT))
+        //        {
+        //            let virt = base_addr as usize | (index << 12);
+        //            if (last_phys + PAGE_SIZE, last_virt + PAGE_SIZE, last_flags)
+        //                == (entry.mask_flags(), virt as u64, entry.flags())
+        //            {
+        //                if is_first && (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
+        //                    if last_virt.get_bit(47) {
+        //                        last_virt |= 0xffff << 48;
+        //                    }
+        //                    log!(Debug, "-----------------------------------------");
+        //                    log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
+        //                    log!(Debug, "..........................................");
+        //                    is_first = false;
+        //                }
 
-                        (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
-                        continue;
-                    } else if (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
-                        if last_virt.get_bit(47) {
-                            last_virt |= 0xffff << 48;
-                        }
-                        log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
-                        log!(Debug, "-----------------------------------------");
-                        is_first = true;
-                    }
-                    (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
-                }
-            }
+        //                (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
+        //                continue;
+        //            } else if (last_phys, last_virt, last_flags) != (0u64, 0u64, EntryFlags::empty()) {
+        //                if last_virt.get_bit(47) {
+        //                    last_virt |= 0xffff << 48;
+        //                }
+        //                log!(Debug, "VIRT: {last_virt:#x} -> PHYS: {last_phys:#x}, {last_flags}",);
+        //                log!(Debug, "-----------------------------------------");
+        //                is_first = true;
+        //            }
+        //            (last_phys, last_virt, last_flags) = (entry.mask_flags(), virt as u64, entry.flags());
+        //        }
+        //    }
 
-            for (index, table) in (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table))) {
-                log_dyn_recursive(table, level - 1, base_addr | (index << ((level - 1) * 9 + 12)));
-            }
-        }
+        //    for (index, table) in (0..ENTRY_COUNT).filter_map(|entry| table.next(entry).map(|table| (entry, table))) {
+        //        log_dyn_recursive(table, level - 1, base_addr | (index << ((level - 1) * 9 + 12)));
+        //    }
+        //}
     }
 
     /// Copy the entries of one inactive table to another inactive table, you must gurentee mutable
@@ -372,7 +372,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 /// to the same p3 entries of the [`ActivePageTable`].
 // FIXME: There will be a minor memory leak if this is dropped.
 pub struct InactivePageTable<P4: TopLevelP4> {
-    p4_frame: Frame,
+    p4_frame: Frame<Size4K>,
     _p4: PhantomData<P4>,
 }
 
@@ -415,7 +415,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
         options: InactivePageCopyOption,
-        copy_from: Option<&[Entry; ENTRY_COUNT as usize]>,
+        copy_from: Option<&[Entry<ActiveP4>; ENTRY_COUNT as usize]>,
     ) -> Self {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
@@ -447,7 +447,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         &self,
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
-        f: impl FnOnce(&mut ActivePageTable<ActiveP4>, &Table<RecurseLevel1>) -> R,
+        f: impl FnOnce(&mut ActivePageTable<ActiveP4>, &Table<P4>) -> R,
     ) -> R {
         let result;
         {
@@ -471,7 +471,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
         &mut self,
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
-        table_mutate: impl FnOnce(&mut ActivePageTable<ActiveP4>, &mut Table<RecurseLevel1>) -> R,
+        table_mutate: impl FnOnce(&mut ActivePageTable<ActiveP4>, &mut Table<P4>) -> R,
     ) -> R {
         let result;
         {

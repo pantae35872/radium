@@ -1,4 +1,4 @@
-use crate::address::{Frame, Page, VirtAddr};
+use crate::address::{Frame, Page, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::mapper::TopLevelP4;
 use crate::{EntryFlags, PAGE_SIZE, virt_addr_alloc};
@@ -72,19 +72,20 @@ impl TemporaryPage {
     /// # Safety
     /// The caller must ensure that the provided frame is valid and does not causes any side
     /// effects
-    pub unsafe fn map_table_frame<'a, 'b, P4>(
+    pub unsafe fn map_table_frame<'a, 'b, P4, P4Access>(
         &'a mut self,
-        frame: Frame,
+        frame: Frame<Size4K>,
         active_table: &'b mut ActivePageTable<P4>,
         allocator: &'b mut impl FrameAllocator,
-    ) -> &'a mut Table<RecurseLevel1>
+    ) -> &'a mut Table<P4Access>
     where
         P4: TopLevelP4,
+        P4Access: TopLevelP4,
     {
         const _: () = assert!(size_of::<Table<RecurseLevel1>>() == PAGE_SIZE as usize);
         // SAFETY: The contact is uphold by the caller, and taking a reference of a frame as a
         // table is safe because the PAGE_SIZE (which is a size of a frame) is equal to size of
         // Table<RecurseLevel1>, gurentee by const assert above
-        unsafe { &mut *(self.map(frame, active_table, allocator).as_mut_ptr::<Table<RecurseLevel1>>()) }
+        unsafe { &mut *(self.map(frame, active_table, allocator).as_mut_ptr::<Table<P4Access>>()) }
     }
 }
