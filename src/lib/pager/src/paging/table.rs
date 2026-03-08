@@ -1,3 +1,8 @@
+//! A trait representation of the x86_64 paging structure
+//!
+//! The API and implemention would've been better if generic_const_exprs were more stable
+//! currently we're using macro as a work around, since we can't do [(); LEVEL - 1] where clause
+
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut, Range};
 use core::ptr::NonNull;
@@ -142,6 +147,9 @@ macro_rules! define_table_structure {
     };
 }
 
+/// Root level trait for types like [RecurseLevel4] or [DirectLevel4]...,
+/// this types proves the lower level exists for any type on the root level ([RecurseLevel4] ...)
+/// thus allow for traversal of the page table downwards possible e.g. [Table::next_table] ...
 pub trait RootLevel: HierarchicalLevel<Marker: NextTableAddress, NextLevel: Level3, PageSize = ()> {
     type CreateMarker;
 }
@@ -339,6 +347,7 @@ impl RootLevel for RecurseLevel4UpperHalf {
     type CreateMarker = RecurseP4Create;
 }
 
+// exclude last entry (recursive mapping slot)
 hierarchical_level!(RecurseLevel4UpperHalf[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
 
 pub enum RecurseLevel3 {}
