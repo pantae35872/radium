@@ -6,7 +6,7 @@ use crate::{EntryFlags, PAGE_SIZE, virt_addr_alloc};
 use super::ActivePageTable;
 use super::table::Table;
 
-/// A page that can be map and unmap, once at a time
+/// A table page that can be map and unmap, once at a time
 pub struct TemporaryTable {
     mapped: bool,
     page: Page<Size4K>,

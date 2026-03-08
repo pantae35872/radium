@@ -1,7 +1,7 @@
 use crate::address::{AnyFrame, AnyPage, Frame, Page, PageSize, PhysAddr, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::table::entry::Entry;
-use crate::paging::table::{DirectP4Create, RecurseP4Create, RootLevel, TableLevel};
+use crate::paging::table::{DirectCreate, RecurseCreate, RootLevel, TableLevel};
 use crate::registers::tlb;
 use crate::{PageLevel, any_frame_select, any_page_select};
 
@@ -9,35 +9,30 @@ use super::EntryFlags;
 use super::table::Table;
 use core::ptr::NonNull;
 
-pub struct Mapper<P4: RootLevel> {
-    p4: NonNull<Table<P4>>,
+pub struct Mapper<Root: RootLevel> {
+    p4: NonNull<Table<Root>>,
 }
 
-pub struct MapperWithAllocator<'a, P4: RootLevel, A: FrameAllocator> {
-    pub mapper: &'a mut Mapper<P4>,
-    pub allocator: &'a mut A,
-}
-
-impl<P4> Mapper<P4>
+impl<Root> Mapper<Root>
 where
-    P4: RootLevel<CreateMarker = RecurseP4Create>,
+    Root: RootLevel<CreateMarker = RecurseCreate>,
 {
     /// Create a mapper from the currently active recursive mapped page table
     ///
     /// # Safety
     ///
     /// The caller must ensure that the current active page table is recursive mapped
-    pub unsafe fn new() -> Mapper<P4> {
+    pub unsafe fn new() -> Mapper<Root> {
         Mapper {
             // SAFETY: Whenver the current mappins is recursive or not is gurentee by the user
-            p4: unsafe { P4::CreateMarker::create() },
+            p4: unsafe { Root::CreateMarker::create() },
         }
     }
 }
 
-impl<P4> Mapper<P4>
+impl<Root> Mapper<Root>
 where
-    P4: RootLevel<CreateMarker = DirectP4Create>,
+    Root: RootLevel<CreateMarker = DirectCreate>,
 {
     /// Create a mapper from the provided page table address
     ///
@@ -45,19 +40,16 @@ where
     ///
     /// The caller must ensure that the provided p4 is valid,
     /// and is the only mutable reference to the page table
-    pub unsafe fn new_custom(p4: *mut Table<P4>) -> Mapper<P4> {
+    pub unsafe fn new_custom(p4: *mut Table<Root>) -> Mapper<Root> {
         Mapper {
             // SAFETY: The validity of the page table is gurentee by the caller
-            p4: unsafe { P4::CreateMarker::create(p4) },
+            p4: unsafe { Root::CreateMarker::create(p4) },
         }
     }
 }
 
-impl<P4> Mapper<P4>
-where
-    P4: RootLevel,
-{
-    pub fn p4(&self) -> &Table<P4> {
+impl<Root: RootLevel> Mapper<Root> {
+    pub fn p4(&self) -> &Table<Root> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
         // or the actively mapping inactive page tables
         unsafe { self.p4.as_ref() }
@@ -77,7 +69,7 @@ where
         }
     }
 
-    pub fn p4_mut(&mut self) -> &mut Table<P4> {
+    pub fn p4_mut(&mut self) -> &mut Table<Root> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
         // or the actively mapping inactive page tables
         unsafe { self.p4.as_mut() }

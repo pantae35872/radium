@@ -17,6 +17,11 @@ use super::{ENTRY_COUNT, EntryFlags};
 
 pub(crate) mod entry;
 
+pub type RootDirect = DirectLevel4;
+pub type RootRecurse = RecurseLevel4;
+pub type RootRecurseLowerHalf = RecurseLevel4LowerHalf;
+pub type RootRecurseUpperHalf = RecurseLevel4UpperHalf;
+
 pub struct Table<L: TableLevel> {
     pub entries: [Entry<L>; ENTRY_COUNT as usize],
     level: PhantomData<L>,
@@ -158,7 +163,7 @@ define_table_structure!(Level3[Size1G] => Level2[Size2M] => Level1[Size4K]);
 
 pub trait RootLevelRecurse: RootLevel
 where
-    Self: RootLevel<CreateMarker = RecurseP4Create>,
+    Self: RootLevel<CreateMarker = RecurseCreate>,
 {
     fn start() -> u64;
     fn end() -> u64;
@@ -166,7 +171,7 @@ where
 
 impl<T: RootLevel, const START: u64, const END: u64> RootLevelRecurse for T
 where
-    T: RootLevel<CreateMarker = RecurseP4Create, Marker = RecurseHierarchicalLevelMarker<START, END>>,
+    T: RootLevel<CreateMarker = RecurseCreate, Marker = RecurseHierarchicalLevelMarker<START, END>>,
 {
     fn start() -> u64 {
         START
@@ -197,27 +202,27 @@ pub trait HierarchicalLevel: TableLevel {
     type NextLevel: TableLevel;
 }
 
-pub trait TableSwitch<P4: RootLevel> {
+pub trait TableSwitch<Root: RootLevel> {
     fn switch_impl<A: FrameAllocator>(
-        active_page_table: &mut ActivePageTable<P4>,
+        active_page_table: &mut ActivePageTable<Root>,
         context: &mut TableManipulationContext<A>,
-        new_table: InactivePageTable<P4>,
-    ) -> InactivePageTable<P4>;
+        new_table: InactivePageTable<Root>,
+    ) -> InactivePageTable<Root>;
 }
 
 pub struct RecurseHierarchicalLevelMarker<const START: u64, const END: u64>;
 
-impl<const START: u64, const END: u64, P4> TableSwitch<P4> for RecurseHierarchicalLevelMarker<START, END>
+impl<const START: u64, const END: u64, Root> TableSwitch<Root> for RecurseHierarchicalLevelMarker<START, END>
 where
-    P4: RootLevel<Marker = RecurseHierarchicalLevelMarker<START, END>>,
+    Root: RootLevel<Marker = RecurseHierarchicalLevelMarker<START, END>>,
 {
     fn switch_impl<A: FrameAllocator>(
-        active_page_table: &mut ActivePageTable<P4>,
+        active_page_table: &mut ActivePageTable<Root>,
         context: &mut TableManipulationContext<A>,
-        mut new_table: InactivePageTable<P4>,
-    ) -> InactivePageTable<P4> {
+        mut new_table: InactivePageTable<Root>,
+    ) -> InactivePageTable<Root> {
         if START == 0 && END == ENTRY_COUNT {
-            // SAFETY: The contract is checked above and the impl where clauses guarantee that P4
+            // SAFETY: The contract is checked above and the impl where clauses guarantee that Root
             // is the top level
             return unsafe { active_page_table.full_switch(new_table) };
         }
@@ -229,11 +234,10 @@ where
                 active_page_table,
                 context,
                 super::InactivePageCopyOption::Range(START as usize..END as usize),
-                None,
             )
         };
 
-        // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that P4 is a recursive mapped.
+        // SAFETY: We did mutate 512th element if the END is 512, but the impl where clauses guarantee that Root is a recursive mapped.
         // and the InactivePageTable is always recursively mapped.
         unsafe {
             new_table.table_mut(active_page_table, context, |active_table, table| {
@@ -312,9 +316,9 @@ macro_rules! impl_level {
     };
 }
 
-pub struct RecurseP4Create;
+pub struct RecurseCreate;
 
-impl RecurseP4Create {
+impl RecurseCreate {
     /// Create a new recursive p4 table pointer
     ///
     /// # Safety
@@ -328,7 +332,7 @@ impl RecurseP4Create {
 pub enum RecurseLevel4 {}
 
 impl RootLevel for RecurseLevel4 {
-    type CreateMarker = RecurseP4Create;
+    type CreateMarker = RecurseCreate;
 }
 
 hierarchical_level!(RecurseLevel4[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
@@ -336,7 +340,7 @@ hierarchical_level!(RecurseLevel4[()] => RecurseLevel3[Size1G]: RecurseHierarchi
 pub enum RecurseLevel4LowerHalf {}
 
 impl RootLevel for RecurseLevel4LowerHalf {
-    type CreateMarker = RecurseP4Create;
+    type CreateMarker = RecurseCreate;
 }
 
 hierarchical_level!(RecurseLevel4LowerHalf[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<0, 256>);
@@ -344,7 +348,7 @@ hierarchical_level!(RecurseLevel4LowerHalf[()] => RecurseLevel3[Size1G]: Recurse
 pub enum RecurseLevel4UpperHalf {}
 
 impl RootLevel for RecurseLevel4UpperHalf {
-    type CreateMarker = RecurseP4Create;
+    type CreateMarker = RecurseCreate;
 }
 
 // exclude last entry (recursive mapping slot)
@@ -373,9 +377,9 @@ impl<const START: u64, const END: u64> NextTableAddress for DirectHierarchicalLe
     }
 }
 
-pub struct DirectP4Create;
+pub struct DirectCreate;
 
-impl DirectP4Create {
+impl DirectCreate {
     /// Create a new p4 table from the provided table pointer
     ///
     /// # Safety

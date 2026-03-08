@@ -1,4 +1,7 @@
-use crate::address::{AnyFrame, Frame, PageSize};
+use crate::{
+    address::{AnyFrame, Frame, PageSize},
+    any_frame_select,
+};
 
 pub mod linear_allocator;
 pub mod virt_allocator;
@@ -29,10 +32,6 @@ pub unsafe trait FrameAllocator {
     ///
     /// See [Self::deallocate_frame]
     fn deallocate_frame_any(&mut self, frame: AnyFrame) {
-        match frame {
-            AnyFrame::Frame4K(frame) => self.deallocate_frame(frame),
-            AnyFrame::Frame2M(frame) => self.deallocate_frame(frame),
-            AnyFrame::Frame1G(frame) => self.deallocate_frame(frame),
-        }
+        any_frame_select!(frame, (frame) => self.deallocate_frame(frame));
     }
 }
