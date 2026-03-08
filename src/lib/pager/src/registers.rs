@@ -9,7 +9,7 @@ use smart_default::SmartDefault;
 
 use crate::{
     PrivilegeLevel,
-    address::{Frame, PhysAddr, VirtAddr},
+    address::{Frame, PhysAddr, Size4K, VirtAddr},
 };
 
 bitflags! {
@@ -162,7 +162,7 @@ pub struct Cr3;
 
 impl Cr3 {
     /// Read a [`Frame`] and [`Cr3Flags`] from the cr3 register
-    pub fn read() -> (Frame, Cr3Flags) {
+    pub fn read() -> (Frame<Size4K>, Cr3Flags) {
         let result: u64;
         // SAFETY: We reading the cr3 is safe we're not setting it
         unsafe {
@@ -187,7 +187,7 @@ impl Cr3 {
     ///
     /// The caller must ensure that changing this does not causes any side effects and the frame is
     /// valid
-    pub unsafe fn write(frame: Frame, flags: Cr3Flags) {
+    pub unsafe fn write(frame: Frame<Size4K>, flags: Cr3Flags) {
         let value = frame.start_address().as_u64() | flags.bits();
         unsafe {
             asm!("mov cr3, {0:r}", in(reg) value, options(nostack));

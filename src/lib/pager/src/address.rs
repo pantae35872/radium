@@ -10,8 +10,7 @@ use crate::{PAGE_SIZE, PageLevel};
 
 const PHYS_ADDR_MASK: u64 = 0x000FFFFFFFFFFFFF;
 
-/// A frame is an respresentation of an [`physical address`] that can be directly mapped in the
-/// page tables, and is aligned on 4KB boundries
+/// A frame is an representation of an [`physical address`] and is aligned to S::SIZE boundries
 ///
 /// [`physical address`]: <https://en.wikipedia.org/wiki/X86-64#Physical_address_space_details>
 #[derive(Debug, Clone, Copy)]
@@ -26,16 +25,20 @@ impl<S: PageSize> Frame<S> {
     /// if the address is not aligned this will create a frame contatining the frame that covers
     /// that address
     pub const fn containing_address(address: PhysAddr) -> Frame<S> {
-        Frame { number: address.as_u64() / PAGE_SIZE, _marker: PhantomData }
+        Frame { number: address.as_u64() / S::SIZE, _marker: PhantomData }
     }
 
     pub const fn null() -> Frame<S> {
         Frame { number: 0, _marker: PhantomData }
     }
 
+    pub const fn size(&self) -> u64 {
+        S::SIZE
+    }
+
     /// Get the physical address back from the frame
     pub const fn start_address(&self) -> PhysAddr {
-        PhysAddr::new(self.number * PAGE_SIZE)
+        PhysAddr::new(self.number * S::SIZE)
     }
 
     /// Create a iterator of frame start-end (inclusive)
@@ -43,41 +46,95 @@ impl<S: PageSize> Frame<S> {
         FrameIter { start, end }
     }
 
-    /// Get the frame number
     pub const fn number(&self) -> u64 {
         self.number
     }
 
-    /// Add the frame number by the page number, and consume the current one
-    pub const fn add_by_page(mut self, number: u64) -> Frame<S> {
-        self.number += number;
-        self
+    pub fn erase(self) -> AnyFrame
+    where
+        AnyFrame: From<Frame<S>>,
+    {
+        self.into()
     }
 }
 
-impl<S: PageSize> PartialEq for Frame<S> {
-    fn eq(&self, other: &Self) -> bool {
-        self.number == other.number
-    }
-}
-
-impl<S: PageSize> Eq for Frame<S> {}
-
-impl<S: PageSize> PartialOrd for Frame<S> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.number.cmp(&other.number))
-    }
-}
-
-impl<S: PageSize> Ord for Frame<S> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.number.cmp(&other.number)
+impl<S: PageSize> From<Frame<S>> for PhysAddr {
+    fn from(value: Frame<S>) -> Self {
+        value.start_address()
     }
 }
 
 impl<S: PageSize> From<PhysAddr> for Frame<S> {
     fn from(value: PhysAddr) -> Self {
         Self::containing_address(value)
+    }
+}
+
+impl<S: PageSize, O: PageSize> PartialEq<Frame<O>> for Frame<S> {
+    fn eq(&self, other: &Frame<O>) -> bool {
+        self.start_address() == other.start_address()
+    }
+}
+
+impl<S: PageSize> Eq for Frame<S> {}
+
+impl<S: PageSize, O: PageSize> PartialOrd<Frame<O>> for Frame<S> {
+    fn partial_cmp(&self, other: &Frame<O>) -> Option<Ordering> {
+        Some(self.start_address().cmp(&other.start_address()))
+    }
+}
+
+impl<S: PageSize> Ord for Frame<S> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.start_address().cmp(&other.start_address())
+    }
+}
+
+/// A dynamically sized frame
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnyFrame {
+    Frame4K(Frame<Size4K>),
+    Frame2M(Frame<Size2M>),
+    Frame1G(Frame<Size1G>),
+}
+
+#[macro_export]
+macro_rules! any_frame_select {
+    ($dyn: ident, ($name: ident) => $select: expr) => {
+        match $dyn {
+            AnyFrame::Frame4K($name) => $select,
+            AnyFrame::Frame2M($name) => $select,
+            AnyFrame::Frame1G($name) => $select,
+        }
+    };
+}
+
+impl AnyFrame {
+    /// See [Frame::start_address]
+    pub const fn start_address(&self) -> PhysAddr {
+        any_frame_select!(self, (frame) => frame.start_address())
+    }
+
+    pub const fn size(&self) -> u64 {
+        any_frame_select!(self, (frame) => frame.size())
+    }
+}
+
+impl From<Frame<Size4K>> for AnyFrame {
+    fn from(value: Frame<Size4K>) -> Self {
+        Self::Frame4K(value)
+    }
+}
+
+impl From<Frame<Size2M>> for AnyFrame {
+    fn from(value: Frame<Size2M>) -> Self {
+        Self::Frame2M(value)
+    }
+}
+
+impl From<Frame<Size1G>> for AnyFrame {
+    fn from(value: Frame<Size1G>) -> Self {
+        Self::Frame1G(value)
     }
 }
 
@@ -101,7 +158,7 @@ impl<S: PageSize> Iterator for FrameIter<S> {
     }
 }
 
-/// A page is an respresentation of an [`virtual address`] that is aligned on 4KB boundries
+/// A page is an representation of an [`virtual address`] that is aligned on 4KB boundries
 ///
 /// [`virtual address`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
 #[derive(Debug, Clone, Copy)]
@@ -116,7 +173,7 @@ impl<S: PageSize> Page<S> {
     /// if the address is not aligned this will create a page contatining the frame that covers
     /// that address
     pub const fn containing_address(address: VirtAddr) -> Page<S> {
-        Page { number: address.0 / PAGE_SIZE, _marker: PhantomData }
+        Page { number: address.0 / S::SIZE, _marker: PhantomData }
     }
 
     /// Just a dummy page if anyone needs it
@@ -133,13 +190,19 @@ impl<S: PageSize> Page<S> {
         Self { number: 0xcafebabe, _marker: PhantomData }
     }
 
+    /// Create a iterator of page start-end (inclusive)
+    pub fn range_inclusive(start: Page<S>, end: Page<S>) -> PageIter<S> {
+        assert!(start <= end);
+        PageIter { start, end }
+    }
+
     /// Get the start address of this frame
     ///
     /// # Note
     /// if this was created from contating address, this function does not return the original
     /// virtual address
     pub const fn start_address(&self) -> VirtAddr {
-        VirtAddr::new(self.number * PAGE_SIZE)
+        VirtAddr::new(self.number * S::SIZE)
     }
 
     pub const fn page_number(&self) -> u64 {
@@ -149,34 +212,39 @@ impl<S: PageSize> Page<S> {
     /// Get the page 4 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p4_index(&self) -> u64 {
-        (self.number >> 27) & 0o777
+    pub const fn p4_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 27) & 0o777
     }
 
     /// Get the page 3 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p3_index(&self) -> u64 {
-        (self.number >> 18) & 0o777
+    pub const fn p3_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 18) & 0o777
     }
 
     /// Get the page 2 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p2_index(&self) -> u64 {
-        (self.number >> 9) & 0o777
+    pub const fn p2_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 9) & 0o777
     }
 
     /// Get the page 1 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p1_index(&self) -> u64 {
-        self.number & 0o777
+    pub const fn p1_index(&self) -> u64 {
+        (self.number * S::SIZE / PAGE_SIZE) & 0o777
     }
 
-    /// Create a iterator of page start-end (inclusive)
-    pub fn range_inclusive(start: Page<S>, end: Page<S>) -> PageIter<S> {
-        PageIter { start, end }
+    pub const fn size(&self) -> u64 {
+        S::SIZE
+    }
+}
+
+impl<S: PageSize> From<Page<S>> for VirtAddr {
+    fn from(value: Page<S>) -> Self {
+        value.start_address()
     }
 }
 
@@ -186,23 +254,96 @@ impl<S: PageSize> From<VirtAddr> for Page<S> {
     }
 }
 
-impl<S: PageSize> PartialEq for Page<S> {
-    fn eq(&self, other: &Self) -> bool {
-        self.number == other.number
+impl<S: PageSize, O: PageSize> PartialEq<Page<O>> for Page<S> {
+    fn eq(&self, other: &Page<O>) -> bool {
+        self.start_address() == other.start_address()
     }
 }
 
 impl<S: PageSize> Eq for Page<S> {}
 
-impl<S: PageSize> PartialOrd for Page<S> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.number.cmp(&other.number))
+impl<S: PageSize, O: PageSize> PartialOrd<Page<O>> for Page<S> {
+    fn partial_cmp(&self, other: &Page<O>) -> Option<Ordering> {
+        Some(self.start_address().cmp(&other.start_address()))
     }
 }
 
 impl<S: PageSize> Ord for Page<S> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.number.cmp(&other.number)
+        self.start_address().cmp(&other.start_address())
+    }
+}
+
+/// A dynamically sized page
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnyPage {
+    Page4K(Page<Size4K>),
+    Page2M(Page<Size2M>),
+    Page1G(Page<Size1G>),
+}
+
+#[macro_export]
+macro_rules! any_page_select {
+    ($dyn: ident, ($name: ident) => $select: expr) => {
+        match $dyn {
+            AnyPage::Page4K($name) => $select,
+            AnyPage::Page2M($name) => $select,
+            AnyPage::Page1G($name) => $select,
+        }
+    };
+}
+
+impl AnyPage {
+    /// See [Page::start_address]
+    pub const fn start_address(&self) -> VirtAddr {
+        any_page_select!(self, (page) => page.start_address())
+    }
+
+    /// See [Page::p4_index()]
+    pub const fn p4_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p4_index())
+    }
+
+    /// See [Page::p3_index()]
+    pub const fn p3_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p3_index())
+    }
+
+    /// See [Page::p2_index()]
+    pub const fn p2_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p2_index())
+    }
+
+    /// See [Page::p1_index()]
+    pub const fn p1_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p1_index())
+    }
+
+    /// See [Page::page_number()]
+    pub const fn page_number(&self) -> u64 {
+        any_page_select!(self, (page) => page.page_number())
+    }
+
+    pub const fn size(&self) -> u64 {
+        any_page_select!(self, (page) => page.size())
+    }
+}
+
+impl From<Page<Size4K>> for AnyPage {
+    fn from(value: Page<Size4K>) -> Self {
+        Self::Page4K(value)
+    }
+}
+
+impl From<Page<Size2M>> for AnyPage {
+    fn from(value: Page<Size2M>) -> Self {
+        Self::Page2M(value)
+    }
+}
+
+impl From<Page<Size1G>> for AnyPage {
+    fn from(value: Page<Size1G>) -> Self {
+        Self::Page1G(value)
     }
 }
 
@@ -231,7 +372,12 @@ pub trait PageSize: Clone + Copy {
     const LEVEL: PageLevel;
 }
 
-#[derive(Clone, Copy)]
+impl PageSize for () {
+    const SIZE: u64 = 0;
+    const LEVEL: PageLevel = PageLevel::Page4K;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size4K;
 
 impl PageSize for Size4K {
@@ -239,7 +385,7 @@ impl PageSize for Size4K {
     const LEVEL: PageLevel = PageLevel::Page4K;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size2M;
 
 impl PageSize for Size2M {
@@ -247,7 +393,7 @@ impl PageSize for Size2M {
     const LEVEL: PageLevel = PageLevel::Page2M;
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Size1G;
 
 impl PageSize for Size1G {
@@ -321,7 +467,7 @@ impl VirtAddr {
     /// Returns Err if bits 52-63 (inclusive) was set
     #[inline(always)]
     pub const fn new_checked(address: u64) -> Result<Self, NonCanonicalVirtAddress> {
-        if address & PHYS_ADDR_MASK != address {
+        if !Self::is_canonical(address) {
             return Err(NonCanonicalVirtAddress(address));
         }
         // SAFETY: we already check if it's a canonical or not
@@ -563,6 +709,12 @@ impl AddAssign<u64> for PhysAddr {
 impl AddAssign<usize> for PhysAddr {
     fn add_assign(&mut self, rhs: usize) {
         self.0 = Self::new(self.0 + rhs as u64).0;
+    }
+}
+
+impl fmt::Display for PhysAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
     }
 }
 

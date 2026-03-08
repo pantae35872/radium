@@ -2,91 +2,15 @@ use core::marker::PhantomData;
 use core::ops::{Index, IndexMut, Range};
 use core::ptr::Unique;
 
-use crate::address::{Size1G, Size2M, Size4K};
+use crate::address::{PageSize, Size1G, Size2M, Size4K};
 use crate::allocator::FrameAllocator;
-use crate::paging::mapper::TopLevelP4;
+use crate::paging::table::entry::Entry;
 use crate::paging::{ActivePageTable, InactivePageTable, TableManipulationContext};
 use crate::registers::tlb;
 
-use super::{ENTRY_COUNT, Entry, EntryFlags};
+use super::{ENTRY_COUNT, EntryFlags};
 
-macro_rules! level {
-    ($level: ty[$size: ty], $marker: ty) => {
-        impl TableLevel for $level {
-            type Marker = RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>;
-            type FrameSize = $size;
-        }
-
-        impl AnyLevel for Table<$level> {
-            fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
-                todo!()
-            }
-
-            fn next(&self, _index: u64) -> Option<&dyn AnyLevel> {
-                None
-            }
-        }
-    };
-}
-
-macro_rules! hierarchical_level {
-    ($current: ty[$current_size:ty] => $next: ty[$next_size:ty], $marker: ty) => {
-        impl HierarchicalLevel for $current
-        where
-            $next: TableLevel<FrameSize = $next_size>,
-        {
-            type NextLevel = $next;
-        }
-
-        impl TableLevel for $current {
-            type Marker = $marker;
-            type FrameSize = $current_size;
-        }
-
-        impl AnyLevel for Table<$current> {
-            fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
-                todo!()
-                //self.entries
-            }
-
-            fn next(&self, index: u64) -> Option<&dyn AnyLevel> {
-                self.next_table(index).map(|t| t as &dyn AnyLevel)
-            }
-        }
-    };
-}
-
-macro_rules! impl_level_recurse {
-    // Base case: nothing more to implement
-    ($last:ty[$size:ty]) => {
-        level!($last[$size], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
-    };
-
-    // Recursive case
-    ($current:ty[$current_size:ty] => $next:ty[$next_size:ty] $(=> $rest:ty[$rest_size:ty])*) => {
-        hierarchical_level!($current[$current_size] => $next[$next_size], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
-        impl_level_recurse!($next[$next_size] $(=> $rest[$rest_size])*);
-    };
-}
-
-macro_rules! impl_level_direct {
-    // Base case: nothing more to implement
-    ($last:ty[$size:ty]) => {
-        level!($last[$size], DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
-    };
-
-    // Recursive case
-    ($current:ty[$current_size:ty] => $next:ty[$next_size:ty] $(=> $rest:ty[$rest_size:ty])*) => {
-        hierarchical_level!($current[$current_size] => $next[$next_size], DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);
-        impl_level_direct!($next[$next_size] $(=> $rest[$rest_size])*);
-    };
-}
-
-pub trait NextTableAddress {
-    fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
-    where
-        L: TableLevel;
-}
+pub(crate) mod entry;
 
 pub struct Table<L: TableLevel> {
     pub entries: [Entry<L>; ENTRY_COUNT as usize],
@@ -137,12 +61,26 @@ where
             return Err(&mut self.entries[index as usize]);
         }
         if self.next_table(index).is_none() {
-            let frame = allocator.allocate_frame().expect("no frames available");
+            let frame = allocator.allocate_frame::<Size4K>().expect("no frames available");
             self.entries[index as usize]
                 .set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::USER_ACCESSIBLE);
             self.next_table_mut(index).unwrap().zero();
         }
         Ok(self.next_table_mut(index).unwrap())
+    }
+}
+
+impl<L> AnyTable for Table<L>
+where
+    L: HierarchicalLevel,
+    Table<L::NextLevel>: AnyTable,
+{
+    fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
+        todo!()
+    }
+
+    fn next(&self, index: u64) -> Option<&dyn AnyTable> {
+        self.next_table(index).map(|t| t as &dyn AnyTable)
     }
 }
 
@@ -186,29 +124,72 @@ where
     }
 }
 
-pub trait TableLevel {
-    type Marker: NextTableAddress;
-    type FrameSize;
+macro_rules! define_table_structure {
+    ($last:ident[$size:ty]) => {
+        pub trait $last: TableLevel<PageSize = $size> {}
+
+        impl<T> $last for T where T: TableLevel<PageSize = $size> {}
+    };
+    ($current:ident[$current_size:ty] => $next:ident[$next_size:ty] $(=> $rest:ident[$rest_size:ty])*) => {
+        pub trait $current:
+            HierarchicalLevel<Marker: NextTableAddress, NextLevel: $next, PageSize = $current_size>
+        {
+        }
+
+        impl<T> $current for T where T: HierarchicalLevel<Marker: NextTableAddress, NextLevel: $next, PageSize = $current_size> {}
+
+        define_table_structure!($next[$next_size] $(=> $rest[$rest_size])*);
+    };
 }
 
-pub trait TableLevel4: TableLevel
-where
-    Self: Sized,
-{
+pub trait RootLevel: HierarchicalLevel<Marker: NextTableAddress, NextLevel: Level3, PageSize = ()> {
     type CreateMarker;
+}
+
+define_table_structure!(Level3[Size1G] => Level2[Size2M] => Level1[Size4K]);
+
+pub trait RootLevelRecurse: RootLevel
+where
+    Self: RootLevel<CreateMarker = RecurseP4Create>,
+{
+    fn start() -> u64;
+    fn end() -> u64;
+}
+
+impl<T: RootLevel, const START: u64, const END: u64> RootLevelRecurse for T
+where
+    T: RootLevel<CreateMarker = RecurseP4Create, Marker = RecurseHierarchicalLevelMarker<START, END>>,
+{
+    fn start() -> u64 {
+        START
+    }
+    fn end() -> u64 {
+        END
+    }
+}
+
+pub trait AnyTable {
+    fn entries(&self) -> [u64; ENTRY_COUNT as usize];
+
+    fn next(&self, index: u64) -> Option<&dyn AnyTable>;
+}
+
+pub trait TableLevel {
+    type Marker: NextTableAddress;
+    type PageSize: PageSize;
+}
+
+pub trait NextTableAddress {
+    fn next_table_address_impl<L>(table: &Table<L>, index: u64) -> Option<u64>
+    where
+        L: TableLevel;
 }
 
 pub trait HierarchicalLevel: TableLevel {
     type NextLevel: TableLevel;
 }
 
-pub trait AnyLevel {
-    fn entries(&self) -> [u64; ENTRY_COUNT as usize];
-
-    fn next(&self, index: u64) -> Option<&dyn AnyLevel>;
-}
-
-pub trait TableSwitch<P4: TopLevelP4> {
+pub trait TableSwitch<P4: RootLevel> {
     fn switch_impl<A: FrameAllocator>(
         active_page_table: &mut ActivePageTable<P4>,
         context: &mut TableManipulationContext<A>,
@@ -220,7 +201,7 @@ pub struct RecurseHierarchicalLevelMarker<const START: u64, const END: u64>;
 
 impl<const START: u64, const END: u64, P4> TableSwitch<P4> for RecurseHierarchicalLevelMarker<START, END>
 where
-    P4: TopLevelP4<Marker = RecurseHierarchicalLevelMarker<START, END>>,
+    P4: RootLevel<Marker = RecurseHierarchicalLevelMarker<START, END>>,
 {
     fn switch_impl<A: FrameAllocator>(
         active_page_table: &mut ActivePageTable<P4>,
@@ -275,6 +256,54 @@ impl<const START: u64, const END: u64> NextTableAddress for RecurseHierarchicalL
     }
 }
 
+macro_rules! level {
+    ($level: ty[$size: ty]: $marker: ty) => {
+        impl TableLevel for $level {
+            type Marker = $marker;
+            type PageSize = $size;
+        }
+
+        impl AnyTable for Table<$level> {
+            fn entries(&self) -> [u64; ENTRY_COUNT as usize] {
+                todo!()
+            }
+
+            fn next(&self, _index: u64) -> Option<&dyn AnyTable> {
+                None
+            }
+        }
+    };
+}
+
+macro_rules! hierarchical_level {
+    ($current: ty[$current_size:ty] => $next: ty[$next_size:ty]: $marker: ty) => {
+        impl HierarchicalLevel for $current
+        where
+            $next: TableLevel<PageSize = $next_size>,
+        {
+            type NextLevel = $next;
+        }
+
+        impl TableLevel for $current {
+            type Marker = $marker;
+            type PageSize = $current_size;
+        }
+    };
+}
+
+macro_rules! impl_level {
+    // Base case
+    ($last:ty[$size:ty]: $marker: ty) => {
+        level!($last[$size]: $marker);
+    };
+
+    // Recursive case
+    ($current:ty[$current_size:ty] => $next:ty[$next_size:ty] $(=> $rest:ty[$rest_size:ty])*: $marker: ty) => {
+        hierarchical_level!($current[$current_size] => $next[$next_size]: $marker);
+        impl_level!($next[$next_size] $(=> $rest[$rest_size])*: $marker);
+    };
+}
+
 pub struct RecurseP4Create;
 
 impl RecurseP4Create {
@@ -283,40 +312,40 @@ impl RecurseP4Create {
     /// # Safety
     ///
     /// the caller must ensure that the current active table is recursive mapped
-    pub unsafe fn create<T: TableLevel4>() -> Unique<Table<T>> {
+    pub unsafe fn create<T: RootLevel>() -> Unique<Table<T>> {
         unsafe { Unique::new_unchecked(0xffffffff_fffff000 as *mut _) }
     }
 }
 
 pub enum RecurseLevel4 {}
 
-impl TableLevel4 for RecurseLevel4 {
+impl RootLevel for RecurseLevel4 {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
+hierarchical_level!(RecurseLevel4[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
 
 pub enum RecurseLevel4LowerHalf {}
 
-impl TableLevel4 for RecurseLevel4LowerHalf {
+impl RootLevel for RecurseLevel4LowerHalf {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4LowerHalf[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<0, 256>);
+hierarchical_level!(RecurseLevel4LowerHalf[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<0, 256>);
 
 pub enum RecurseLevel4UpperHalf {}
 
-impl TableLevel4 for RecurseLevel4UpperHalf {
+impl RootLevel for RecurseLevel4UpperHalf {
     type CreateMarker = RecurseP4Create;
 }
 
-hierarchical_level!(RecurseLevel4UpperHalf[()] => RecurseLevel3[Size1G], RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
+hierarchical_level!(RecurseLevel4UpperHalf[()] => RecurseLevel3[Size1G]: RecurseHierarchicalLevelMarker<256, { ENTRY_COUNT - 1 }>);
 
 pub enum RecurseLevel3 {}
 pub enum RecurseLevel2 {}
 pub enum RecurseLevel1 {}
 
-impl_level_recurse!(RecurseLevel3[Size1G] => RecurseLevel2[Size2M] => RecurseLevel1[Size4K]);
+impl_level!(RecurseLevel3[Size1G] => RecurseLevel2[Size2M] => RecurseLevel1[Size4K]: RecurseHierarchicalLevelMarker<0, ENTRY_COUNT>);
 
 pub struct DirectHierarchicalLevelMarker<const START: u64, const END: u64>;
 
@@ -343,19 +372,19 @@ impl DirectP4Create {
     /// # Safety
     ///
     /// the caller must ensure that the table pointer is valid and mapped
-    pub unsafe fn create<T: TableLevel4>(p4: *mut Table<T>) -> Unique<Table<T>> {
+    pub unsafe fn create<T: RootLevel>(p4: *mut Table<T>) -> Unique<Table<T>> {
         unsafe { Unique::new_unchecked(p4) }
     }
 }
 
 pub enum DirectLevel4 {}
 
-impl TableLevel4 for DirectLevel4 {
-    type CreateMarker = DirectP4Create;
+impl RootLevel for DirectLevel4 {
+    type CreateMarker = DirectLevel4;
 }
 
 pub enum DirectLevel3 {}
 pub enum DirectLevel2 {}
 pub enum DirectLevel1 {}
 
-impl_level_direct!(DirectLevel4[()] => DirectLevel3[Size1G] => DirectLevel2[Size2M] => DirectLevel1[Size4K]);
+impl_level!(DirectLevel4[()] => DirectLevel3[Size1G] => DirectLevel2[Size2M] => DirectLevel1[Size4K]: DirectHierarchicalLevelMarker<0, ENTRY_COUNT>);

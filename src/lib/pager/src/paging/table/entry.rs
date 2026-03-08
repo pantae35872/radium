@@ -38,24 +38,21 @@ impl<L: TableLevel> Entry<L> {
         EntryFlags::from_bits_truncate(self.value)
     }
 
-    pub fn pointed_frame(&self) -> Option<Frame<L::FrameSize>>
+    pub fn pointed_frame(&self) -> Option<Frame<L::PageSize>>
     where
-        L::FrameSize: PageSize,
+        L::PageSize: PageSize,
     {
-        if !self.value.is_multiple_of(L::FrameSize::SIZE) {
+        if !self.value.is_multiple_of(L::PageSize::SIZE) {
             return None;
         }
         if !self.flags().contains(EntryFlags::PRESENT) {
             return None;
         }
-        if !(matches!(L::FrameSize::LEVEL, PageLevel::Page1G | PageLevel::Page2M)
-            && self.flags().contains(EntryFlags::HUGE_PAGE))
-        {
-            return None;
-        }
-        if !(matches!(L::FrameSize::LEVEL, PageLevel::Page4K) && !self.flags().intersects(EntryFlags::HUGE_PAGE)) {
-            return None;
-        }
+
+        match (L::PageSize::LEVEL, self.flags().contains(EntryFlags::HUGE_PAGE)) {
+            (PageLevel::Page4K, true) | (PageLevel::Page2M | PageLevel::Page1G, false) => return None,
+            (PageLevel::Page1G | PageLevel::Page2M, true) | (PageLevel::Page4K, false) => {}
+        };
 
         // SAFETY: We already mask the 52-63 (inclusive) bits
         Some(Frame::containing_address(unsafe { PhysAddr::new_unchecked(self.value & 0x000fffff_fffff000) }))

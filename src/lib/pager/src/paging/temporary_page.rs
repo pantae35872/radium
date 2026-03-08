@@ -1,26 +1,26 @@
 use crate::address::{Frame, Page, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
-use crate::paging::mapper::TopLevelP4;
+use crate::paging::table::RootLevel;
 use crate::{EntryFlags, PAGE_SIZE, virt_addr_alloc};
 
 use super::ActivePageTable;
-use super::table::{RecurseLevel1, Table};
+use super::table::Table;
 
 /// A page that can be map and unmap, once at a time
-pub struct TemporaryPage {
+pub struct TemporaryTable {
     mapped: bool,
-    page: Page,
+    page: Page<Size4K>,
 }
 
-impl Default for TemporaryPage {
+impl Default for TemporaryTable {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl TemporaryPage {
+impl TemporaryTable {
     pub fn new() -> Self {
-        TemporaryPage { mapped: false, page: virt_addr_alloc(1) }
+        TemporaryTable { mapped: false, page: virt_addr_alloc(1) }
     }
 
     /// Map the temporary page
@@ -31,14 +31,14 @@ impl TemporaryPage {
     ///
     /// # Panics
     /// Panics if the page is already mapped
-    pub unsafe fn map<P4>(
+    pub unsafe fn map<Root>(
         &mut self,
-        frame: Frame,
-        active_table: &mut ActivePageTable<P4>,
+        frame: Frame<Size4K>,
+        active_table: &mut ActivePageTable<Root>,
         allocator: &mut impl FrameAllocator,
     ) -> VirtAddr
     where
-        P4: TopLevelP4,
+        Root: RootLevel,
     {
         assert!(active_table.translate_page(self.page).is_none() || self.mapped, "temporary page is already mapped");
 
@@ -56,9 +56,9 @@ impl TemporaryPage {
     ///
     /// # Safety
     /// the caller must ensure that any reference to the mapped page no longer exists
-    pub unsafe fn unmap<P4>(&mut self, active_table: &mut ActivePageTable<P4>)
+    pub unsafe fn unmap<Root>(&mut self, active_table: &mut ActivePageTable<Root>)
     where
-        P4: TopLevelP4,
+        Root: RootLevel,
     {
         assert!(self.mapped, "Trying to unmap a temporary page that is not map");
         // SAFETY: function above use map_to and we have assertion above, so the first contact is uphold,
@@ -67,25 +67,25 @@ impl TemporaryPage {
         self.mapped = false;
     }
 
-    /// Map table and take a reference as a Table<RecurseLevel1>
+    /// Map table and take a reference as a Table<Access>
     ///
     /// # Safety
     /// The caller must ensure that the provided frame is valid and does not causes any side
     /// effects
-    pub unsafe fn map_table_frame<'a, 'b, P4, P4Access>(
+    pub unsafe fn map_table_frame<'a, 'b, Root, Access>(
         &'a mut self,
         frame: Frame<Size4K>,
-        active_table: &'b mut ActivePageTable<P4>,
+        active_table: &'b mut ActivePageTable<Root>,
         allocator: &'b mut impl FrameAllocator,
-    ) -> &'a mut Table<P4Access>
+    ) -> &'a mut Table<Access>
     where
-        P4: TopLevelP4,
-        P4Access: TopLevelP4,
+        Root: RootLevel,
+        Access: RootLevel,
     {
-        const _: () = assert!(size_of::<Table<RecurseLevel1>>() == PAGE_SIZE as usize);
+        debug_assert!(size_of::<Table<Access>>() == PAGE_SIZE as usize);
         // SAFETY: The contact is uphold by the caller, and taking a reference of a frame as a
         // table is safe because the PAGE_SIZE (which is a size of a frame) is equal to size of
-        // Table<RecurseLevel1>, gurentee by const assert above
-        unsafe { &mut *(self.map(frame, active_table, allocator).as_mut_ptr::<Table<P4Access>>()) }
+        // Table<Access>, gurentee by assert above
+        unsafe { &mut *(self.map(frame, active_table, allocator).as_mut_ptr::<Table<Access>>()) }
     }
 }

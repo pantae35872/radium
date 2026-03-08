@@ -10,9 +10,9 @@ use pager::{
     allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
-        mapper::{Mapper, MapperWithAllocator, TopLevelP4, TopLevelRecurse},
+        mapper::{Mapper, MapperWithAllocator, RootLevelRecurse, TopLevelP4},
         table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
-        temporary_page::TemporaryPage,
+        temporary_page::TemporaryTable,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
     virt_addr_alloc,
@@ -42,7 +42,7 @@ def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RecurseLevel4L
 
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
-def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryPage>>);
+def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryTable>>);
 
 pub fn stack_allocator<R>(
     f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
@@ -69,10 +69,10 @@ pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> Ina
 ///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
-pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
+pub unsafe fn copy_mappings<P4: RootLevelRecurse>(
     options: InactivePageCopyOption,
-    copy_from: &InactivePageTable<From>,
-) -> InactivePageTable<To> {
+    copy_from: &InactivePageTable<P4>,
+) -> InactivePageTable<P4> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
@@ -220,7 +220,7 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
             },
             false,
         ),
-        TemporaryPage::new(),
+        TemporaryTable::new(),
     ));
 
     unsafe {

@@ -7,7 +7,7 @@ use pager::{
         ActivePageTable, InactivePageCopyOption, TableManipulationContext,
         mapper::{self},
         table::RecurseLevel4,
-        temporary_page::TemporaryPage,
+        temporary_page::TemporaryTable,
     },
 };
 
@@ -22,7 +22,7 @@ where
 {
     let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
 
-    let mut temporary_page = TemporaryPage::new();
+    let mut temporary_page = TemporaryTable::new();
     let mut context =
         TableManipulationContext { temporary_page: &mut temporary_page, allocator, temporary_page_mapper: None };
 

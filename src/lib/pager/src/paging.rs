@@ -1,38 +1,34 @@
+use crate::EntryFlags;
 use crate::address::{Frame, Size4K};
 use crate::allocator::FrameAllocator;
-use crate::paging::mapper::{TopLevelP4, TopLevelRecurse};
+use crate::paging::table::entry::Entry;
 use crate::paging::table::{
-    DirectP4Create, RecurseLevel1, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RecurseP4Create,
-    TableSwitch,
+    DirectP4Create, RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RecurseP4Create, RootLevel,
+    RootLevelRecurse, TableSwitch,
 };
 use crate::registers::{Cr3, Cr3Flags};
-use crate::{EntryFlags, PAGE_SIZE};
 
-pub use self::entry::*;
 use self::mapper::Mapper;
 use self::table::Table;
-use bit_field::BitField;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut, Range};
 use core::ptr::Unique;
-use sentinel::log;
-use table::{AnyLevel, TableLevel4};
+use table::AnyTable;
 
-mod entry;
 pub mod mapper;
 pub mod table;
 pub mod temporary_page;
 
 const ENTRY_COUNT: u64 = 512;
 
-pub struct ActivePageTable<P4: TableLevel4> {
+pub struct ActivePageTable<P4: RootLevel> {
     p4: Unique<Table<P4>>,
     mapper: Mapper<P4>,
 }
 
 impl<P4> ActivePageTable<P4>
 where
-    P4: TableLevel4<CreateMarker = RecurseP4Create>,
+    P4: RootLevel<CreateMarker = RecurseP4Create>,
 {
     /// Create a mapper from the currently active recursive mapped page table
     ///
@@ -50,7 +46,7 @@ where
 
 impl<P4> ActivePageTable<P4>
 where
-    P4: TableLevel4<CreateMarker = DirectP4Create>,
+    P4: RootLevel<CreateMarker = DirectP4Create>,
 {
     /// Create a page table from the provided page table address
     ///
@@ -66,7 +62,7 @@ where
 
 impl<P4> Deref for ActivePageTable<P4>
 where
-    P4: TableLevel4,
+    P4: RootLevel,
 {
     type Target = Mapper<P4>;
 
@@ -77,7 +73,7 @@ where
 
 impl<P4> DerefMut for ActivePageTable<P4>
 where
-    P4: TableLevel4,
+    P4: RootLevel,
 {
     fn deref_mut(&mut self) -> &mut Mapper<P4> {
         &mut self.mapper
@@ -86,7 +82,7 @@ where
 
 pub struct TableManipulationContext<'a, A: FrameAllocator> {
     pub temporary_page_mapper: Option<&'a mut ActivePageTable<RecurseLevel4UpperHalf>>,
-    pub temporary_page: &'a mut temporary_page::TemporaryPage,
+    pub temporary_page: &'a mut temporary_page::TemporaryTable,
     pub allocator: &'a mut A,
 }
 
@@ -95,7 +91,7 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
     ///
     /// # Safety
     /// [`temporary_page::TemporaryPage::map_table_frame`] Safety section
-    pub unsafe fn map_temporary_page<'b, P4: TopLevelP4, MapP4: TopLevelP4>(
+    pub unsafe fn map_temporary_page<'b, P4: RootLevel, MapP4: RootLevel>(
         &'b mut self,
         frame: Frame<Size4K>,
         active_table: &mut ActivePageTable<P4>,
@@ -115,7 +111,7 @@ impl<'a, A: FrameAllocator> TableManipulationContext<'a, A> {
     ///
     /// # Safety
     /// [`temporary_page::TemporaryPage::unmap`] Safety section
-    pub unsafe fn unmap_temporary_page<P4: TopLevelP4>(&mut self, active_table: &mut ActivePageTable<P4>) {
+    pub unsafe fn unmap_temporary_page<P4: RootLevel>(&mut self, active_table: &mut ActivePageTable<P4>) {
         unsafe {
             match self.temporary_page_mapper.as_mut() {
                 Some(mapper) => self.temporary_page.unmap(mapper),
@@ -160,7 +156,7 @@ impl ActivePageTable<RecurseLevel4UpperHalf> {
     }
 }
 
-impl<P4: TopLevelP4> ActivePageTable<P4> {
+impl<P4: RootLevel> ActivePageTable<P4> {
     fn p4_mut(&mut self) -> &mut Table<P4> {
         // SAFETY: Taking a reference to the page table is valid and safe, in this module
         unsafe { self.p4.as_mut() }
@@ -179,14 +175,14 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     ///
     /// The caller mustn't mutate the [InactivePageTable] in the provided mapper function, to
     /// violate the mutable exclusivity of the entries, See [InactivePageTable] Safety docs
-    pub unsafe fn with<F, A: FrameAllocator, R, RecurseP4: TopLevelRecurse>(
+    pub unsafe fn with<F, A: FrameAllocator, R>(
         &mut self,
-        table: &mut InactivePageTable<RecurseP4>,
+        table: &mut InactivePageTable<P4>,
         context: &mut TableManipulationContext<A>,
         f: F,
     ) -> R
     where
-        F: FnOnce(&mut Mapper<RecurseP4>, &mut A) -> R,
+        F: FnOnce(&mut Mapper<P4>, &mut A) -> R,
     {
         let (level_4_table_frame, _) = Cr3::read();
         let backup = level_4_table_frame;
@@ -195,7 +191,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
         {
             // SAFETY: We know that the frame is valid because we're reading it from the cr3
             // which if it's is indeed invalid, this code shouldn't be even executing
-            let (p4_table, allocator) = unsafe { context.map_temporary_page(backup, self) };
+            let (p4_table, allocator) = unsafe { context.map_temporary_page::<P4, P4>(backup, self) };
 
             self.p4_mut()[511].set(table.p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
             Cr3::reload();
@@ -206,8 +202,8 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
                 // new page table of that type just for the mapper, the safety contract is uphold
                 // because we're not mutating the entry of the active page table directly,
                 // the exclusivity of the inactive page table entries is uphold by the caller
-                let custom_table = unsafe { &mut ActivePageTable::<RecurseP4>::new() };
-                result = f(custom_table, allocator);
+                //let custom_table = unsafe { &mut ActivePageTable::<P4>::new() };
+                result = f(self, allocator);
             }
 
             p4_table[511].set(backup, EntryFlags::PRESENT | EntryFlags::WRITABLE);
@@ -258,7 +254,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 
     pub fn log_all(&self)
     where
-        Table<P4>: AnyLevel,
+        Table<P4>: AnyTable,
     {
         //log!(Debug, "Current mappings: ");
         //log_dyn_recursive(self.p4(), 4, 0);
@@ -310,20 +306,19 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     /// # Safety
     /// See [InactivePageTable::new], basically the caller must ensure mutable exclusivity of the
     /// entries themself
-    pub unsafe fn copy_mappings_from<A, ToRecurseP4, FromRecurseP4>(
+    pub unsafe fn copy_mappings_from<A, CopyP4>(
         &mut self,
         context: &mut TableManipulationContext<A>,
         options: InactivePageCopyOption,
-        copy_from: &InactivePageTable<FromRecurseP4>,
-    ) -> InactivePageTable<ToRecurseP4>
+        copy_from: &InactivePageTable<CopyP4>,
+    ) -> InactivePageTable<CopyP4>
     where
+        CopyP4: RootLevelRecurse,
         A: FrameAllocator,
-        ToRecurseP4: TopLevelRecurse,
-        FromRecurseP4: TopLevelRecurse,
     {
         let copy_from = copy_from.table(self, context, |_, table| table.entries);
         // SAFETY: The contract is uphold by the caller
-        unsafe { InactivePageTable::<ToRecurseP4>::new(self, context, options, Some(&copy_from)) }
+        unsafe { InactivePageTable::new(self, context, options, Some(&copy_from)) }
     }
 
     /// Create a new mapping, f can be used to map the mapping while the map is being created,
@@ -333,18 +328,19 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
     /// # Safety
     /// See [InactivePageTable::new], basically the caller must ensure mutable exclusivity of the
     /// entries themself
-    pub unsafe fn create_mappings<F, A, RecurseP4: TopLevelRecurse>(
+    pub unsafe fn create_mappings<F, A>(
         &mut self,
         f: F,
         context: &mut TableManipulationContext<A>,
         options: InactivePageCopyOption,
-    ) -> InactivePageTable<RecurseP4>
+    ) -> InactivePageTable<P4>
     where
-        F: FnOnce(&mut Mapper<RecurseP4>, &mut A),
+        F: FnOnce(&mut Mapper<P4>, &mut A),
         A: FrameAllocator,
     {
+        let entries = self.p4().entries;
         // SAFETY: The contract is uphold by the caller
-        let mut new_table = unsafe { InactivePageTable::<RecurseP4>::new(self, context, options, None) };
+        let mut new_table = unsafe { InactivePageTable::new(self, context, options, Some(&entries)) };
 
         // SAFETY: The contract is uphold by the caller
         unsafe {
@@ -371,7 +367,7 @@ impl<P4: TopLevelP4> ActivePageTable<P4> {
 /// without a proper lock in place, there will be a multiple mutable reference
 /// to the same p3 entries of the [`ActivePageTable`].
 // FIXME: There will be a minor memory leak if this is dropped.
-pub struct InactivePageTable<P4: TopLevelP4> {
+pub struct InactivePageTable<P4: RootLevel> {
     p4_frame: Frame<Size4K>,
     _p4: PhantomData<P4>,
 }
@@ -398,7 +394,7 @@ impl InactivePageCopyOption {
     }
 }
 
-impl<P4: TopLevelP4> InactivePageTable<P4> {
+impl<P4: RootLevel> InactivePageTable<P4> {
     /// Create a new InactivePage, with a recursive mapping,
     /// specify the copy behavior with the [`InactivePageCreateOption`], but that must be done with
     /// caution (Read the Safety section), provide the copy_from Option if you want to copy from
@@ -411,11 +407,11 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
     /// the new inactive page table while it's active.
     ///
     /// See [`InactivePageTable`] Safety section to see why there might be an exclusivity violation.
-    pub unsafe fn new<A: FrameAllocator, ActiveP4: TopLevelP4>(
+    pub unsafe fn new<A: FrameAllocator, ActiveP4: RootLevel>(
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
         options: InactivePageCopyOption,
-        copy_from: Option<&[Entry<ActiveP4>; ENTRY_COUNT as usize]>,
+        copy_from: Option<&[Entry<P4>; ENTRY_COUNT as usize]>,
     ) -> Self {
         let frame = context.allocator.allocate_frame().expect("no more frames");
         {
@@ -423,15 +419,14 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
             let (table, ..) = unsafe { context.map_temporary_page(frame, active_table) };
             table.zero();
 
-            let copy_from = copy_from.unwrap_or_else(|| &active_table.p4().entries);
-            match options {
-                InactivePageCopyOption::All => {
+            match (options, copy_from) {
+                (InactivePageCopyOption::All, Some(copy_from)) => {
                     table[0..512].copy_from_slice(&copy_from[0..512]);
                 }
-                InactivePageCopyOption::Range(range) => {
+                (InactivePageCopyOption::Range(range), Some(copy_from)) => {
                     table[range.clone()].copy_from_slice(&copy_from[range]);
                 }
-                InactivePageCopyOption::Empty => {}
+                _ => {}
             }
 
             table[511].set(frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
@@ -443,7 +438,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
     }
 
     /// Reference the currently owned p4 table
-    pub fn table<A: FrameAllocator, ActiveP4: TopLevelP4, R>(
+    pub fn table<A: FrameAllocator, ActiveP4: RootLevel, R>(
         &self,
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,
@@ -467,7 +462,7 @@ impl<P4: TopLevelP4> InactivePageTable<P4> {
     /// The caller mustn't mutate the 512th element of the table as it's is the recursive mapping.
     /// Also the caller must still maintains the exclusivity contract, See [`InactivePageTable`]
     /// safety docs
-    pub unsafe fn table_mut<A: FrameAllocator, ActiveP4: TopLevelP4, R>(
+    pub unsafe fn table_mut<A: FrameAllocator, ActiveP4: RootLevel, R>(
         &mut self,
         active_table: &mut ActivePageTable<ActiveP4>,
         context: &mut TableManipulationContext<A>,

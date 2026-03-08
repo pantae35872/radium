@@ -1,27 +1,26 @@
-use sentinel::log;
-
-use crate::address::{Frame, FrameIter, Page, PageSize, PhysAddr, VirtAddr};
+use crate::address::{AnyFrame, AnyPage, Frame, Page, PageSize, PhysAddr, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
-use crate::paging::table::{DirectP4Create, RecurseHierarchicalLevelMarker, RecurseP4Create};
+use crate::paging::table::entry::Entry;
+use crate::paging::table::{DirectP4Create, RecurseP4Create, RootLevel, TableLevel};
 use crate::registers::tlb;
-use crate::{IdentityMappable, IdentityReplaceable, MapperWithVirtualAllocator, PAGE_SIZE, PageLevel};
+use crate::{PageLevel, any_frame_select, any_page_select};
 
-use super::table::{HierarchicalLevel, NextTableAddress, Table, TableLevel, TableLevel4};
-use super::{ENTRY_COUNT, EntryFlags};
+use super::EntryFlags;
+use super::table::Table;
 use core::ptr::Unique;
 
-pub struct Mapper<P4: TableLevel4> {
+pub struct Mapper<P4: RootLevel> {
     p4: Unique<Table<P4>>,
 }
 
-pub struct MapperWithAllocator<'a, P4: TopLevelP4, A: FrameAllocator> {
+pub struct MapperWithAllocator<'a, P4: RootLevel, A: FrameAllocator> {
     pub mapper: &'a mut Mapper<P4>,
     pub allocator: &'a mut A,
 }
 
 impl<P4> Mapper<P4>
 where
-    P4: TableLevel4<CreateMarker = RecurseP4Create>,
+    P4: RootLevel<CreateMarker = RecurseP4Create>,
 {
     /// Create a mapper from the currently active recursive mapped page table
     ///
@@ -38,7 +37,7 @@ where
 
 impl<P4> Mapper<P4>
 where
-    P4: TableLevel4<CreateMarker = DirectP4Create>,
+    P4: RootLevel<CreateMarker = DirectP4Create>,
 {
     /// Create a mapper from the provided page table address
     ///
@@ -54,48 +53,9 @@ where
     }
 }
 
-pub trait TopLevelP4:
-    HierarchicalLevel<
-        NextLevel: HierarchicalLevel<NextLevel: HierarchicalLevel<Marker: NextTableAddress>, Marker: NextTableAddress>,
-        Marker: NextTableAddress,
-    > + TableLevel4<Marker: NextTableAddress>
-{
-}
-
-// Zero-cost ahhh abstraction
-impl<T: HierarchicalLevel + TableLevel4> TopLevelP4 for T
-where
-    T::Marker: NextTableAddress,
-    T::NextLevel: HierarchicalLevel,
-    <<Self as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-    <<Self as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel: HierarchicalLevel,
-    <<<Self as HierarchicalLevel>::NextLevel as HierarchicalLevel>::NextLevel as TableLevel>::Marker: NextTableAddress,
-{
-}
-
-pub trait TopLevelRecurse: TopLevelP4
-where
-    Self: TableLevel4<CreateMarker = RecurseP4Create>,
-{
-    fn start() -> u64;
-    fn end() -> u64;
-}
-
-impl<T: TopLevelP4, const START: u64, const END: u64> TopLevelRecurse for T
-where
-    T: TableLevel4<CreateMarker = RecurseP4Create, Marker = RecurseHierarchicalLevelMarker<START, END>>,
-{
-    fn start() -> u64 {
-        START
-    }
-    fn end() -> u64 {
-        END
-    }
-}
-
 impl<P4> Mapper<P4>
 where
-    P4: TopLevelP4,
+    P4: RootLevel,
 {
     pub fn p4(&self) -> &Table<P4> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
@@ -127,49 +87,37 @@ where
     ///
     /// If the virtual address is not mapped, will return none
     pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
-        let offset = virtual_address.as_u64() % PAGE_SIZE;
-        self.translate_page(Page::containing_address(virtual_address))
-            .map(|frame| PhysAddr::new(frame.start_address().as_u64() + offset))
+        self.translate_page(Page::<Size4K>::containing_address(virtual_address)).map(|frame| {
+            PhysAddr::new(frame.start_address().as_u64() + (virtual_address.as_u64() & (frame.size() - 1)))
+        })
     }
 
     /// Translate the provided page into the mapped frame
     ///
     /// If the page is not mapped, will return none
-    pub fn translate_page(&self, page: Page) -> Option<Frame> {
-        let p3 = self.p4().next_table(page.p4_index());
+    pub fn translate_page<S: PageSize>(&self, page: Page<S>) -> Option<AnyFrame> {
+        let p3 = self.p4().next_table(page.p4_index())?;
 
-        let huge_page = || {
-            p3.and_then(|p3| {
-                let p3_entry = &p3[page.p3_index() as usize];
-                if let Some(start_frame) = p3_entry.pointed_frame()
-                    && p3_entry.flags().contains(EntryFlags::HUGE_PAGE)
-                {
-                    assert!(
-                        start_frame.number().is_multiple_of(ENTRY_COUNT * ENTRY_COUNT),
-                        "1GiB huge page address must be 1GiB aligned"
-                    );
-                    return Some(start_frame.add_by_page(page.p2_index() * ENTRY_COUNT).add_by_page(page.p1_index()));
-                }
-                if let Some(p2) = p3.next_table(page.p3_index()) {
-                    let p2_entry = &p2[page.p2_index() as usize];
-                    if let Some(start_frame) = p2_entry.pointed_frame()
-                        && p2_entry.flags().contains(EntryFlags::HUGE_PAGE)
-                    {
-                        assert!(
-                            start_frame.number().is_multiple_of(ENTRY_COUNT),
-                            "2MiB huge page address must be 2MiB aligned"
-                        );
-                        return Some(start_frame.add_by_page(page.p1_index()));
-                    }
-                }
-                None
-            })
+        fn get<L: TableLevel>(entry: &Entry<L>) -> Option<AnyFrame>
+        where
+            AnyFrame: From<Frame<L::PageSize>>,
+        {
+            if !entry.flags().contains(EntryFlags::PRESENT) {
+                return None;
+            }
+
+            return Some(entry.pointed_frame().expect("Invalid Entry!").erase());
+        }
+
+        let Some(p2) = p3.next_table(page.p3_index()) else {
+            return get(&p3[page.p3_index() as usize]);
         };
 
-        p3.and_then(|p3| p3.next_table(page.p3_index()))
-            .and_then(|p2| p2.next_table(page.p2_index()))
-            .and_then(|p1| p1[page.p1_index() as usize].pointed_frame())
-            .or_else(huge_page)
+        let Some(p1) = p2.next_table(page.p2_index()) else {
+            return get(&p2[page.p2_index() as usize]);
+        };
+
+        return get(&p1[page.p1_index() as usize]);
     }
 
     /// Change the flags of the frame
@@ -179,30 +127,76 @@ where
     ///
     /// # Panics
     /// Panics if the page isn't mapped,
-    pub unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags) {
-        assert!(self.translate(page.start_address()).is_some(), "trying to change the flags of an unmapped page");
+    pub unsafe fn change_flags<S: PageSize>(&mut self, page: Page<S>, map: impl FnOnce(EntryFlags) -> EntryFlags) {
+        assert!(self.translate_page(page).is_some(), "trying to change the flags of an unmapped page");
 
-        let p1 = self
-            .p4_mut()
-            .next_table_mut(page.p4_index())
-            .and_then(|p3| p3.next_table_mut(page.p3_index()))
-            .and_then(|p2| p2.next_table_mut(page.p2_index()))
-            .expect("mapping code does not support huge pages");
+        let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("P4 can't be huge page");
 
-        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
-        let current_flags = p1[page.p1_index() as usize].flags();
-        p1[page.p1_index() as usize].set(frame, map(current_flags) | EntryFlags::PRESENT);
+        fn change<L: TableLevel, S: PageSize>(
+            entry: &mut Entry<L>,
+            page: Page<S>,
+            map: impl FnOnce(EntryFlags) -> EntryFlags,
+        ) {
+            let frame = entry.pointed_frame().unwrap();
+            entry.set(frame, map(entry.flags()) | EntryFlags::PRESENT);
+            tlb::flush(page.start_address());
+        }
 
-        tlb::flush(page.start_address());
+        let Some(p2) = p3.next_table_mut(page.p3_index()) else {
+            assert_eq!(S::LEVEL, PageLevel::Page1G, "trying to change flags of 1GiB page with {:?} page", S::LEVEL);
+
+            change(&mut p3[page.p3_index() as usize], page, map);
+
+            return;
+        };
+        let Some(p1) = p2.next_table_mut(page.p2_index()) else {
+            assert_eq!(S::LEVEL, PageLevel::Page2M, "trying to change flags of 2MiB page with {:?} page", S::LEVEL);
+
+            change(&mut p2[page.p2_index() as usize], page, map);
+
+            return;
+        };
+
+        assert_eq!(S::LEVEL, PageLevel::Page4K, "trying to change flags of 4KiB page with {:?} page", S::LEVEL);
+
+        change(&mut p1[page.p1_index() as usize], page, map);
     }
 
     /// Just a range helper See [Self::change_flags] for more info
     ///
     /// # Safety
     /// See [Self::change_flags]
-    unsafe fn change_flags_ranges(&mut self, start_page: Page, end_page: Page, map: impl Fn(EntryFlags) -> EntryFlags) {
-        assert!(start_page <= end_page);
+    pub unsafe fn change_flags_ranges<S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        map: impl Fn(EntryFlags) -> EntryFlags,
+    ) {
         Page::range_inclusive(start_page, end_page).for_each(|page| unsafe { self.change_flags(page, &map) });
+    }
+
+    /// Allocate a frame and map the page to the allocated frame
+    ///
+    /// # Panics
+    /// panics if the page is already mapped
+    pub fn map<A: FrameAllocator, S: PageSize>(&mut self, page: Page<S>, flags: EntryFlags, allocator: &mut A) {
+        let frame = allocator.allocate_frame().expect("out of memory");
+        // SAFETY: This is safe because we know that the frame is valid from the allocator
+        unsafe { self.map_to(page, frame, flags, allocator) }
+    }
+
+    /// Just a range helper, See [`Self::map`] for more info
+    ///
+    /// # Note
+    /// The range is inclusive
+    pub fn map_range<A: FrameAllocator, S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) {
+        Page::range_inclusive(start_page, end_page).for_each(|page| self.map(page, flags, allocator));
     }
 
     /// Map the page to the frame (Virt -> Phys)
@@ -212,9 +206,7 @@ where
     /// The caller must ensure that the provided frame does not causes any unsafe side effects
     ///
     /// # Panics
-    ///
-    /// The caller must ensure that the frame will not overwrite any other pages otherwise panic
-    /// if the frame has been map with OVERWRITEABLE flags this will not panic
+    /// If the page is already mapped
     pub unsafe fn map_to<A, S>(&mut self, page: Page<S>, frame: Frame<S>, flags: EntryFlags, allocator: &mut A)
     where
         A: FrameAllocator,
@@ -241,59 +233,27 @@ where
         }
     }
 
-    /// Allocate a frame and map the page to the allocated frame
-    ///
-    /// # Panics
-    /// panics if the page is already mapped and not marked OVERWRITEABLE
-    pub fn map<A>(&mut self, page: Page, flags: EntryFlags, allocator: &mut A)
-    where
-        A: FrameAllocator,
-    {
-        let frame = allocator.allocate_frame().expect("out of memory");
-        // SAFETY: This is safe because we know that the frame is valid from the allocator
-        unsafe { self.map_to(page, frame, flags, allocator) }
-    }
-
-    /// Just a range helper, See [`Self::map`] for more info
-    ///
-    /// # Note
-    /// The range is inclusive
-    pub fn map_range<A>(&mut self, start_page: Page, end_page: Page, flags: EntryFlags, allocator: &mut A)
-    where
-        A: FrameAllocator,
-    {
-        assert!(start_page <= end_page);
-        Page::range_inclusive(start_page, end_page).for_each(|page| self.map(page, flags, allocator));
-    }
-
     /// Map the virtual address (start_page) -> virtual address (end_page)
     /// to a start physical address (start_frame) -> end physical address (end_frame)
     ///
     /// # Safety
     /// See [`Self::map_to`]
     ///
-    /// # Assertions
-    /// start_page -> end_page must be contigous
-    /// start_frame -> end_frame must be contigous
-    /// length between (start_page -> end_page).length = (start_frame -> end_frame).length must be
-    /// equal
-    ///
     /// # Panics
     ///
-    /// panics if the range is already mapped and not marked OVERWRITEABLE
-    pub unsafe fn map_to_range<A>(
+    /// panics if the range or part of the range is already mapped, or the frame and page ranges
+    /// are not the same size
+    pub unsafe fn map_to_range<A, S: PageSize>(
         &mut self,
-        start_page: Page,
-        end_page: Page,
-        start_frame: Frame,
-        end_frame: Frame,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        start_frame: Frame<S>,
+        end_frame: Frame<S>,
         flags: EntryFlags,
         allocator: &mut A,
     ) where
         A: FrameAllocator,
     {
-        assert!(start_page <= end_page);
-        assert!(start_frame <= end_frame);
         // Check if the ranges have the same size
         assert_eq!(
             end_page.start_address().as_u64() - start_page.start_address().as_u64(),
@@ -305,15 +265,15 @@ where
             .for_each(|(page, frame)| unsafe { self.map_to(page, frame, flags, allocator) });
     }
 
-    /// Identity map the frame provided
+    /// Identity map the provided frame
     ///
     /// # Safety
     /// The caller must ensure that the provided frame when map does not cause any unsafe side
     /// effects
     ///
     /// # Panics
-    /// panics if the page is already mapped and not marked OVERWRITEABLE
-    pub unsafe fn identity_map<A>(&mut self, frame: Frame, flags: EntryFlags, allocator: &mut A)
+    /// panics if the equivalent page is already mapped
+    pub unsafe fn identity_map<A, S: PageSize>(&mut self, frame: Frame<S>, flags: EntryFlags, allocator: &mut A)
     where
         A: FrameAllocator,
     {
@@ -321,22 +281,15 @@ where
         unsafe { self.map_to(page, frame, flags, allocator) }
     }
 
-    pub fn identity_map_object<O: IdentityMappable, A: FrameAllocator>(&mut self, obj: &O, allocator: &mut A) {
-        let mut mapper = self.mapper_with_allocator(allocator);
-        obj.map(&mut mapper);
-    }
-
-    pub fn virtually_replace<O: IdentityReplaceable, A: FrameAllocator>(&mut self, obj: &mut O, allocator: &mut A) {
-        let mut mapper = self.mapper_with_allocator(allocator);
-        let mut mapper = MapperWithVirtualAllocator::new(&mut mapper);
-        obj.identity_replace(&mut mapper)
-    }
-
-    pub fn mapper_with_allocator<'a, A: FrameAllocator>(
-        &'a mut self,
-        allocator: &'a mut A,
-    ) -> MapperWithAllocator<'a, P4, A> {
-        MapperWithAllocator { mapper: self, allocator }
+    /// Identity map an [AnyFrame], See [Self::identity_map] for more info
+    ///
+    /// # Safety
+    /// See [Self::identity_map]
+    pub unsafe fn identity_map_any<A, S: PageSize>(&mut self, frame: AnyFrame, flags: EntryFlags, allocator: &mut A)
+    where
+        A: FrameAllocator,
+    {
+        any_frame_select!(frame, (frame) => unsafe { self.identity_map(frame, flags, allocator) });
     }
 
     /// Identity map the inclusive ranges
@@ -346,11 +299,11 @@ where
     /// effects
     ///
     /// # Panics
-    /// panics if the range is already mapped and not marked OVERWRITEABLE
-    pub unsafe fn identity_map_range<A>(
+    /// panics if the range is already mapped
+    pub unsafe fn identity_map_range<A, S: PageSize>(
         &mut self,
-        start_frame: Frame,
-        end_frame: Frame,
+        start_frame: Frame<S>,
+        end_frame: Frame<S>,
         flags: EntryFlags,
         allocator: &mut A,
     ) where
@@ -364,45 +317,76 @@ where
     /// Unmap address ranges from the page table
     ///
     /// # Safety
-    ///
     /// See [`Self::unmap_addr`]
-    pub unsafe fn unmap_addr_ranges(&mut self, start_page: Page, end_page: Page) -> FrameIter {
-        assert!(start_page <= end_page);
-        let mut iter = Page::range_inclusive(start_page, end_page).map(|page| unsafe { self.unmap_addr(page) });
-        let start = iter.next().expect("");
-        Frame::range_inclusive(start, iter.last().unwrap_or(start))
+    pub unsafe fn unmap_addr_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
+        Page::range_inclusive(start_page, end_page).for_each(|page| unsafe {
+            self.unmap_addr(page);
+        })
+    }
+
+    /// Unmap the page from the page table and return the pointed frame
+    ///
+    /// # Safety
+    /// and the caller must ensure that reference or allocation referencing this page no longer
+    /// exists
+    ///
+    /// # Panics
+    /// This panics if the page weren't map or the page size doesn't match with the mapped page
+    pub unsafe fn unmap_addr<S: PageSize>(&mut self, page: Page<S>) -> AnyFrame {
+        assert!(self.translate_page(page).is_some(), "Trying to unmap a page that weren't mapped");
+
+        let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("P4 can't be huge page");
+
+        let Some(p2) = p3.next_table_mut(page.p3_index()) else {
+            assert_eq!(S::LEVEL, PageLevel::Page1G, "trying to unmap 1GiB page with {:?} page", S::LEVEL);
+
+            let entry = &mut p3[page.p3_index() as usize];
+            let frame = entry.pointed_frame().expect("Invalid P3 entry state").erase();
+
+            entry.set_unused();
+
+            return frame;
+        };
+        let Some(p1) = p2.next_table_mut(page.p2_index()) else {
+            assert_eq!(S::LEVEL, PageLevel::Page2M, "trying to unmap 2MiB page with {:?} page", S::LEVEL);
+
+            let entry = &mut p2[page.p2_index() as usize];
+            let frame = entry.pointed_frame().expect("Invalid P2 entry state").erase();
+
+            entry.set_unused();
+            tlb::flush(page.start_address());
+
+            return frame;
+        };
+
+        assert_eq!(S::LEVEL, PageLevel::Page4K, "trying to unmap 4KiB page with {:?} page", S::LEVEL);
+
+        let entry = &mut p1[page.p1_index() as usize];
+        let frame = entry.pointed_frame().expect("Invalid P1 entry state").erase();
+
+        entry.set_unused();
+        tlb::flush(page.start_address());
+
+        frame
+    }
+
+    /// Unmap an [AnyPage], See [Self::unmap_addr] for more info
+    ///
+    /// # Safety
+    /// See [Self::unmap_addr]
+    pub unsafe fn unmap_addr_any<S: PageSize>(&mut self, page: AnyPage) -> AnyFrame {
+        any_page_select!(page, (page) => unsafe { self.unmap_addr(page) })
     }
 
     /// Unmap the ranges from the page table
     ///
     /// # Safety
     /// See [`Self::unmap`]
-    pub unsafe fn unmap_ranges<A>(&mut self, start_page: Page, end_page: Page, allocator: &mut A)
+    pub unsafe fn unmap_ranges<A, S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>, allocator: &mut A)
     where
         A: FrameAllocator,
     {
         Page::range_inclusive(start_page, end_page).for_each(|page| unsafe { self.unmap(page, allocator) });
-    }
-
-    /// Unmap the page from the page table and return the pointed frame
-    ///
-    /// # Safety
-    ///
-    /// and the caller must ensure that reference or allocation referencing this page no longer
-    /// exists
-    pub unsafe fn unmap_addr(&mut self, page: Page) -> Frame {
-        assert!(self.translate(page.start_address()).is_some());
-
-        let p1 = self
-            .p4_mut()
-            .next_table_mut(page.p4_index())
-            .and_then(|p3| p3.next_table_mut(page.p3_index()))
-            .and_then(|p2| p2.next_table_mut(page.p2_index()))
-            .expect("mapping code does not support huge pages");
-        let frame = p1[page.p1_index() as usize].pointed_frame().unwrap();
-        p1[page.p1_index() as usize].set_unused();
-        tlb::flush(page.start_address());
-        frame
     }
 
     /// Unmap the page and deallocate it using the provided allocator
@@ -411,64 +395,11 @@ where
     ///
     /// The caller must ensure that the page provide was mapped by [`Self::map`],
     /// and unmapping it doesn't causes any unsafe side effects
-    pub unsafe fn unmap<A>(&mut self, page: Page, allocator: &mut A)
+    pub unsafe fn unmap<A, S: PageSize>(&mut self, page: Page<S>, allocator: &mut A)
     where
         A: FrameAllocator,
     {
         // SAFETY: Whever the frame is valid or not is handled by the user of this function
-        allocator.deallocate_frame(unsafe { self.unmap_addr(page) });
-    }
-}
-
-impl<'a, P4: TopLevelP4, A: FrameAllocator> crate::Mapper for MapperWithAllocator<'a, P4, A> {
-    unsafe fn identity_map_range(&mut self, start_frame: Frame, end_frame: Frame, entry_flags: EntryFlags) {
-        unsafe { self.mapper.identity_map_range(start_frame, end_frame, entry_flags, self.allocator) };
-    }
-
-    unsafe fn change_flags(&mut self, page: Page, map: impl FnOnce(EntryFlags) -> EntryFlags) {
-        unsafe { self.mapper.change_flags(page, map) }
-    }
-
-    unsafe fn change_flags_ranges(&mut self, start_page: Page, end_page: Page, map: impl Fn(EntryFlags) -> EntryFlags) {
-        unsafe { self.mapper.change_flags_ranges(start_page, end_page, map) }
-    }
-
-    fn map_range(&mut self, start_page: Page, end_page: Page, flags: EntryFlags) {
-        self.mapper.map_range(start_page, end_page, flags, self.allocator);
-    }
-
-    unsafe fn identity_map(&mut self, frame: Frame, flags: EntryFlags) {
-        unsafe {
-            self.mapper.identity_map(frame, flags, self.allocator);
-        }
-    }
-
-    unsafe fn unmap_addr(&mut self, page: Page) -> Frame {
-        unsafe { self.mapper.unmap_addr(page) }
-    }
-
-    unsafe fn unmap_addr_by_size(&mut self, page: Page, size: usize) {
-        unsafe { self.mapper.unmap_addr_ranges(page, (page.start_address() + size - 1).into()) };
-    }
-
-    unsafe fn map_to_range(
-        &mut self,
-        start_page: Page,
-        end_page: Page,
-        start_frame: Frame,
-        end_frame: Frame,
-        flags: EntryFlags,
-    ) {
-        unsafe {
-            self.mapper.map_to_range(start_page, end_page, start_frame, end_frame, flags, self.allocator);
-        }
-    }
-
-    fn translate_page(&mut self, page: Page) -> Option<Frame> {
-        self.mapper.translate_page(page)
-    }
-
-    fn translate(&mut self, addr: VirtAddr) -> Option<PhysAddr> {
-        self.mapper.translate(addr)
+        allocator.deallocate_frame_any(unsafe { self.unmap_addr(page) });
     }
 }
