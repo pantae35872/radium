@@ -1,6 +1,6 @@
 use core::marker::PhantomData;
 use core::ops::{Index, IndexMut, Range};
-use core::ptr::Unique;
+use core::ptr::NonNull;
 
 use crate::address::{PageSize, Size1G, Size2M, Size4K};
 use crate::allocator::FrameAllocator;
@@ -312,8 +312,8 @@ impl RecurseP4Create {
     /// # Safety
     ///
     /// the caller must ensure that the current active table is recursive mapped
-    pub unsafe fn create<T: RootLevel>() -> Unique<Table<T>> {
-        unsafe { Unique::new_unchecked(0xffffffff_fffff000 as *mut _) }
+    pub unsafe fn create<T: RootLevel>() -> NonNull<Table<T>> {
+        unsafe { NonNull::new_unchecked(0xffffffff_fffff000 as *mut _) }
     }
 }
 
@@ -372,8 +372,8 @@ impl DirectP4Create {
     /// # Safety
     ///
     /// the caller must ensure that the table pointer is valid and mapped
-    pub unsafe fn create<T: RootLevel>(p4: *mut Table<T>) -> Unique<Table<T>> {
-        unsafe { Unique::new_unchecked(p4) }
+    pub unsafe fn create<T: RootLevel>(p4: *mut Table<T>) -> NonNull<Table<T>> {
+        unsafe { NonNull::new_unchecked(p4) }
     }
 }
 

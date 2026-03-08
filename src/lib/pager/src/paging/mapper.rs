@@ -7,10 +7,10 @@ use crate::{PageLevel, any_frame_select, any_page_select};
 
 use super::EntryFlags;
 use super::table::Table;
-use core::ptr::Unique;
+use core::ptr::NonNull;
 
 pub struct Mapper<P4: RootLevel> {
-    p4: Unique<Table<P4>>,
+    p4: NonNull<Table<P4>>,
 }
 
 pub struct MapperWithAllocator<'a, P4: RootLevel, A: FrameAllocator> {
@@ -106,7 +106,7 @@ where
                 return None;
             }
 
-            return Some(entry.pointed_frame().expect("Invalid Entry!").erase());
+            Some(entry.pointed_frame().expect("Invalid Entry!").erase())
         }
 
         let Some(p2) = p3.next_table(page.p3_index()) else {
@@ -117,7 +117,7 @@ where
             return get(&p2[page.p2_index() as usize]);
         };
 
-        return get(&p1[page.p1_index() as usize]);
+        get(&p1[page.p1_index() as usize])
     }
 
     /// Change the flags of the frame
@@ -337,37 +337,32 @@ where
 
         let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("P4 can't be huge page");
 
-        let Some(p2) = p3.next_table_mut(page.p3_index()) else {
-            assert_eq!(S::LEVEL, PageLevel::Page1G, "trying to unmap 1GiB page with {:?} page", S::LEVEL);
+        fn unmap<L: TableLevel, S: PageSize>(entry: &mut Entry<L>, page: Page<S>) -> AnyFrame
+        where
+            AnyFrame: From<Frame<L::PageSize>>,
+        {
+            assert_eq!(
+                L::PageSize::LEVEL,
+                S::LEVEL,
+                "trying to unmap {:?} page with {:?} page",
+                L::PageSize::LEVEL,
+                S::LEVEL
+            );
 
-            let entry = &mut p3[page.p3_index() as usize];
-            let frame = entry.pointed_frame().expect("Invalid P3 entry state").erase();
-
-            entry.set_unused();
-
-            return frame;
-        };
-        let Some(p1) = p2.next_table_mut(page.p2_index()) else {
-            assert_eq!(S::LEVEL, PageLevel::Page2M, "trying to unmap 2MiB page with {:?} page", S::LEVEL);
-
-            let entry = &mut p2[page.p2_index() as usize];
-            let frame = entry.pointed_frame().expect("Invalid P2 entry state").erase();
-
+            let frame = entry.pointed_frame().expect("Invalid entry state").erase();
             entry.set_unused();
             tlb::flush(page.start_address());
+            frame
+        }
 
-            return frame;
+        let Some(p2) = p3.next_table_mut(page.p3_index()) else {
+            return unmap(&mut p3[page.p3_index() as usize], page);
+        };
+        let Some(p1) = p2.next_table_mut(page.p2_index()) else {
+            return unmap(&mut p2[page.p2_index() as usize], page);
         };
 
-        assert_eq!(S::LEVEL, PageLevel::Page4K, "trying to unmap 4KiB page with {:?} page", S::LEVEL);
-
-        let entry = &mut p1[page.p1_index() as usize];
-        let frame = entry.pointed_frame().expect("Invalid P1 entry state").erase();
-
-        entry.set_unused();
-        tlb::flush(page.start_address());
-
-        frame
+        unmap(&mut p1[page.p1_index() as usize], page)
     }
 
     /// Unmap an [AnyPage], See [Self::unmap_addr] for more info

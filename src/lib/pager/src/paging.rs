@@ -12,7 +12,7 @@ use self::mapper::Mapper;
 use self::table::Table;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut, Range};
-use core::ptr::Unique;
+use core::ptr::NonNull;
 use table::AnyTable;
 
 pub mod mapper;
@@ -22,7 +22,7 @@ pub mod temporary_page;
 const ENTRY_COUNT: u64 = 512;
 
 pub struct ActivePageTable<P4: RootLevel> {
-    p4: Unique<Table<P4>>,
+    p4: NonNull<Table<P4>>,
     mapper: Mapper<P4>,
 }
 
