@@ -41,6 +41,14 @@ impl<S: PageSize> Frame<S> {
         PhysAddr::new(self.number * S::SIZE)
     }
 
+    /// Create a iterator of frame start..start+size-1
+    pub fn range(start: Frame<S>, size_in_frames: u64) -> FrameIter<S> {
+        if size_in_frames == 0 {
+            return FrameIter::empty();
+        }
+        FrameIter { start, end: Frame { number: start.number + size_in_frames - 1, _marker: PhantomData } }
+    }
+
     /// Create a iterator of frame start-end (inclusive)
     pub const fn range_inclusive(start: Frame<S>, end: Frame<S>) -> FrameIter<S> {
         FrameIter { start, end }
@@ -144,6 +152,12 @@ pub struct FrameIter<S: PageSize> {
     end: Frame<S>,
 }
 
+impl<S: PageSize> FrameIter<S> {
+    pub fn empty() -> Self {
+        Self { start: Frame { number: 1, _marker: PhantomData }, end: Frame { number: 0, _marker: PhantomData } }
+    }
+}
+
 impl<S: PageSize> Iterator for FrameIter<S> {
     type Item = Frame<S>;
 
@@ -188,6 +202,15 @@ impl<S: PageSize> Page<S> {
     /// Create a cafebabe page
     pub const fn cafebabe() -> Self {
         Self { number: 0xcafebabe, _marker: PhantomData }
+    }
+
+    /// Create a iterator of page start-start+size (inclusive)
+    pub fn range(start: Page<S>, size_in_pages: u64) -> PageIter<S> {
+        if size_in_pages == 0 {
+            return PageIter::empty();
+        }
+
+        PageIter { start, end: Page { number: start.number + size_in_pages - 1, _marker: PhantomData } }
     }
 
     /// Create a iterator of page start-end (inclusive)
@@ -239,6 +262,13 @@ impl<S: PageSize> Page<S> {
 
     pub const fn size(&self) -> u64 {
         S::SIZE
+    }
+
+    pub fn erase(self) -> AnyPage
+    where
+        AnyPage: From<Page<S>>,
+    {
+        self.into()
     }
 }
 
@@ -353,6 +383,12 @@ pub struct PageIter<S: PageSize> {
     end: Page<S>,
 }
 
+impl<S: PageSize> PageIter<S> {
+    pub fn empty() -> Self {
+        Self { start: Page { number: 1, _marker: PhantomData }, end: Page { number: 0, _marker: PhantomData } }
+    }
+}
+
 impl<S: PageSize> Iterator for PageIter<S> {
     type Item = Page<S>;
 
@@ -452,14 +488,6 @@ impl VirtAddr {
     #[inline(always)]
     pub const fn max() -> Self {
         unsafe { Self::new_unchecked(0xffff_ffff_ffff_ffff) }
-    }
-
-    pub fn align_to(&self, phys: PhysAddr) -> Self {
-        let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
-        // add it on to the virtual base
-        let raw = self.as_u64().checked_add(misalignment).expect("VirtAddr overflow in align_to");
-        // we know that (self + misalignment) stays canonical if self was
-        unsafe { VirtAddr::new_unchecked(raw) }
     }
 
     /// Create a new virtual address from u64

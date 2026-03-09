@@ -12,7 +12,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::{DataBuffer, IdentityMappable, IdentityReplaceable};
+use pager::DataBuffer;
 
 const MAGIC: u32 = u32::from_le_bytes(*b"BAKE");
 
@@ -145,17 +145,5 @@ impl<'a> DwarfBaker<'a> {
         }
 
         None
-    }
-}
-
-unsafe impl IdentityMappable for DwarfBaker<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.data.map(mapper);
-    }
-}
-
-unsafe impl IdentityReplaceable for DwarfBaker<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.data.identity_replace(mapper);
     }
 }

@@ -80,6 +80,7 @@ impl<Root: RootLevel> Mapper<Root> {
     /// If the virtual address is not mapped, will return none
     pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
         self.translate_page(Page::<Size4K>::containing_address(virtual_address)).map(|frame| {
+            debug_assert!(frame.size().is_power_of_two());
             PhysAddr::new(frame.start_address().as_u64() + (virtual_address.as_u64() & (frame.size() - 1)))
         })
     }
@@ -199,11 +200,12 @@ impl<Root: RootLevel> Mapper<Root> {
     ///
     /// # Panics
     /// If the page is already mapped
-    pub unsafe fn map_to<A, S>(&mut self, page: Page<S>, frame: Frame<S>, flags: EntryFlags, allocator: &mut A)
+    pub unsafe fn map_to<A, S>(&mut self, page: Page<S>, frame: Frame<S>, mut flags: EntryFlags, allocator: &mut A)
     where
         A: FrameAllocator,
         S: PageSize,
     {
+        flags.remove(EntryFlags::HUGE_PAGE);
         let p4 = self.p4_mut();
         let p3 = p4.next_table_create(page.p4_index(), allocator).expect("P4 huge page is unsupported");
         match S::LEVEL {
@@ -222,6 +224,23 @@ impl<Root: RootLevel> Mapper<Root> {
                 assert!(p1[page.p1_index() as usize].is_unused());
                 p1[page.p1_index() as usize].set(frame, flags | EntryFlags::PRESENT);
             }
+        }
+    }
+
+    /// any variant of the [Self::map_to] function, panics if [AnyPage] and [AnyFrame] have
+    /// different sizes
+    ///
+    /// # Safety
+    /// See [Self::map_to]
+    pub unsafe fn map_to_any<A>(&mut self, page: AnyPage, frame: AnyFrame, flags: EntryFlags, allocator: &mut A)
+    where
+        A: FrameAllocator,
+    {
+        match (page, frame) {
+            (AnyPage::Page4K(page), AnyFrame::Frame4K(frame)) => unsafe { self.map_to(page, frame, flags, allocator) },
+            (AnyPage::Page2M(page), AnyFrame::Frame2M(frame)) => unsafe { self.map_to(page, frame, flags, allocator) },
+            (AnyPage::Page1G(page), AnyFrame::Frame1G(frame)) => unsafe { self.map_to(page, frame, flags, allocator) },
+            _ => panic!("mismatched frame - page size"),
         }
     }
 

@@ -10,7 +10,7 @@ use bitflags::bitflags;
 use c_enum::c_enum;
 use packery::Packed;
 use pager::{
-    DataBuffer, EntryFlags, IdentityMappable, IdentityReplaceable,
+    DataBuffer, EntryFlags,
     address::{Frame, PhysAddr, VirtAddr},
     allocator::linear_allocator::LinearAllocator,
 };
@@ -42,11 +42,11 @@ impl RawData {
     }
 }
 
-unsafe impl IdentityMappable for RawData {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe { mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE) };
-    }
-}
+//unsafe impl IdentityMappable for RawData {
+//    fn map(&self, mapper: &mut impl pager::Mapper) {
+//        unsafe { mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE) };
+//    }
+//}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
@@ -191,18 +191,18 @@ pub struct BootBridgeBuilder {
     pub boot_bridge: *mut RawBootBridge,
 }
 
-unsafe impl IdentityMappable for BootBridgeBuilder {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        let boot_bridge = self.boot_bridge;
-        unsafe {
-            mapper.identity_map_by_size(
-                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            );
-        };
-    }
-}
+//unsafe impl IdentityMappable for BootBridgeBuilder {
+//    fn map(&self, mapper: &mut impl pager::Mapper) {
+//        let boot_bridge = self.boot_bridge;
+//        unsafe {
+//            mapper.identity_map_by_size(
+//                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
+//                size_of::<RawBootBridge>(),
+//                EntryFlags::WRITABLE,
+//            );
+//        };
+//    }
+//}
 
 impl BootBridgeBuilder {
     pub fn new(allocator: impl FnOnce(usize) -> *mut u8) -> Self {
@@ -355,44 +355,44 @@ impl BootBridge {
     }
 }
 
-unsafe impl IdentityReplaceable for BootBridge {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        let current = self.0.load(Ordering::SeqCst);
-        let new =
-            unsafe { mapper.map(PhysAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE) };
-        self.deref_mut().memory_map.identity_replace(mapper);
-        self.deref_mut().kernel_elf.identity_replace(mapper);
-        self.deref_mut().dwarf_data.identity_replace(mapper);
-        self.deref_mut().packed.identity_replace(mapper);
-        *self = Self::new(new.as_mut_ptr())
-    }
-}
-
-unsafe impl IdentityReplaceable for MemoryMap<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.memory_map.identity_replace(mapper);
-    }
-}
-
-unsafe impl IdentityMappable for BootBridge {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe {
-            mapper.identity_map_by_size(
-                PhysAddr::new(self.0.load(Ordering::SeqCst) as u64).into(),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            );
-        };
-        self.deref().memory_map.map(mapper);
-        self.deref().kernel_elf.map(mapper);
-    }
-}
-
-unsafe impl IdentityMappable for MemoryMap<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.memory_map.map(mapper);
-    }
-}
+//unsafe impl IdentityReplaceable for BootBridge {
+//    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+//        let current = self.0.load(Ordering::SeqCst);
+//        let new =
+//            unsafe { mapper.map(PhysAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE) };
+//        self.deref_mut().memory_map.identity_replace(mapper);
+//        self.deref_mut().kernel_elf.identity_replace(mapper);
+//        self.deref_mut().dwarf_data.identity_replace(mapper);
+//        self.deref_mut().packed.identity_replace(mapper);
+//        *self = Self::new(new.as_mut_ptr())
+//    }
+//}
+//
+//unsafe impl IdentityReplaceable for MemoryMap<'_> {
+//    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+//        self.memory_map.identity_replace(mapper);
+//    }
+//}
+//
+//unsafe impl IdentityMappable for BootBridge {
+//    fn map(&self, mapper: &mut impl pager::Mapper) {
+//        unsafe {
+//            mapper.identity_map_by_size(
+//                PhysAddr::new(self.0.load(Ordering::SeqCst) as u64).into(),
+//                size_of::<RawBootBridge>(),
+//                EntryFlags::WRITABLE,
+//            );
+//        };
+//        self.deref().memory_map.map(mapper);
+//        self.deref().kernel_elf.map(mapper);
+//    }
+//}
+//
+//unsafe impl IdentityMappable for MemoryMap<'_> {
+//    fn map(&self, mapper: &mut impl pager::Mapper) {
+//        self.memory_map.map(mapper);
+//    }
+//}
 
 impl<'a> MemoryMap<'a> {
     pub fn new(memory_map: &'static [u8], entry_size: usize, entry_version: usize) -> Self {

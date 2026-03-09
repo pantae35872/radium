@@ -1,6 +1,7 @@
 #![no_std]
 #![feature(pointer_is_aligned_to)]
 #![feature(ptr_internals)]
+#![feature(iter_advance_by)]
 #![allow(internal_features)]
 
 use core::{fmt::Display, ops::Deref, panic::Location};
@@ -79,8 +80,6 @@ bitflags! {
         const DIRTY =           1 << 6;
         const HUGE_PAGE =       1 << 7;
         const GLOBAL =          1 << 8;
-        const OVERWRITEABLE =   1 << 10; // Custom flags. This flags mean the mapped address can be
-                                         // overwrite when mapping
         const NO_EXECUTE =      1 << 63;
     }
 }

@@ -12,7 +12,7 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::{DataBuffer, IdentityMappable, IdentityReplaceable};
+use pager::DataBuffer;
 use thiserror::Error;
 
 const MAGIC: u32 = u32::from_le_bytes(*b"PACK");
@@ -199,17 +199,5 @@ impl<'a> Iterator for ProgramIter<'a> {
         let before_index = self.index;
         self.index += 1;
         self.packed.get_program(before_index).ok()
-    }
-}
-
-unsafe impl IdentityMappable for Packed<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.buffer.map(mapper);
-    }
-}
-
-unsafe impl IdentityReplaceable for Packed<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.buffer.identity_replace(mapper);
     }
 }

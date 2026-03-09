@@ -1,5 +1,4 @@
-use crate::EntryFlags;
-use crate::address::{Frame, Size4K};
+use crate::address::{AnyFrame, Frame, Page, PageSize, Size1G, Size2M, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::table::entry::Entry;
 use crate::paging::table::{
@@ -7,6 +6,7 @@ use crate::paging::table::{
     TableSwitch,
 };
 use crate::registers::{Cr3, Cr3Flags};
+use crate::{EntryFlags, virt_addr_alloc};
 
 use self::mapper::Mapper;
 use self::table::Table;
@@ -17,6 +17,102 @@ use core::ptr::NonNull;
 pub mod mapper;
 pub mod table;
 pub mod temporary_page;
+
+/// Any implementer of this trait gurentee to transfer it's fields to a new address space (new table)
+pub trait Transferable {
+    /// Transfer the fields of the [Transferable] implementer to a new address space using the [Transferor]
+    ///
+    /// The implementation may use the provided [Transferor] to get the new address for the fields
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+    );
+}
+
+pub struct Transferor<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> {
+    pub(crate) reference_mapping: &'a Mapper<RefRoot>,
+    pub(crate) target_mapping: &'b mut Mapper<TargetRoot>,
+    pub(crate) allocator: &'b mut A,
+}
+
+impl<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> Transferor<'a, 'b, RefRoot, TargetRoot, A> {
+    /// Transfer the original virtual address to the new address space returning the new address in
+    /// the process
+    ///
+    /// # Note
+    /// original can be unaligned
+    pub fn transfer(&mut self, original: VirtAddr, size: usize, flags: EntryFlags) -> Option<VirtAddr> {
+        if size == 0 {
+            return None;
+        }
+
+        let page_offset = (original.as_u64() & (Size4K::SIZE - 1)) as usize;
+        let size_in_pages = (page_offset + size).div_ceil(Size4K::SIZE as usize) as u64;
+
+        let src_start = Page::<Size4K>::from(original);
+        let target_start = virt_addr_alloc::<Size4K>(size_in_pages);
+
+        let mut new_mapping =
+            Page::<Size4K>::range(src_start, size_in_pages).zip(Page::range(target_start, size_in_pages));
+
+        while let Some((src_page, target_page)) = new_mapping.next() {
+            let frame = self.reference_mapping.translate_page(src_page)?;
+
+            match frame {
+                AnyFrame::Frame4K(frame) => {
+                    unsafe { self.target_mapping.map_to(target_page, frame, flags, self.allocator) };
+                }
+                // if it is aligned we map it with the huge pages meaning it is at the start of the
+                // huge page we map it directly
+                huge_frame
+                    if src_page.start_address().as_u64() & (huge_frame.size() - 1) == 0
+                        && target_page.start_address().as_u64() & (huge_frame.size() - 1) == 0 =>
+                {
+                    // -1 since this frame is already iterated
+                    match new_mapping.advance_by((huge_frame.size() / Size4K::SIZE) as usize - 1) {
+                        Ok(_) => {
+                            let page = match huge_frame {
+                                AnyFrame::Frame2M(..) => {
+                                    Page::<Size2M>::containing_address(target_page.start_address()).erase()
+                                }
+                                AnyFrame::Frame1G(..) => {
+                                    Page::<Size1G>::containing_address(target_page.start_address()).erase()
+                                }
+                                _ => unreachable!("This is matched above"),
+                            };
+                            unsafe { self.target_mapping.map_to_any(page, huge_frame, flags, self.allocator) };
+                        }
+                        Err(overrun) => {
+                            let start_frame = Frame::<Size4K>::containing_address(huge_frame.start_address());
+                            let size = huge_frame.size() / Size4K::SIZE - overrun.get() as u64;
+                            for (frame, page) in Frame::range(start_frame, size).zip(Page::range(target_page, size)) {
+                                unsafe { self.target_mapping.map_to(page, frame, flags, self.allocator) };
+                            }
+                        }
+                    };
+                }
+                // if it is not aligned we have to offset the mapping by the misalignment
+                huge_frame => {
+                    let misalignment = src_page.start_address().as_u64() & (huge_frame.size() - 1);
+                    let pages_per_huge = huge_frame.size() / Size4K::SIZE;
+                    let offset_in_huge = misalignment / Size4K::SIZE;
+                    let remaining_in_huge = pages_per_huge - offset_in_huge;
+                    let overrun = match new_mapping.advance_by((remaining_in_huge - 1) as usize) {
+                        Ok(_) => 0,
+                        Err(over) => over.into(),
+                    } as u64;
+                    let start_frame = Frame::<Size4K>::containing_address(huge_frame.start_address() + misalignment);
+                    let size = remaining_in_huge - overrun;
+                    for (frame, page) in Frame::range(start_frame, size).zip(Page::range(target_page, size)) {
+                        unsafe { self.target_mapping.map_to(page, frame, flags, self.allocator) };
+                    }
+                }
+            }
+        }
+
+        Some(target_start.start_address() + page_offset)
+    }
+}
 
 const ENTRY_COUNT: u64 = 512;
 
