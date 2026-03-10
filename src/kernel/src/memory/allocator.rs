@@ -7,7 +7,7 @@ use crate::{
 };
 use alloc::alloc::*;
 use pager::{
-    EntryFlags, Mapper, PAGE_SIZE,
+    EntryFlags, PAGE_SIZE,
     address::{Page, VirtAddr},
 };
 

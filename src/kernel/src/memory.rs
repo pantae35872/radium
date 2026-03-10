@@ -6,12 +6,14 @@ use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Frame, Page, PageSize, PhysAddr, Size4K, VirtAddr},
-    allocator::FrameAllocator,
+    address::{Frame, Page, PhysAddr, Size4K, VirtAddr},
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::Mapper,
-        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevel},
+        table::{
+            RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevelRecurse, RootRecurseLowerHalf,
+            RootRecurseUpperHalf,
+        },
         temporary_page::TemporaryTable,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
@@ -45,11 +47,11 @@ def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
 def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryTable>>);
 
 pub fn stack_allocator<R>(
-    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
+    f: impl FnOnce(&mut Mapper<RecurseLevel4UpperHalf>, &mut BuddyAllocator, &mut StackAllocator) -> R,
 ) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
     let mut table = ACTIVE_TABLE_UPPER.lock();
-    f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
+    f(&mut *table, &mut BUDDY_ALLOCATOR.lock(), &mut stack_allocator)
 }
 
 pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> InactivePageTable<RecurseLevel4LowerHalf> {
@@ -126,14 +128,16 @@ pub unsafe fn mapper_lower_with<R>(
     }
 }
 
-pub fn mapper_lower<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R) -> R {
-    let table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
-    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+pub fn mapper_lower<R>(f: impl FnOnce(&mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator) -> R) -> R {
+    let mut table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(&mut table, &mut allocator)
 }
 
-pub fn mapper_upper<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4UpperHalf, BuddyAllocator>) -> R) -> R {
+pub fn mapper_upper<R>(f: impl FnOnce(&mut Mapper<RootRecurseUpperHalf>, &mut BuddyAllocator) -> R) -> R {
     let mut table = ACTIVE_TABLE_UPPER.lock();
-    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(&mut table, &mut allocator)
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
@@ -394,11 +398,6 @@ select_context! {
         }
     }
     (Stage1, Stage2, Stage3, Stage4) => {
-        pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>, RecurseLevel4> {
-            let ctx = self.context_mut();
-            ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
-        }
-
         /// Access the mapping of the InactivePageTable.
         ///
         /// # Safety
@@ -417,12 +416,6 @@ select_context! {
         pub fn buddy_allocator(&mut self) -> &mut BuddyAllocator<64> {
             let ctx = self.context_mut();
             &mut ctx.buddy_allocator
-        }
-
-        pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
-            let ctx = self.context_mut();
-            ctx.active_table
-                .mapper_with_allocator(&mut ctx.buddy_allocator)
         }
 
         pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page {

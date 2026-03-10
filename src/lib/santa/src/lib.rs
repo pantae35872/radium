@@ -399,7 +399,7 @@ impl Transferable for LoadedElf<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
-        replace: bool,
+        _replace: bool,
     ) {
         for section in self.elf.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
@@ -413,8 +413,6 @@ impl Transferable for LoadedElf<'_> {
             let flags = EntryFlags::from(section.flags());
             transferor.transfer_to(virt_start, virt_start, section.memsize() as usize, flags);
         }
-
-        self.elf.transfer(transferor, replace);
     }
 }
 

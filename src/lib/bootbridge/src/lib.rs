@@ -324,6 +324,10 @@ impl BootBridge {
         &self.deref().kernel_elf
     }
 
+    pub fn loaded_kernel(&mut self) -> &mut LoadedElf<'static> {
+        &mut self.deref_mut().loaded_kernel_elf
+    }
+
     pub fn packed_programs(&mut self) -> Packed<'static> {
         self.deref_mut().packed.take().unwrap()
     }

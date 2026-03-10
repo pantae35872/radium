@@ -461,6 +461,15 @@ impl InactivePageCopyOption {
 }
 
 impl<Root: RootLevel> InactivePageTable<Root> {
+    /// Create an inactive page table from raw p4 frame
+    ///
+    /// # Safety
+    /// the caller must ensure that p4_frame is valid as a page table themselfs, and is currently
+    /// inactive
+    pub unsafe fn from_raw(p4_frame: Frame<Size4K>) -> Self {
+        Self { p4_frame, _p4: PhantomData }
+    }
+
     /// Create a new InactivePage, with a recursive mapping,
     /// specify the copy behavior with the [`InactivePageCopyOption`], but that must be done with
     /// caution (Read the Safety section), use the [InactivePageTable::new_from] function if you want to copy from
