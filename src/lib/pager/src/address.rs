@@ -473,6 +473,11 @@ impl VirtAddr {
         }
     }
 
+    pub const fn is_page_align<S: PageSize>(&self) -> bool {
+        debug_assert!(S::SIZE.is_power_of_two());
+        self.0 & (S::SIZE - 1) == 0
+    }
+
     /// Offset the virtual address by the misalignment of the physical address to the page size
     pub const fn offset_by_page_misalignment<P: PageSize>(&self, addr: PhysAddr) -> Self {
         VirtAddr::new(self.as_u64() + (addr.as_u64() & (P::SIZE - 1)))

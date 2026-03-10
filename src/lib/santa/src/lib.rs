@@ -340,66 +340,6 @@ impl<'a> Elf<'a> {
         VirtAddr::new(self.reader.entry_point())
     }
 
-    ///// Load the elf file into the program ptr. without mapping with correct perrmission
-    /////
-    ///// # Safety
-    ///// The caller must ensure that the provided program_ptr is valid and marked as writeable and
-    ///// overwriteable, with a size of max_memory_needed
-    //pub unsafe fn load_data(&self, program_ptr: *mut u8) -> u64 {
-    //    for header in self.reader.program_header_iter() {
-    //        if header.segment_type() != ProgramType::Load {
-    //            continue;
-    //        }
-
-    //        let relative_offset = header.vaddr() - self.mem_min;
-
-    //        let dst = program_ptr as u64 + relative_offset.as_u64();
-    //        let src = self.reader.buffer().as_ptr() as u64 + header.offset();
-    //        let len = header.filesize();
-    //        let mem_sz = header.memsize();
-
-    //        unsafe {
-    //            core::ptr::write_bytes(dst as *mut u8, 0, mem_sz as usize);
-    //            core::ptr::copy(src as *const u8, dst as *mut u8, len as usize);
-    //        }
-    //    }
-    //    self.reader.entry_point()
-    //}
-
-    ///// Map the permission releative to the physical base, and virtual base
-    /////
-    ///// # Safety
-    ///// Physical memory must be loaded with the correct data and have a contagious physical address
-    //pub unsafe fn map_permission(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
-    //    for section in self.reader.program_header_iter() {
-    //        if section.segment_type() != ProgramType::Load {
-    //            continue;
-    //        }
-    //        assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
-    //        let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
-    //        let virt_start = virt_base + relative_offset;
-    //        let virt_end = virt_start + section.memsize() - 1;
-    //        let phys_start = phys_base + relative_offset;
-    //        let phys_end = phys_base + relative_offset + section.memsize() - 1;
-
-    //        log!(
-    //            Trace,
-    //            "Elf mapping [{virt_start:x}-{virt_end:x}] with {} to [{phys_start:x}-{phys_end:x}]",
-    //            EntryFlags::from(section.flags())
-    //        );
-    //        // SAFETY: We know this is safe because we're parsing the elf correctly
-    //        unsafe {
-    //            mapper.map_to_range(
-    //                Page::containing_address(virt_start),
-    //                Page::containing_address(virt_end),
-    //                Frame::containing_address(phys_start),
-    //                Frame::containing_address(phys_end),
-    //                EntryFlags::from(section.flags()),
-    //            )
-    //        };
-    //    }
-    //}
-
     pub fn max_alignment(&self) -> usize {
         self.max_alignment
     }

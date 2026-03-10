@@ -328,27 +328,36 @@ impl<Root: RootLevel> Mapper<Root> {
         A: FrameAllocator,
     {
         let mut current_addr: PhysAddr;
+        let mut target_addr: VirtAddr;
         let addr_start = start_frame.start_address();
         let addr_end = PhysAddr::new(start_frame.start_address().as_u64() + page_count as u64 * Size4K::SIZE);
 
         while {
             current_addr = addr_end - page_count * Size4K::SIZE as usize;
-            page_count >= Size1G::count_of::<Size4K>() as usize && current_addr.is_page_align::<Size1G>()
-        } {
+
             let offset = current_addr.as_u64() - addr_start.as_u64();
-            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
-            unsafe { self.map_to::<_, Size1G>(target_addr, current_addr.into(), flags, allocator) };
+            target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
+
+            page_count >= Size1G::count_of::<Size4K>() as usize
+                && current_addr.is_page_align::<Size1G>()
+                && target_addr.is_page_align::<Size1G>()
+        } {
+            unsafe { self.map_to::<_, Size1G>(target_addr.into(), current_addr.into(), flags, allocator) };
 
             page_count -= Size1G::count_of::<Size4K>() as usize;
         }
 
         while {
             current_addr = addr_end - page_count * Size4K::SIZE as usize;
-            page_count >= Size2M::count_of::<Size4K>() as usize && current_addr.is_page_align::<Size2M>()
-        } {
+
             let offset = current_addr.as_u64() - addr_start.as_u64();
-            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
-            unsafe { self.map_to::<_, Size2M>(target_addr, current_addr.into(), flags, allocator) };
+            target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
+
+            page_count >= Size2M::count_of::<Size4K>() as usize
+                && current_addr.is_page_align::<Size2M>()
+                && target_addr.is_page_align::<Size2M>()
+        } {
+            unsafe { self.map_to::<_, Size2M>(target_addr.into(), current_addr.into(), flags, allocator) };
 
             page_count -= Size2M::count_of::<Size4K>() as usize;
         }

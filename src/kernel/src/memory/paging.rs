@@ -50,8 +50,6 @@ where
         }
 
         mapper.transfer(&mut ctx.context_mut().boot_bridge);
-        //ctx.context_mut().boot_bridge.transfer(transferor);
-        mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
     };
 
     // SAFETY: The safety section of the create_mappings doesn't apply when the used variant of
