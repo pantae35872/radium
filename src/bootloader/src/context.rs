@@ -119,14 +119,14 @@ macro_rules! select_context {
     )*};
 }
 
-use bootbridge::{BootBridgeBuilder, GraphicsInfo, MemoryMap, RawBootBridge, RawData};
+use bootbridge::{GraphicsInfo, RawData};
 use packery::Packed;
 use pager::{
-    address::PhysAddr,
+    address::{PhysAddr, VirtAddr},
     allocator::linear_allocator::LinearAllocator,
     paging::{
-        ActivePageTable,
-        table::{DirectLevel4, Table},
+        mapper::Mapper,
+        table::{RootDirect, Table},
     },
 };
 use santa::Elf;
@@ -141,20 +141,17 @@ create_initialization_chain! {
         rsdp: PhysAddr,
         kernel_file: &'static [u8],
     } => Stage2 {
-        entry_point: u64,
-        kernel_base: PhysAddr,
         elf: Elf<'static>,
     } => Stage3 {
-        table: u64,
-        allocator: LinearAllocator,
+        table: *mut Table<RootDirect>,
+        temporary_runtime_allocator: LinearAllocator,
+        entry: VirtAddr,
     } => Stage4 {
         frame_buffer: RawData,
         graphics_info: GraphicsInfo,
     } => Stage5 {
         entry_size: usize,
         runtime_service: u64,
-    } => Stage6 {
-        memory_map: MemoryMap<'static>,
     }
 }
 
@@ -184,52 +181,12 @@ pub struct InitializationContext<T: AnyInitializationStage> {
 }
 
 select_context!(
-    (Stage3, Stage4, Stage5, Stage6) => {
-        pub fn active_table(&self) -> ActivePageTable<DirectLevel4> {
-            unsafe { ActivePageTable::new_custom(self.context().table as *mut Table<DirectLevel4>) }
+    (Stage3, Stage4, Stage5) => {
+        pub fn mapper(&self) -> Mapper<RootDirect> {
+            unsafe { Mapper::new_custom(self.context().table) }
         }
     }
 );
-
-impl InitializationContext<Stage6> {
-    pub fn build_bridge(self, mut builder: BootBridgeBuilder) -> *mut RawBootBridge {
-        let mut table = self.active_table();
-
-        let Stage6 {
-            elf,
-            dwarf_data,
-            mut allocator,
-            packed,
-            memory_map,
-            font_data,
-            graphics_info,
-            kernel_base,
-            frame_buffer,
-            runtime_service,
-            rsdp,
-            ..
-        } = self.context;
-
-        table.identity_map_object(&elf, &mut allocator);
-        table.identity_map_object(&dwarf_data, &mut allocator);
-        table.identity_map_object(&builder, &mut allocator);
-
-        builder
-            .memory_map(memory_map)
-            .font_data(font_data)
-            .early_alloc(allocator)
-            .graphics_info(graphics_info)
-            .kernel_base(kernel_base)
-            .framebuffer_data(frame_buffer)
-            .runtime_service(runtime_service)
-            .rsdp(rsdp)
-            .dwarf_data(dwarf_data)
-            .packed(packed)
-            .kernel_elf(elf);
-
-        builder.build()
-    }
-}
 
 impl<T: AnyInitializationStage> InitializationContext<T> {
     pub fn start(

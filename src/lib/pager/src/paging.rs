@@ -26,6 +26,7 @@ pub trait Transferable {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     );
 }
 
@@ -36,9 +37,10 @@ where
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
         if let Some(t) = self.as_mut() {
-            t.transfer(transferor);
+            t.transfer(transferor, replace);
         }
     }
 }

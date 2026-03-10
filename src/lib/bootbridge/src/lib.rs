@@ -11,8 +11,8 @@ use c_enum::c_enum;
 use packery::Packed;
 use pager::{
     DataBuffer, EntryFlags,
-    address::{Frame, PhysAddr, VirtAddr},
-    allocator::{FrameAllocator, linear_allocator::LinearAllocator},
+    address::{PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
     paging::{Transferable, table::RootLevel},
 };
 use santa::Elf;
@@ -182,8 +182,6 @@ pub struct RawBootBridge {
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
     rsdp: PhysAddr,
-    kernel_base: PhysAddr,
-    early_alloc: LinearAllocator,
     runtime_service_ptr: PhysAddr,
 }
 
@@ -237,12 +235,6 @@ impl BootBridgeBuilder {
         self
     }
 
-    pub fn early_alloc(&mut self, early_alloc: LinearAllocator) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.early_alloc = early_alloc;
-        self
-    }
-
     pub fn font_data(&mut self, data: RawData) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.font_data = data;
@@ -264,12 +256,6 @@ impl BootBridgeBuilder {
     pub fn memory_map(&mut self, memory_map: MemoryMap<'static>) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.memory_map = memory_map;
-        self
-    }
-
-    pub fn kernel_base(&mut self, base: PhysAddr) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_base = base;
         self
     }
 
@@ -327,14 +313,6 @@ impl BootBridge {
         self.deref().font_data
     }
 
-    pub fn kernel_base(&self) -> PhysAddr {
-        self.deref().kernel_base
-    }
-
-    pub fn early_alloc(&self) -> &LinearAllocator {
-        &self.deref().early_alloc
-    }
-
     pub fn kernel_elf(&self) -> &Elf<'static> {
         &self.deref().kernel_elf
     }
@@ -351,8 +329,8 @@ impl BootBridge {
         self.deref().runtime_service_ptr
     }
 
-    pub fn ptr(&self) -> usize {
-        self.0.load(Ordering::SeqCst) as usize
+    pub fn ptr(&self) -> *mut RawBootBridge {
+        self.0.load(Ordering::SeqCst)
     }
 }
 
@@ -360,13 +338,14 @@ impl Transferable for BootBridge {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
         let current = self.0.load(Ordering::SeqCst);
 
-        self.deref_mut().memory_map.transfer(transferor);
-        self.deref_mut().kernel_elf.transfer(transferor);
-        self.deref_mut().dwarf_data.transfer(transferor);
-        self.deref_mut().packed.transfer(transferor);
+        self.deref_mut().memory_map.transfer(transferor, replace);
+        self.deref_mut().kernel_elf.transfer(transferor, replace);
+        self.deref_mut().dwarf_data.transfer(transferor, replace);
+        self.deref_mut().packed.transfer(transferor, replace);
 
         let new = transferor
             .transfer(VirtAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::PRESENT)
@@ -379,23 +358,11 @@ impl Transferable for MemoryMap<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
-        self.memory_map.transfer(transferor);
+        self.memory_map.transfer(transferor, replace);
     }
 }
-
-//unsafe impl IdentityReplaceable for BootBridge {
-//    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-//        let current = self.0.load(Ordering::SeqCst);
-//        let new =
-//            unsafe { mapper.map(PhysAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE) };
-//        self.deref_mut().memory_map.identity_replace(mapper);
-//        self.deref_mut().kernel_elf.identity_replace(mapper);
-//        self.deref_mut().dwarf_data.identity_replace(mapper);
-//        self.deref_mut().packed.identity_replace(mapper);
-//        *self = Self::new(new.as_mut_ptr())
-//    }
-//}
 
 impl<'a> MemoryMap<'a> {
     pub fn new(memory_map: &'static [u8], entry_size: usize, entry_version: usize) -> Self {

@@ -50,7 +50,7 @@ where
         }
 
         mapper.transfer(&mut ctx.context_mut().boot_bridge);
-        ctx.context_mut().boot_bridge.transfer(transferor);
+        //ctx.context_mut().boot_bridge.transfer(transferor);
         mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
     };
 

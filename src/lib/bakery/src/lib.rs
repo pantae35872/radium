@@ -156,7 +156,8 @@ impl Transferable for DwarfBaker<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
-        self.data.transfer(transferor);
+        self.data.transfer(transferor, replace);
     }
 }

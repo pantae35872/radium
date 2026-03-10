@@ -35,3 +35,10 @@ pub unsafe trait FrameAllocator {
         any_frame_select!(frame, (frame) => self.deallocate_frame(frame));
     }
 }
+
+/// This adds extra guarantee that the frame allocator will always allocate an identity mapped
+/// frame
+///
+/// # Safety
+/// the implementation of this trait must guarentee that the allocated frame is writeable (identity mapped) and valid
+pub unsafe trait IdentityAllocator: FrameAllocator {}

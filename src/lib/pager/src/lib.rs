@@ -114,8 +114,15 @@ impl Transferable for DataBuffer<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
-        transferor.transfer(VirtAddr::new(self.buffer.as_ptr() as u64), self.buffer.len(), EntryFlags::PRESENT);
+        let result = transferor
+            .transfer(VirtAddr::new(self.buffer.as_ptr() as u64), self.buffer.len(), EntryFlags::PRESENT)
+            .expect("data transfer failed");
+        let len = self.buffer.len();
+        if replace {
+            self.buffer = unsafe { core::slice::from_raw_parts(result.as_ptr(), len) };
+        }
     }
 }
 

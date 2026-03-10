@@ -145,8 +145,9 @@ impl Transferable for ElfReader<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
-        self.buffer.transfer(transferor);
+        self.buffer.transfer(transferor, replace);
     }
 }
 

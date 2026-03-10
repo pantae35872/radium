@@ -93,15 +93,13 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let stage4 = initialize_graphics_kernel(stage3);
 
     let entry_size = system_table.boot_services().memory_map_size().entry_size;
-    let (system_table, mut memory_map) = system_table.exit_boot_services(MemoryType::LOADER_DATA);
-    memory_map.sort();
+
+    let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_DATA);
     let stage5 = stage4.next((entry_size, system_table.as_ptr() as u64));
+    let entrypoint = stage5.context().entry.as_u64();
+    let table = stage5.context().table as u64;
 
-    let stage6 = finialize_mapping(stage5, memory_map);
-
-    let entrypoint = stage6.context().entry_point;
-    let table = stage6.context().table;
-    let boot_bridge = stage6.build_bridge(bootbridge_builder);
+    let boot_bridge = finialize_mapping(stage5, bootbridge_builder, memory_map);
 
     unsafe {
         Efer::NoExecuteEnable.write_retained();

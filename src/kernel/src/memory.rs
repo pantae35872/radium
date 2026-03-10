@@ -6,12 +6,12 @@ use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    address::{Frame, Page, PageSize, PhysAddr, Size4K, VirtAddr},
     allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
-        mapper::{Mapper, MapperWithAllocator, RootLevelRecurse, TopLevelP4},
-        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
+        mapper::Mapper,
+        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevel},
         temporary_page::TemporaryTable,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
@@ -292,18 +292,6 @@ unsafe fn enable_nxe_bit() {
     unsafe { Efer::NoExecuteEnable.write_retained() };
 }
 
-pub struct WithMapper<'a, T, A: FrameAllocator, P4: TopLevelP4> {
-    table: &'a mut Mapper<P4>,
-    with_table: &'a mut T,
-    allocator: &'a mut A,
-}
-
-impl<'a, T, A: FrameAllocator, P4: TopLevelP4> WithMapper<'a, T, A, P4> {
-    pub fn new(active_table: &'a mut ActivePageTable<P4>, with_table: &'a mut T, allocator: &'a mut A) -> Self {
-        Self { table: active_table, with_table, allocator }
-    }
-}
-
 pub struct MMIOBuffer {
     start: VirtAddr,
     size_in_pages: usize,
@@ -390,21 +378,16 @@ select_context! {
                 .or(T::acpi(self.context().acpi()))
                 .or(T::other())
                 .or(depends)?;
+
             let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
             let ctx = self.context_mut();
-            // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
             unsafe {
-                ctx.active_table.map_to_range(
-                    Page::containing_address(vaddr.start_address()),
-                    Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
-                    Frame::containing_address(info.addr()),
-                    Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
-                    EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
-                    &mut ctx.buddy_allocator,
-                )
+                // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
+                ctx.active_table.map_to_auto(vaddr, info.addr().into(), info.size_in_pages(),
+                    EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE, &mut ctx.buddy_allocator);
             };
             let buf = MMIOBuffer {
-                start: vaddr.start_address().align_to(info.addr()),
+                start: vaddr.start_address().offset_by_page_misalignment::<Size4K>(info.addr()),
                 size_in_pages: info.size_in_pages(),
             };
             Some(T::new(buf, args))

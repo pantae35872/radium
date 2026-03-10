@@ -473,6 +473,11 @@ impl VirtAddr {
         }
     }
 
+    /// Offset the virtual address by the misalignment of the physical address to the page size
+    pub const fn offset_by_page_misalignment<P: PageSize>(&self, addr: PhysAddr) -> Self {
+        VirtAddr::new(self.as_u64() + (addr.as_u64() & (P::SIZE - 1)))
+    }
+
     /// Check if the address is within the canonical upper half
     pub const fn is_canonical_higher_half(&self) -> bool {
         self.0 >= Self::canonical_higher_half().0
@@ -689,6 +694,10 @@ impl PhysAddr {
     #[inline(always)]
     pub const unsafe fn new_unchecked(address: u64) -> Self {
         Self(address)
+    }
+
+    pub const fn assume_identity(&self) -> VirtAddr {
+        VirtAddr::new(self.0)
     }
 
     /// Get the inner value as u64

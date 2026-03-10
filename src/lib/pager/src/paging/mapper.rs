@@ -25,7 +25,7 @@ where
     /// The caller must ensure that the current active page table is recursive mapped
     pub unsafe fn new() -> Mapper<Root> {
         Mapper {
-            // SAFETY: Whenver the current mappins is recursive or not is gurentee by the user
+            // SAFETY: Whenver the current mappins is recursive or not is guarantee by the user
             p4: unsafe { Root::CreateMarker::create() },
         }
     }
@@ -81,8 +81,9 @@ impl<Root: RootLevel> Mapper<Root> {
         reference_mapping: &Mapper<RefRoot>,
         transferable: &mut T,
         allocator: &mut A,
+        replace: bool,
     ) {
-        transferable.transfer(&mut super::Transferor { reference_mapping, target_mapping: self, allocator });
+        transferable.transfer(&mut super::Transferor { reference_mapping, target_mapping: self, allocator }, replace);
     }
 
     /// Translate the provided virtual address into the mapped physical address
@@ -413,13 +414,42 @@ impl<Root: RootLevel> Mapper<Root> {
             .for_each(|frame| unsafe { self.identity_map(frame, flags, allocator) });
     }
 
+    /// Identity map a range with the size from start frame, See [Self::identity_map] and [Self::map_to_auto] for more info
+    ///
+    /// # Safety
+    /// See [Self::identity_map] and [Self::map_to_auto]
+    pub unsafe fn identity_map_auto<A: FrameAllocator>(
+        &mut self,
+        frame: Frame<Size4K>,
+        page_count: usize,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) {
+        let page = Page::containing_address(VirtAddr::new(frame.start_address().as_u64()));
+        unsafe { self.map_to_auto(page, frame, page_count, flags, allocator) };
+    }
+
+    /// Identity map a range with the size from start frame, See [Self::identity_map] and [Self::map_to_auto] for more info
+    ///
+    /// # Safety
+    /// See [Self::identity_map] and [Self::map_to_auto]
+    pub unsafe fn identity_map_addr_auto<A: FrameAllocator>(
+        &mut self,
+        addr: PhysAddr,
+        size: usize,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) {
+        unsafe { self.identity_map_auto(addr.into(), size.div_ceil(Size4K::SIZE as usize), flags, allocator) };
+    }
+
     /// Unmap address ranges from the page table
     ///
     /// # Safety
     /// See [`Self::unmap_addr`]
-    pub unsafe fn unmap_addr_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
+    pub unsafe fn unmap_page_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
         Page::range_inclusive(start_page, end_page).for_each(|page| unsafe {
-            self.unmap_addr(page);
+            self.unmap_page(page);
         })
     }
 
@@ -431,7 +461,7 @@ impl<Root: RootLevel> Mapper<Root> {
     ///
     /// # Panics
     /// This panics if the page weren't map or the page size doesn't match with the mapped page
-    pub unsafe fn unmap_addr<S: PageSize>(&mut self, page: Page<S>) -> AnyFrame {
+    pub unsafe fn unmap_page<S: PageSize>(&mut self, page: Page<S>) -> AnyFrame {
         assert!(self.translate_page(page).is_some(), "Trying to unmap a page that weren't mapped");
 
         let p3 = self.p4_mut().next_table_mut(page.p4_index()).expect("P4 can't be huge page");
@@ -469,7 +499,7 @@ impl<Root: RootLevel> Mapper<Root> {
     /// # Safety
     /// See [Self::unmap_addr]
     pub unsafe fn unmap_addr_any<S: PageSize>(&mut self, page: AnyPage) -> AnyFrame {
-        any_page_select!(page, (page) => unsafe { self.unmap_addr(page) })
+        any_page_select!(page, (page) => unsafe { self.unmap_page(page) })
     }
 
     /// Unmap the ranges from the page table
@@ -494,6 +524,6 @@ impl<Root: RootLevel> Mapper<Root> {
         A: FrameAllocator,
     {
         // SAFETY: Whever the frame is valid or not is handled by the user of this function
-        allocator.deallocate_frame_any(unsafe { self.unmap_addr(page) });
+        allocator.deallocate_frame_any(unsafe { self.unmap_page(page) });
     }
 }

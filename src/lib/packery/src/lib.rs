@@ -210,7 +210,8 @@ impl Transferable for Packed<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
     ) {
-        self.buffer.transfer(transferor);
+        self.buffer.transfer(transferor, replace);
     }
 }

@@ -77,13 +77,13 @@ impl StackAllocator {
         active_table: &'a mut ActivePageTable<P4>,
         allocator: &'a mut A,
     ) -> WithMapper<'a, Self, A, P4> {
-        WithMapper { table: active_table, with_table: self, allocator }
+        WithMapper { mapper: active_table, with_table: self, allocator }
     }
 }
 
 impl<A: FrameAllocator, P4: TopLevelP4> WithMapper<'_, StackAllocator, A, P4> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<Stack> {
-        self.with_table.alloc_stack(self.table, self.allocator, size_in_pages)
+        self.with_table.alloc_stack(self.mapper, self.allocator, size_in_pages)
     }
 }
 

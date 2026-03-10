@@ -63,7 +63,7 @@ impl TemporaryTable {
         assert!(self.mapped, "Trying to unmap a temporary page that is not map");
         // SAFETY: function above use map_to and we have assertion above, so the first contact is uphold,
         // the second contact is uphold by the caller
-        unsafe { active_table.unmap_addr(self.page) };
+        unsafe { active_table.unmap_page(self.page) };
         self.mapped = false;
     }
 
