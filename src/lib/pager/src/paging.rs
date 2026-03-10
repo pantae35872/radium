@@ -116,9 +116,9 @@ impl<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> Trans
     pub fn transfer_to(
         &mut self,
         original: VirtAddr,
+        target_start: VirtAddr,
         size: usize,
         flags: EntryFlags,
-        target_start: VirtAddr,
     ) -> Option<VirtAddr> {
         if size == 0 {
             return None;

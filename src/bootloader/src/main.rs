@@ -96,7 +96,7 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let (system_table, memory_map) = system_table.exit_boot_services(MemoryType::LOADER_DATA);
     let stage5 = stage4.next((entry_size, system_table.as_ptr() as u64));
-    let entrypoint = stage5.context().entry.as_u64();
+    let entrypoint = stage5.context().loaded_kernel.entry().as_u64();
     let table = stage5.context().table as u64;
 
     let boot_bridge = finialize_mapping(stage5, bootbridge_builder, memory_map);

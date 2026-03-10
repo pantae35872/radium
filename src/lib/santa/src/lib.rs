@@ -249,11 +249,11 @@ impl<'a> Elf<'a> {
 
     /// Load the elf, and map with user permission, and returns an entry point
     pub fn load<Root: RootLevel, A: FrameAllocator>(
-        &self,
+        &'a self,
         table: &mut ActivePageTable<Root>,
         user_accessable: bool,
         allocator: &mut A,
-    ) -> VirtAddr {
+    ) -> LoadedElf<'a> {
         let additional_flags = if user_accessable { EntryFlags::USER_ACCESSIBLE } else { EntryFlags::empty() };
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
@@ -289,7 +289,10 @@ impl<'a> Elf<'a> {
             };
         }
 
-        VirtAddr::new(self.reader.entry_point())
+        LoadedElf {
+            elf: Self::new(self.reader.buffer().buffer()).unwrap(),
+            entry: VirtAddr::new(self.reader.entry_point()),
+        }
     }
 
     /// A variant of [Self::load] where the allocator allocated page is assumed to be writeable
@@ -299,7 +302,7 @@ impl<'a> Elf<'a> {
         mapper: &mut Mapper<Root>,
         user_accessable: bool,
         allocator: &mut A,
-    ) -> VirtAddr {
+    ) -> LoadedElf<'a> {
         let additional_flags = if user_accessable { EntryFlags::USER_ACCESSIBLE } else { EntryFlags::empty() };
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
@@ -337,7 +340,10 @@ impl<'a> Elf<'a> {
             }
         }
 
-        VirtAddr::new(self.reader.entry_point())
+        LoadedElf {
+            elf: Self::new(self.reader.buffer().buffer()).unwrap(),
+            entry: VirtAddr::new(self.reader.entry_point()),
+        }
     }
 
     pub fn max_alignment(&self) -> usize {
@@ -370,6 +376,45 @@ impl Transferable for Elf<'_> {
         replace: bool,
     ) {
         self.reader.transfer(transferor, replace);
+    }
+}
+
+#[derive(Debug)]
+pub struct LoadedElf<'a> {
+    elf: Elf<'a>,
+    entry: VirtAddr,
+}
+
+impl<'a> LoadedElf<'a> {
+    pub fn entry(&self) -> VirtAddr {
+        self.entry
+    }
+
+    pub fn elf(&'a self) -> &'a Elf<'a> {
+        &self.elf
+    }
+}
+
+impl Transferable for LoadedElf<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
+        for section in self.elf.reader.program_header_iter() {
+            if section.segment_type() != ProgramType::Load {
+                continue;
+            }
+            assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
+
+            let relative_offset = (section.vaddr() - self.elf.mem_min()).as_u64();
+            let virt_start = self.elf.mem_min() + relative_offset;
+
+            let flags = EntryFlags::from(section.flags());
+            transferor.transfer_to(virt_start, virt_start, section.memsize() as usize, flags);
+        }
+
+        self.elf.transfer(transferor, replace);
     }
 }
 

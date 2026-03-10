@@ -46,7 +46,8 @@ pub fn finialize_mapping(
         .rsdp(ctx.context.rsdp)
         .dwarf_data(ctx.context.dwarf_data)
         .packed(ctx.context.packed)
-        .kernel_elf(ctx.context.elf);
+        .kernel_elf(ctx.context.elf)
+        .kernel_loaded_elf(ctx.context.loaded_kernel);
 
     let mut bridge = BootBridge::new(builder.build());
 
@@ -81,7 +82,7 @@ pub fn prepare_kernel_page(mut ctx: InitializationContext<Stage2>) -> Initializa
     let (start, size) = (PhysAddr::new(start as u64), size as usize);
 
     unsafe { kernel_mapper.identity_map_addr_auto(start, size, EntryFlags::PRESENT, &mut allocator) };
-    let entry = ctx.context_mut().elf.load_assume_writeable(&mut kernel_mapper, false, &mut allocator);
+    let loaded_kernel = ctx.context_mut().elf.load_assume_writeable(&mut kernel_mapper, false, &mut allocator);
 
     kernel_mapper.p4_mut()[511].set(p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
 
@@ -97,5 +98,5 @@ pub fn prepare_kernel_page(mut ctx: InitializationContext<Stage2>) -> Initializa
     // We allocated from uefi so it's safe
     let tmp_alloc = unsafe { LinearAllocator::new(PhysAddr::new(tmp_alloc), 32 * Size4K::SIZE as usize) };
 
-    ctx.next((p4_table, tmp_alloc, entry))
+    ctx.next((p4_table, tmp_alloc, loaded_kernel))
 }

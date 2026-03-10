@@ -15,7 +15,7 @@ use pager::{
     allocator::FrameAllocator,
     paging::{Transferable, table::RootLevel},
 };
-use santa::Elf;
+use santa::{Elf, LoadedElf};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {
@@ -179,6 +179,7 @@ pub struct RawBootBridge {
     dwarf_data: Option<DwarfBaker<'static>>,
     packed: Option<Packed<'static>>,
     kernel_elf: Elf<'static>,
+    loaded_kernel_elf: LoadedElf<'static>,
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
     rsdp: PhysAddr,
@@ -226,6 +227,12 @@ impl BootBridgeBuilder {
     pub fn framebuffer_data(&mut self, data: RawData) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.framebuffer_data = data;
+        self
+    }
+
+    pub fn kernel_loaded_elf(&mut self, elf: LoadedElf<'static>) -> &mut Self {
+        let boot_bridge = self.inner_bridge();
+        boot_bridge.loaded_kernel_elf = elf;
         self
     }
 
@@ -343,6 +350,8 @@ impl Transferable for BootBridge {
         let current = self.0.load(Ordering::SeqCst);
 
         self.deref_mut().memory_map.transfer(transferor, replace);
+        // We didn't transfer the loaded_kernel here because that would've transfered the loaded
+        // kernel in the new page table which we haven't loaded yet
         self.deref_mut().kernel_elf.transfer(transferor, replace);
         self.deref_mut().dwarf_data.transfer(transferor, replace);
         self.deref_mut().packed.transfer(transferor, replace);

@@ -122,14 +122,14 @@ macro_rules! select_context {
 use bootbridge::{GraphicsInfo, RawData};
 use packery::Packed;
 use pager::{
-    address::{PhysAddr, VirtAddr},
+    address::PhysAddr,
     allocator::linear_allocator::LinearAllocator,
     paging::{
         mapper::Mapper,
         table::{RootDirect, Table},
     },
 };
-use santa::Elf;
+use santa::{Elf, LoadedElf};
 #[allow(unused_imports)]
 pub(crate) use select_context;
 
@@ -145,7 +145,7 @@ create_initialization_chain! {
     } => Stage3 {
         table: *mut Table<RootDirect>,
         temporary_runtime_allocator: LinearAllocator,
-        entry: VirtAddr,
+        loaded_kernel: LoadedElf<'static>,
     } => Stage4 {
         frame_buffer: RawData,
         graphics_info: GraphicsInfo,
