@@ -406,6 +406,11 @@ impl<S: PageSize> Iterator for PageIter<S> {
 pub trait PageSize: Clone + Copy {
     const SIZE: u64;
     const LEVEL: PageLevel;
+
+    /// get the equivalent page number count of this page size to the target page size
+    fn count_of<O: PageSize>() -> u64 {
+        Self::SIZE / O::SIZE
+    }
 }
 
 impl PageSize for () {
@@ -650,6 +655,11 @@ impl PhysAddr {
     #[inline(always)]
     pub const fn is_null(self) -> bool {
         self.0 == 0
+    }
+
+    pub const fn is_page_align<S: PageSize>(&self) -> bool {
+        debug_assert!(S::SIZE.is_power_of_two());
+        self.0 & (S::SIZE - 1) == 0
     }
 
     /// Create a new physical address from u64

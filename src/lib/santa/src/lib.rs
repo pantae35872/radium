@@ -10,6 +10,8 @@ use core::iter::Iterator;
 use pager::{
     EntryFlags, PAGE_SIZE,
     address::{Frame, Page, PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
+    paging::{Transferable, table::RootLevel},
 };
 use reader::{ElfBits, ElfHeader, ElfReader, ProgramType, SectionType};
 use sentinel::log;
@@ -369,6 +371,15 @@ impl<'a> Elf<'a> {
 
     pub fn max_memory_needed(&self) -> usize {
         self.max_memory_needed
+    }
+}
+
+impl Transferable for Elf<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+    ) {
+        self.reader.transfer(transferor);
     }
 }
 

@@ -1,12 +1,12 @@
 use bootbridge::MemoryType;
 use pager::{
-    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE,
     address::VirtAddr,
     allocator::FrameAllocator,
     paging::{
-        ActivePageTable, InactivePageCopyOption, TableManipulationContext,
+        ActivePageTable, InactivePageCopyOption, TableManipulationContext, Transferable,
         mapper::{self},
-        table::RecurseLevel4,
+        table::RootRecurse,
         temporary_page::TemporaryTable,
     },
 };
@@ -16,17 +16,17 @@ use crate::initialization_context::{InitializationContext, Stage0};
 pub unsafe fn remap_the_kernel<A>(
     allocator: &mut A,
     ctx: &mut InitializationContext<Stage0>,
-) -> ActivePageTable<RecurseLevel4>
+) -> ActivePageTable<RootRecurse>
 where
     A: FrameAllocator,
 {
-    let mut active_table = unsafe { ActivePageTable::<RecurseLevel4>::new() };
+    let mut active_table = unsafe { ActivePageTable::<RootRecurse>::new() };
 
     let mut temporary_page = TemporaryTable::new();
     let mut context =
         TableManipulationContext { temporary_page: &mut temporary_page, allocator, temporary_page_mapper: None };
 
-    let new_table = |mapper: &mut mapper::Mapper<RecurseLevel4>, allocator: &mut A| {
+    let new_table = |mapper: &mut mapper::Mapper<RootRecurse>, allocator: &mut A| {
         mapper.populate_p4_upper_half(allocator);
 
         unsafe {
@@ -49,6 +49,8 @@ where
             };
         }
 
+        mapper.transfer(&mut ctx.context_mut().boot_bridge);
+        ctx.context_mut().boot_bridge.transfer(transferor);
         mapper.virtually_replace(&mut ctx.context_mut().boot_bridge, allocator);
     };
 

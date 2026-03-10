@@ -12,7 +12,11 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::DataBuffer;
+use pager::{
+    DataBuffer,
+    allocator::FrameAllocator,
+    paging::{Transferable, Transferor, table::RootLevel},
+};
 use thiserror::Error;
 
 const MAGIC: u32 = u32::from_le_bytes(*b"PACK");
@@ -199,5 +203,14 @@ impl<'a> Iterator for ProgramIter<'a> {
         let before_index = self.index;
         self.index += 1;
         self.packed.get_program(before_index).ok()
+    }
+}
+
+impl Transferable for Packed<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+    ) {
+        self.buffer.transfer(transferor);
     }
 }

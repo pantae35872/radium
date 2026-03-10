@@ -393,7 +393,7 @@ impl DirectCreate {
 pub enum DirectLevel4 {}
 
 impl RootLevel for DirectLevel4 {
-    type CreateMarker = DirectLevel4;
+    type CreateMarker = DirectCreate;
 }
 
 pub enum DirectLevel3 {}

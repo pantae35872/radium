@@ -1,5 +1,6 @@
-use crate::address::{AnyFrame, AnyPage, Frame, Page, PageSize, PhysAddr, Size4K, VirtAddr};
+use crate::address::{AnyFrame, AnyPage, Frame, Page, PageSize, PhysAddr, Size1G, Size2M, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
+use crate::paging::Transferable;
 use crate::paging::table::entry::Entry;
 use crate::paging::table::{DirectCreate, RecurseCreate, RootLevel, TableLevel};
 use crate::registers::tlb;
@@ -73,6 +74,15 @@ impl<Root: RootLevel> Mapper<Root> {
         // SAFETY: We know this is safe because we are the only one who own the active page table
         // or the actively mapping inactive page tables
         unsafe { self.p4.as_mut() }
+    }
+
+    pub fn transfer<T: Transferable, RefRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        reference_mapping: &Mapper<RefRoot>,
+        transferable: &mut T,
+        allocator: &mut A,
+    ) {
+        transferable.transfer(&mut super::Transferor { reference_mapping, target_mapping: self, allocator });
     }
 
     /// Translate the provided virtual address into the mapped physical address
@@ -274,6 +284,84 @@ impl<Root: RootLevel> Mapper<Root> {
         Page::range_inclusive(start_page, end_page)
             .zip(Frame::range_inclusive(start_frame, end_frame))
             .for_each(|(page, frame)| unsafe { self.map_to(page, frame, flags, allocator) });
+    }
+
+    /// Map the start_page to start_frame with size
+    ///
+    /// # Safety
+    /// See [`Self::map_to_range`]
+    pub unsafe fn map_to_range_size<A, S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        start_frame: Frame<S>,
+        size: usize,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) where
+        A: FrameAllocator,
+    {
+        unsafe {
+            self.map_to_range(
+                start_page,
+                Page::containing_address(start_page.start_address() + size - 1),
+                start_frame,
+                Frame::containing_address(start_frame.start_address() + size - 1),
+                flags,
+                allocator,
+            );
+        }
+    }
+
+    /// Automatically map by page_count this also automatically use huge pages
+    ///
+    /// # Safety
+    /// See [`Self::map_to`]
+    pub unsafe fn map_to_auto<A>(
+        &mut self,
+        start_page: Page<Size4K>,
+        start_frame: Frame<Size4K>,
+        mut page_count: usize,
+        flags: EntryFlags,
+        allocator: &mut A,
+    ) where
+        A: FrameAllocator,
+    {
+        let mut current_addr: PhysAddr;
+        let addr_start = start_frame.start_address();
+        let addr_end = PhysAddr::new(start_frame.start_address().as_u64() + page_count as u64 * Size4K::SIZE);
+
+        while {
+            current_addr = addr_end - page_count * Size4K::SIZE as usize;
+            page_count >= Size1G::count_of::<Size4K>() as usize && current_addr.is_page_align::<Size1G>()
+        } {
+            let offset = current_addr.as_u64() - addr_start.as_u64();
+            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
+            unsafe { self.map_to::<_, Size1G>(target_addr, current_addr.into(), flags, allocator) };
+
+            page_count -= Size1G::count_of::<Size4K>() as usize;
+        }
+
+        while {
+            current_addr = addr_end - page_count * Size4K::SIZE as usize;
+            page_count >= Size2M::count_of::<Size4K>() as usize && current_addr.is_page_align::<Size2M>()
+        } {
+            let offset = current_addr.as_u64() - addr_start.as_u64();
+            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
+            unsafe { self.map_to::<_, Size2M>(target_addr, current_addr.into(), flags, allocator) };
+
+            page_count -= Size2M::count_of::<Size4K>() as usize;
+        }
+
+        while {
+            current_addr = addr_end - page_count * Size4K::SIZE as usize;
+            page_count > 0
+        } {
+            let offset = current_addr.as_u64() - addr_start.as_u64();
+            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
+            unsafe { self.map_to::<_, Size4K>(target_addr, current_addr.into(), flags, allocator) };
+
+            page_count -= 1;
+        }
     }
 
     /// Identity map the provided frame

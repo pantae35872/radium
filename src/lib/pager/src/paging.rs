@@ -29,6 +29,20 @@ pub trait Transferable {
     );
 }
 
+impl<T> Transferable for Option<T>
+where
+    T: Transferable,
+{
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+    ) {
+        if let Some(t) = self.as_mut() {
+            t.transfer(transferor);
+        }
+    }
+}
+
 pub struct Transferor<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> {
     pub(crate) reference_mapping: &'a Mapper<RefRoot>,
     pub(crate) target_mapping: &'b mut Mapper<TargetRoot>,

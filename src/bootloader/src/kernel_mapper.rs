@@ -2,13 +2,12 @@ use core::ptr::write_bytes;
 
 use alloc::vec;
 use pager::{
-    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE, PageLevel,
-    address::{Frame, PhysAddr, VirtAddr},
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, PAGE_SIZE, PageLevel,
+    address::{Frame, PageSize, PhysAddr, Size1G, Size2M, Size4K, VirtAddr},
     allocator::{FrameAllocator, linear_allocator::LinearAllocator},
-    page_table_size,
     paging::{
-        ActivePageTable, Entry,
-        table::{DirectLevel4, Table},
+        ActivePageTable,
+        table::{DirectLevel4, RootDirect, Table},
     },
 };
 use uefi::{
@@ -54,16 +53,13 @@ fn extract_memory_map<'a>(entry_size: usize, memory_map: uefi::table::boot::Memo
 fn prepare_direct_map(ctx: &mut InitializationContext<Stage5>, memory_map: &MemoryMap<'static>) {
     let mut kernel_table = ctx.active_table();
     let allocator = &mut ctx.context_mut().allocator;
+
     for usable in memory_map.entries().filter(|e| e.ty == MemoryType::CONVENTIONAL) {
-        let size = (usable.page_count * PAGE_SIZE) as usize;
-        unsafe {
-            kernel_table.mapper_with_allocator(allocator).map_to_range_by_size(
-                VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start).into(),
-                PhysAddr::new(usable.phys_start).into(),
-                size,
-                EntryFlags::WRITABLE,
-            )
-        };
+        let virt_start = (KERNEL_DIRECT_PHYSICAL_MAP + usable.phys_start).into();
+        let phys_start = PhysAddr::new(usable.phys_start).into();
+        let count = usable.page_count as usize;
+
+        unsafe { kernel_table.map_to_auto(virt_start, phys_start, count, EntryFlags::WRITABLE, allocator) };
     }
 }
 
@@ -73,18 +69,7 @@ pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> Initialization
     let mut buf = vec![0; system_table.boot_services().memory_map_size().map_size * 2];
     let mem_map = system_table.boot_services().memory_map(&mut buf).expect("FAILED TO GET MEMORY MAP");
 
-    let mem_map_size = mem_map
-        .entries()
-        .filter(|e| {
-            e.ty == MemoryType::CONVENTIONAL
-                || e.ty == MemoryType::BOOT_SERVICES_DATA
-                || e.ty == MemoryType::BOOT_SERVICES_CODE
-                || e.ty == MemoryType::LOADER_DATA
-        })
-        .map(|e| (e.page_count * PAGE_SIZE) as usize)
-        .sum::<usize>();
-    let mem_map_size = page_table_size(mem_map_size, PageLevel::Page4K)
-        + config().boot_loader.early_boot_kernel_page_table_page_count as usize * PAGE_SIZE as usize;
+    let mem_map_size = config().boot_loader.early_boot_kernel_page_table_page_count as usize * PAGE_SIZE as usize;
     let mem_map_pages = (mem_map_size / PAGE_SIZE as usize) + 1;
 
     let kernel_pages_table = system_table
@@ -102,7 +87,7 @@ pub fn prepare_kernel_page(ctx: InitializationContext<Stage2>) -> Initialization
     let p4_frame = kernel_page_allocator.allocate_frame().unwrap();
 
     let mut kernel_table =
-        unsafe { ActivePageTable::new_custom(p4_frame.start_address().as_u64() as *mut Table<DirectLevel4>) };
+        unsafe { ActivePageTable::new_custom(p4_frame.start_address().as_u64() as *mut Table<RootDirect>) };
 
     kernel_table.identity_map_object(&kernel_page_allocator.mappings(), &mut kernel_page_allocator);
 

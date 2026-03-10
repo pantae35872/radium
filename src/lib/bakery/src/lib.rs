@@ -12,7 +12,11 @@ extern crate alloc;
 #[cfg(not(feature = "std"))]
 pub use alloc::{string::String, vec::Vec};
 
-use pager::DataBuffer;
+use pager::{
+    DataBuffer,
+    allocator::FrameAllocator,
+    paging::{Transferable, Transferor, table::RootLevel},
+};
 
 const MAGIC: u32 = u32::from_le_bytes(*b"BAKE");
 
@@ -145,5 +149,14 @@ impl<'a> DwarfBaker<'a> {
         }
 
         None
+    }
+}
+
+impl Transferable for DwarfBaker<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut Transferor<RefRoot, TargetRoot, A>,
+    ) {
+        self.data.transfer(transferor);
     }
 }

@@ -12,7 +12,11 @@ use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
 use sentinel::log;
 
-use crate::address::PageSize;
+use crate::{
+    address::PageSize,
+    allocator::FrameAllocator,
+    paging::{Transferable, table::RootLevel},
+};
 
 extern crate alloc;
 
@@ -103,6 +107,15 @@ impl<'a> DataBuffer<'a> {
 
     pub fn buffer(&self) -> &'a [u8] {
         self.buffer
+    }
+}
+
+impl Transferable for DataBuffer<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut paging::Transferor<RefRoot, TargetRoot, A>,
+    ) {
+        transferor.transfer(VirtAddr::new(self.buffer.as_ptr() as u64), self.buffer.len(), EntryFlags::PRESENT);
     }
 }
 
