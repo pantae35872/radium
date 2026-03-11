@@ -35,7 +35,7 @@ use c_enum::c_enum;
 use conquer_once::spin::OnceCell;
 use pager::{
     PAGE_SIZE,
-    address::{PhysAddr, Size4K, VirtAddr},
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use sentinel::log;
@@ -333,18 +333,9 @@ impl UefiRuntime {
             let page = virt_addr_alloc::<Size4K>(ufu_stuff.page_count);
 
             mapper_upper(|mut mapper| unsafe {
-                mapper.identity_map_by_size(
-                    ufu_stuff.phys_start.into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                    ufu_stuff.att.into(),
-                );
-
-                mapper.map_to_range_by_size(
-                    page,
-                    ufu_stuff.phys_start.into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                    ufu_stuff.att.into(),
-                );
+                let page_count = ufu_stuff.page_count as usize;
+                mapper.identity_map_auto(ufu_stuff.phys_start.into(), page_count, ufu_stuff.att.into());
+                mapper.map_to_auto(page, ufu_stuff.phys_start.into(), page_count, ufu_stuff.att.into());
             });
             ufu_stuff.virt_start = page.start_address();
             if ufu_stuff.phys_start < runtime_table_raw
@@ -380,10 +371,11 @@ impl UefiRuntime {
             .filter(|e| matches!(e.ty, MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA))
         {
             mapper_upper(|mut mapper| unsafe {
-                mapper.unmap_addr_by_size(
-                    VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                )
+                let start_page = Page::<Size4K>::containing_address(VirtAddr::new(ufu_stuff.phys_start.as_u64()));
+                let end_page = Page::<Size4K>::containing_address(
+                    VirtAddr::new(ufu_stuff.phys_start.as_u64() + ufu_stuff.page_count * PAGE_SIZE - 1),
+                );
+                mapper.unmap_page_ranges(start_page, end_page);
             })
         }
 

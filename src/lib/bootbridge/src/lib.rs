@@ -43,12 +43,6 @@ impl RawData {
     }
 }
 
-//unsafe impl IdentityMappable for RawData {
-//    fn map(&self, mapper: &mut impl pager::Mapper) {
-//        unsafe { mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE) };
-//    }
-//}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(C)]
 pub struct MemoryDescriptor {
@@ -178,19 +172,6 @@ pub struct RawBootBridge {
 pub struct BootBridgeBuilder {
     pub boot_bridge: *mut RawBootBridge,
 }
-
-//unsafe impl IdentityMappable for BootBridgeBuilder {
-//    fn map(&self, mapper: &mut impl pager::Mapper) {
-//        let boot_bridge = self.boot_bridge;
-//        unsafe {
-//            mapper.identity_map_by_size(
-//                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
-//                size_of::<RawBootBridge>(),
-//                EntryFlags::WRITABLE,
-//            );
-//        };
-//    }
-//}
 
 impl BootBridgeBuilder {
     pub fn new(allocator: impl FnOnce(usize) -> *mut u8) -> Self {

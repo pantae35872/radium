@@ -34,7 +34,15 @@ impl TtfRenderer {
         let font = ctx.context().boot_bridge().font_data();
 
         let font_addr = virt_addr_alloc((font.size() / PAGE_SIZE as usize + 1) as u64);
-        unsafe { ctx.mapper().map_to_range_by_size(font_addr, font.start().into(), font.size(), EntryFlags::WRITABLE) };
+        let page_count = font.size().div_ceil(PAGE_SIZE as usize);
+        unsafe {
+            ctx.mapper().map_to_auto(
+                font_addr,
+                pager::address::Frame::containing_address(font.start()),
+                page_count,
+                EntryFlags::WRITABLE,
+            )
+        };
         let font = Font::from_bytes(
             unsafe {
                 core::slice::from_raw_parts(

@@ -6,15 +6,12 @@ use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Page, PageSize, PhysAddr, Size4K, VirtAddr},
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
-        mapper::Mapper,
-        table::{
-            RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevel, RootLevelRecurse, RootRecurse,
-            RootRecurseLowerHalf, RootRecurseUpperHalf,
-        },
+        mapper::{Mapper, MapperWithAllocator},
+        table::{RootLevel, RootLevelRecurse, RootRecurse, RootRecurseLowerHalf, RootRecurseUpperHalf},
         temporary_page::TemporaryTable,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
@@ -41,80 +38,6 @@ pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
 pub type Frame = pager::address::Frame<Size4K>;
 
-pub struct MapperWithAllocator<'a, R: RootLevel, A: FrameAllocator> {
-    pub mapper: &'a mut Mapper<R>,
-    pub allocator: &'a mut A,
-}
-
-impl<'a, R: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, R, A> {
-    pub fn new(mapper: &'a mut Mapper<R>, allocator: &'a mut A) -> Self {
-        Self { mapper, allocator }
-    }
-
-    pub fn map_range<S: pager::address::PageSize>(
-        &mut self,
-        start_page: Page<S>,
-        end_page: Page<S>,
-        flags: EntryFlags,
-    ) {
-        self.mapper.map_range(start_page, end_page, flags, self.allocator);
-    }
-
-    /// Map a range using 4K page accounting with huge-page auto selection.
-    ///
-    /// # Safety
-    /// See [`pager::paging::mapper::Mapper::map_to_auto`].
-    pub unsafe fn map_to_range_by_size(
-        &mut self,
-        start_page: Page<Size4K>,
-        start_frame: Frame,
-        size: usize,
-        flags: EntryFlags,
-    ) {
-        let pages = size.div_ceil(Size4K::SIZE as usize);
-        unsafe { self.mapper.map_to_auto(start_page, start_frame, pages, flags, self.allocator) };
-    }
-
-    /// Identity map a range using 4K page accounting with huge-page auto selection.
-    ///
-    /// # Safety
-    /// See [`pager::paging::mapper::Mapper::identity_map_auto`].
-    pub unsafe fn identity_map_by_size(&mut self, frame: Frame, size: usize, flags: EntryFlags) {
-        let pages = size.div_ceil(Size4K::SIZE as usize);
-        unsafe { self.mapper.identity_map_auto(frame, pages, flags, self.allocator) };
-    }
-
-    /// Identity map a linear allocator mapping with writeable permissions.
-    ///
-    /// # Safety
-    /// See [`pager::paging::mapper::Mapper::identity_map_addr_auto`].
-    pub unsafe fn identity_map_object(
-        &mut self,
-        mappings: &pager::allocator::linear_allocator::LinearAllocatorMappings,
-    ) {
-        unsafe {
-            self.mapper.identity_map_addr_auto(mappings.start(), mappings.size(), EntryFlags::WRITABLE, self.allocator)
-        };
-    }
-
-    /// Unmap a single page.
-    ///
-    /// # Safety
-    /// See [`pager::paging::mapper::Mapper::unmap_page`].
-    pub unsafe fn unmap_addr<S: pager::address::PageSize>(&mut self, page: Page<S>) {
-        let _ = unsafe { self.mapper.unmap_page(page) };
-    }
-
-    /// Unmap an address range without deallocating frames.
-    ///
-    /// # Safety
-    /// See [`pager::paging::mapper::Mapper::unmap_page_ranges`].
-    pub unsafe fn unmap_addr_by_size(&mut self, start_page: Page<Size4K>, size: usize) {
-        let end_page = Page::containing_address(start_page.start_address() + size - 1);
-        unsafe { self.mapper.unmap_page_ranges(start_page, end_page) };
-    }
-}
-
 pub struct WithMapper<'a, T, A: FrameAllocator, R: RootLevel> {
     pub inner: &'a mut T,
     pub mapper: MapperWithAllocator<'a, R, A>,
@@ -132,23 +55,21 @@ impl<'a, A: FrameAllocator, R: RootLevel> WithMapper<'a, StackAllocator, A, R> {
     }
 }
 
-def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
-def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RecurseLevel4LowerHalf>>);
+def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RootRecurseUpperHalf>>>);
+def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RootRecurseLowerHalf>>);
 
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
 def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryTable>>);
 
-pub fn stack_allocator<R>(
-    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
-) -> R {
+pub fn stack_allocator<R>(f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RootRecurseUpperHalf>) -> R) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
     let mut table = ACTIVE_TABLE_UPPER.lock();
     let mut allocator = BUDDY_ALLOCATOR.lock();
     f(WithMapper::new(&mut stack_allocator, &mut *table, &mut allocator))
 }
 
-pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> InactivePageTable<RecurseLevel4LowerHalf> {
+pub fn switch_lower_half(with: InactivePageTable<RootRecurseLowerHalf>) -> InactivePageTable<RootRecurseLowerHalf> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
@@ -165,10 +86,10 @@ pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> Ina
 ///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
-pub unsafe fn copy_mappings<P4: RootLevelRecurse>(
+pub unsafe fn copy_mappings<Root: RootLevelRecurse>(
     options: InactivePageCopyOption,
-    copy_from: &InactivePageTable<P4>,
-) -> InactivePageTable<P4> {
+    copy_from: &InactivePageTable<Root>,
+) -> InactivePageTable<Root> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
@@ -186,12 +107,9 @@ pub unsafe fn copy_mappings<P4: RootLevelRecurse>(
 ///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
-pub unsafe fn create_mappings_lower<F>(
-    f: F,
-    options: InactivePageCopyOption,
-) -> InactivePageTable<RecurseLevel4LowerHalf>
+pub unsafe fn create_mappings_lower<F>(f: F, options: InactivePageCopyOption) -> InactivePageTable<RootRecurseLowerHalf>
 where
-    F: FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator),
+    F: FnOnce(&mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator),
 {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
@@ -211,8 +129,8 @@ where
 /// # Safety
 /// See [`ActivePageTable::with`].
 pub unsafe fn mapper_lower_with<R>(
-    f: impl FnOnce(MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R,
-    with: &mut InactivePageTable<RecurseLevel4LowerHalf>,
+    f: impl FnOnce(MapperWithAllocator<RootRecurseLowerHalf, BuddyAllocator>) -> R,
+    with: &mut InactivePageTable<RootRecurseLowerHalf>,
 ) -> R {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
@@ -275,7 +193,7 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             // SAFETY: Since the ACTIVE_TABLE_UPPER is locked behind a shared mutex, the safety
             // contract upholds
             let new_table = unsafe {
-                table_upper.create_mappings::<_, _, RecurseLevel4>(
+                table_upper.create_mappings::<_, _, RootRecurse>(
                     |_, _| {},
                     &mut table_manipulation_context,
                     InactivePageCopyOption::upper_half(),
@@ -511,8 +429,8 @@ select_context! {
         /// See [`ActivePageTable::with`] safety docs
         pub unsafe fn with_inactive(
             &mut self,
-            table: &mut InactivePageTable<RecurseLevel4>,
-            f: impl FnOnce(MapperWithAllocator<RecurseLevel4, BuddyAllocator<64>>),
+            table: &mut InactivePageTable<RootRecurse>,
+            f: impl FnOnce(MapperWithAllocator<RootRecurse, BuddyAllocator<64>>),
         ) {
             let ctx = self.context_mut();
             unsafe {

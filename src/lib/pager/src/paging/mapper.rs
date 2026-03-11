@@ -14,6 +14,155 @@ pub struct Mapper<Root: RootLevel> {
     p4: NonNull<Table<Root>>,
 }
 
+pub struct MapperWithAllocator<'a, Root: RootLevel, A: FrameAllocator> {
+    pub mapper: &'a mut Mapper<Root>,
+    pub allocator: &'a mut A,
+}
+
+impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
+    pub fn new(mapper: &'a mut Mapper<Root>, allocator: &'a mut A) -> Self {
+        Self { mapper, allocator }
+    }
+
+    pub fn p4(&self) -> &Table<Root> {
+        self.mapper.p4()
+    }
+
+    pub fn p4_mut(&mut self) -> &mut Table<Root> {
+        self.mapper.p4_mut()
+    }
+
+    pub fn populate_p4_lower_half(&mut self) {
+        self.mapper.populate_p4_lower_half(self.allocator);
+    }
+
+    pub fn populate_p4_upper_half(&mut self) {
+        self.mapper.populate_p4_upper_half(self.allocator);
+    }
+
+    pub fn transfer<T: Transferable, RefRoot: RootLevel>(
+        &mut self,
+        reference_mapping: &Mapper<RefRoot>,
+        transferable: &mut T,
+        replace: bool,
+    ) {
+        self.mapper.transfer(reference_mapping, transferable, self.allocator, replace)
+    }
+
+    pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
+        self.mapper.translate(virtual_address)
+    }
+
+    pub fn translate_page<S: PageSize>(&self, page: Page<S>) -> Option<AnyFrame> {
+        self.mapper.translate_page(page)
+    }
+
+    pub unsafe fn change_flags<S: PageSize>(&mut self, page: Page<S>, map: impl FnOnce(EntryFlags) -> EntryFlags) {
+        unsafe { self.mapper.change_flags(page, map) }
+    }
+
+    pub unsafe fn change_flags_ranges<S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        map: impl Fn(EntryFlags) -> EntryFlags,
+    ) {
+        unsafe { self.mapper.change_flags_ranges(start_page, end_page, map) }
+    }
+
+    pub fn map<S: PageSize>(&mut self, page: Page<S>, flags: EntryFlags) {
+        self.mapper.map(page, flags, self.allocator)
+    }
+
+    pub fn map_range<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>, flags: EntryFlags) {
+        self.mapper.map_range(start_page, end_page, flags, self.allocator)
+    }
+
+    pub unsafe fn map_to<S: PageSize>(&mut self, page: Page<S>, frame: Frame<S>, flags: EntryFlags) {
+        unsafe { self.mapper.map_to(page, frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn map_to_any(&mut self, page: AnyPage, frame: AnyFrame, flags: EntryFlags) {
+        unsafe { self.mapper.map_to_any(page, frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn map_to_range<S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        start_frame: Frame<S>,
+        end_frame: Frame<S>,
+        flags: EntryFlags,
+    ) {
+        unsafe { self.mapper.map_to_range(start_page, end_page, start_frame, end_frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn map_to_range_size<S: PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        start_frame: Frame<S>,
+        size: usize,
+        flags: EntryFlags,
+    ) {
+        unsafe { self.mapper.map_to_range_size(start_page, start_frame, size, flags, self.allocator) }
+    }
+
+    pub unsafe fn map_to_auto(
+        &mut self,
+        start_page: Page<Size4K>,
+        start_frame: Frame<Size4K>,
+        page_count: usize,
+        flags: EntryFlags,
+    ) {
+        unsafe { self.mapper.map_to_auto(start_page, start_frame, page_count, flags, self.allocator) }
+    }
+
+    pub unsafe fn identity_map<S: PageSize>(&mut self, frame: Frame<S>, flags: EntryFlags) {
+        unsafe { self.mapper.identity_map(frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn identity_map_any<S: PageSize>(&mut self, frame: AnyFrame, flags: EntryFlags) {
+        unsafe { self.mapper.identity_map_any::<_, S>(frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn identity_map_range<S: PageSize>(
+        &mut self,
+        start_frame: Frame<S>,
+        end_frame: Frame<S>,
+        flags: EntryFlags,
+    ) {
+        unsafe { self.mapper.identity_map_range(start_frame, end_frame, flags, self.allocator) }
+    }
+
+    pub unsafe fn identity_map_auto(&mut self, frame: Frame<Size4K>, page_count: usize, flags: EntryFlags) {
+        unsafe { self.mapper.identity_map_auto(frame, page_count, flags, self.allocator) }
+    }
+
+    pub unsafe fn identity_map_addr_auto(&mut self, addr: PhysAddr, size: usize, flags: EntryFlags) {
+        unsafe { self.mapper.identity_map_addr_auto(addr, size, flags, self.allocator) }
+    }
+
+    pub unsafe fn unmap_page_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
+        unsafe { self.mapper.unmap_page_ranges(start_page, end_page) }
+    }
+
+    pub unsafe fn unmap_page<S: PageSize>(&mut self, page: Page<S>) -> AnyFrame {
+        unsafe { self.mapper.unmap_page(page) }
+    }
+
+    pub unsafe fn unmap_addr_any<S: PageSize>(&mut self, page: AnyPage) -> AnyFrame {
+        unsafe { self.mapper.unmap_addr_any::<S>(page) }
+    }
+
+    pub unsafe fn unmap_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
+        unsafe { self.mapper.unmap_ranges(start_page, end_page, self.allocator) }
+    }
+
+    pub unsafe fn unmap<S: PageSize>(&mut self, page: Page<S>) {
+        unsafe { self.mapper.unmap(page, self.allocator) }
+    }
+}
+
 impl<Root> Mapper<Root>
 where
     Root: RootLevel<CreateMarker = RecurseCreate>,

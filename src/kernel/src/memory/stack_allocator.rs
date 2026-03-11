@@ -22,9 +22,9 @@ impl StackAllocator {
         self.original_range.clone()
     }
 
-    pub fn alloc_stack<P4: RootLevel, A: FrameAllocator>(
+    pub fn alloc_stack<Root: RootLevel, A: FrameAllocator>(
         &mut self,
-        mapper: &mut Mapper<P4>,
+        mapper: &mut Mapper<Root>,
         frame_allocator: &mut A,
         size_in_pages: usize,
     ) -> Option<Stack> {

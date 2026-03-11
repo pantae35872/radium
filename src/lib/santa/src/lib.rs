@@ -423,53 +423,6 @@ impl Transferable for LoadedElf<'_> {
     }
 }
 
-//unsafe impl IdentityReplaceable for Elf<'_> {
-//    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-//        self.reader.identity_replace(mapper);
-//    }
-//}
-//
-//unsafe impl IdentityMappable for Elf<'_> {
-//    fn map(&self, mapper: &mut impl pager::Mapper) {
-//        self.reader.map(mapper);
-//    }
-//}
-
-//impl VirtuallyMappable for Elf<'_> {
-//    fn virt_map(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
-//        for section in self.reader.program_header_iter() {
-//            if section.segment_type() != ProgramType::Load {
-//                continue;
-//            }
-//            assert!(
-//                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
-//                "sections need to be page aligned"
-//            );
-//            let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
-//            let virt_start = virt_base + relative_offset;
-//            let virt_end = virt_start + section.memsize() - 1;
-//            let phys_start = phys_base + relative_offset;
-//            let phys_end = phys_base + relative_offset + section.memsize() - 1;
-//
-//            log!(
-//                Trace,
-//                "Elf mapping [{virt_start:x}-{virt_end:x}] with {} to [{phys_start:x}-{phys_end:x}]",
-//                EntryFlags::from(section.flags())
-//            );
-//            // SAFETY: We know this is safe because we're parsing the elf correctly
-//            unsafe {
-//                mapper.map_to_range(
-//                    Page::containing_address(virt_start),
-//                    Page::containing_address(virt_end),
-//                    Frame::containing_address(phys_start),
-//                    Frame::containing_address(phys_end),
-//                    EntryFlags::from(section.flags()),
-//                )
-//            };
-//        }
-//    }
-//}
-
 #[derive(Debug)]
 #[repr(C)]
 struct ElfSymbol {
