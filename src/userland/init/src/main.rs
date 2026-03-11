@@ -1,11 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::{
-    arch::asm,
-    panic::PanicInfo,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use core::{arch::asm, hint::black_box, panic::PanicInfo, sync::atomic::AtomicUsize};
 
 pub fn spawn(f: fn() -> !) {
     unsafe {
@@ -13,6 +9,18 @@ pub fn spawn(f: fn() -> !) {
             "syscall",
             in("rax") 2,
             in("rdx") f as *const () as u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
+    }
+}
+
+fn syscall_test() {
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") 4,
             out("rcx") _,
             out("r11") _,
             options(nostack),
@@ -78,30 +86,66 @@ pub fn is_stack_aligned_16() -> bool {
     rsp & 0xF == 0
 }
 
+fn computation() -> ! {
+    let mut x: u64 = 0x1234_5678_9ABC_DEF0;
+    let mut y: u64 = 0xCAFEBABEDEADBEEF;
+    let mut i: u64 = 0;
+    loop {
+        x ^= x.rotate_left((i % 63) as u32);
+        x = x.wrapping_mul(0x9E3779B97F4A7C15);
+        x = x.wrapping_add(i);
+
+        // more meaningless mixing
+        y ^= y.rotate_right((x % 59) as u32);
+        y = y.wrapping_mul(0xD6E8FEB86659FD93);
+        y = y.wrapping_add(x ^ i);
+
+        // pointless branch
+        if (x ^ y) & 1 == 0 {
+            x = x.wrapping_add(y.rotate_left(7));
+        } else {
+            y = y.wrapping_add(x.rotate_right(11));
+        }
+
+        i += i.wrapping_add(1);
+        syscall_test();
+
+        black_box((x, y));
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    if !is_stack_aligned_16() {
-        syscall_exit();
-    }
-
-    syscall_sleep(10000);
     for _ in 0..512 {
-        spawn(|| {
-            if !is_stack_aligned_16() {
-                syscall_exit();
-            }
-
-            for _ in 0..1_000_000 {
-                COUNT.fetch_add(1, Ordering::Relaxed);
-            }
-            syscall_exit_thread();
-        });
+        spawn(computation);
     }
+    computation();
+    //if !is_stack_aligned_16() {
+    //    syscall_exit();
+    //}
 
-    while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
-        core::hint::spin_loop();
-    }
-    syscall_exit();
+    //syscall_sleep(10000);
+    //for _ in 0..512 {
+    //    spawn(|| {
+    //        if !is_stack_aligned_16() {
+    //            syscall_exit();
+    //        }
+
+    //        for _ in 0..1_000_000 {
+    //            COUNT.fetch_add(1, Ordering::Relaxed);
+    //        }
+
+    //        syscall_exit_thread();
+    //    });
+    //}
+
+    //while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
+    //    core::hint::spin_loop();
+    //}
+
+    //syscall_test();
+
+    //syscall_exit();
 }
 
 #[panic_handler]

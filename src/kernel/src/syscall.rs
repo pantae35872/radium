@@ -1,5 +1,6 @@
 use core::arch::naked_asm;
 
+use kernel_proc::{def_local, local_builder};
 use pager::{
     address::VirtAddr,
     registers::{Efer, SystemCallLStar, SystemCallStar},
@@ -17,6 +18,8 @@ use crate::{
         syscall::SyscallId,
     },
 };
+
+def_local!(pub static IS_IN_SYSCALL: bool);
 
 pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|l| {
@@ -38,12 +41,17 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
                 SystemCallStar { syscall_selector: *KERNEL_CODE_SEG, sysret_selector: *USER_CODE_SEG_DUMMY }.write();
                 SystemCallLStar::write(VirtAddr::new(syscall_entry as *const () as u64));
             }
-        })
+        });
+        l.register(|builder, _context, _id| {
+            local_builder!(builder, IS_IN_SYSCALL(false));
+        });
     });
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
+    *IS_IN_SYSCALL.inner_mut() = true;
+    interrupt::enable();
     assert!(is_stack_aligned_16(), "Unaligned stack in syscall handler");
 
     let id = SyscallId(stack_frame.rax as u32);
@@ -63,11 +71,16 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
     );
 
     if should_hlt {
+        interrupt::without_interrupts(|| {
+            *IS_IN_SYSCALL.inner_mut() = false;
+        });
         // We can directly do hlt loop here since theres no requirement to return from,
         // the syscall instruction, and the stack will reset to a default value, when
         // the next syscall instruction is executed
-        interrupt::enable();
         hlt_loop();
+    } else {
+        interrupt::disable();
+        *IS_IN_SYSCALL.inner_mut() = false;
     }
 }
 

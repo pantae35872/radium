@@ -20,6 +20,7 @@ use crate::port::PortReadWrite;
 use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
+use crate::syscall::IS_IN_SYSCALL;
 use crate::userland;
 use crate::userland::pipeline::CommonRequestContext;
 use crate::userland::pipeline::CommonRequestStackFrame;
@@ -341,6 +342,10 @@ extern "C" fn hlt_loop() {
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
+    if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() {
+        return;
+    }
+
     let from_user = SegmentSelector(stack_frame.code_segment as u16).privilege_level() == PrivilegeLevel::Ring3;
     if from_user {
         unsafe { GsBase::swap() };
@@ -353,6 +358,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     }
 
     assert!(is_stack_aligned_16(), "Unaligned stack in interrupt handler");
+
+    if *IS_IN_SYSCALL {
+        assert!(!from_user);
+        eoi(idx);
+        return;
+    }
 
     *LAST_INTERRUPT_NO.inner_mut() = idx;
     *IS_IN_ISR.inner_mut() = true;

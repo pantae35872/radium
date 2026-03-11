@@ -134,17 +134,17 @@ impl SchedulerPipeline {
             self.units.push_front(task);
         }
 
-        if CORE_ID.is_bsp() {
-            TASK_COUNT_EACH_CORE
-                .iter()
-                .filter_map(|t| match t.load(Ordering::Relaxed) {
-                    usize::MAX => None,
-                    t => Some(t),
-                })
-                .enumerate()
-                .for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
-            serial_println!();
-        }
+        //if CORE_ID.is_bsp() {
+        //    TASK_COUNT_EACH_CORE
+        //        .iter()
+        //        .filter_map(|t| match t.load(Ordering::Relaxed) {
+        //            usize::MAX => None,
+        //            t => Some(t),
+        //        })
+        //        .enumerate()
+        //        .for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
+        //    serial_println!();
+        //}
 
         while let Some(task) = self.units.pop_front() {
             if task.valid() {
