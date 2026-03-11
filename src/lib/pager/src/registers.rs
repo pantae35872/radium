@@ -64,7 +64,15 @@ pub struct SystemCallStar {
     pub syscall_selector: SegmentSelector,
     /// the segment selector to be loaded when the sysret instruction is executed
     /// The docs mentioned that the value of CS and SS are derived from
-    /// just one selector, and it just assumes that the SS register is right above the CS in the gdt
+    /// just one selector,
+    /// IMPORTANT CS selector will be +16 when using sysretq
+    /// IF (operand size is 64-bit)
+    ///     THEN CS.Selector := IA32_STAR[63:48]+16;
+    ///     ELSE CS.Selector := IA32_STAR[63:48];
+    /// FI;
+    /// ...
+    /// SS.Selector := (IA32_STAR[63:48]+8) OR 3;
+    /// ...
     #[default(SegmentSelector(0))]
     pub sysret_selector: SegmentSelector,
 }

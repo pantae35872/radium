@@ -341,11 +341,11 @@ fn hlt_loop() {
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
-    let from_user = SegmentSelector(stack_frame.code_segment as u16).privilege_level() == PrivilegeLevel::Ring3
-        && SegmentSelector(stack_frame.stack_segment as u16).privilege_level() == PrivilegeLevel::Ring3;
+    let from_user = SegmentSelector(stack_frame.code_segment as u16).privilege_level() == PrivilegeLevel::Ring3;
     if from_user {
         unsafe { GsBase::swap() };
     }
+
     if PANIC_COUNT.load(Ordering::Relaxed) > 0 {
         eoi(idx);
         disable();
@@ -392,6 +392,16 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
     eoi(idx as u8);
     *IS_IN_ISR.inner_mut() = false;
+
+    match stack_frame.code_segment {
+        code if KERNEL_CODE_SEG.0 as u64 == code => {
+            stack_frame.stack_segment = KERNEL_DATA_SEG.0.into();
+        }
+        code if USER_CODE_SEG.0 as u64 == code => {
+            stack_frame.stack_segment = USER_DATA_SEG.0.into();
+        }
+        unknown => panic!("Unknown code segment {stack_frame:?}"),
+    }
 
     if swap_to_user_gs {
         unsafe { GsBase::swap() };

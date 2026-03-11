@@ -6,7 +6,7 @@ use pager::{
 };
 
 use crate::{
-    gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_DATA_SEG},
+    gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_CODE_SEG_DUMMY, USER_DATA_SEG},
     hlt_loop,
     initialization_context::{InitializationContext, Stage4},
     interrupt,
@@ -21,11 +21,20 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
     ctx.local_initializer(|l| {
         l.register_after(|_| {
             assert_eq!(KERNEL_CODE_SEG.0 + 8, KERNEL_DATA_SEG.0, "Kernel code seg is not followed by kernel data seg");
-            assert_eq!(USER_CODE_SEG.0 + 8, USER_DATA_SEG.0, "User code seg is not followed by user data seg");
+            assert_eq!(
+                USER_CODE_SEG_DUMMY.0 + 8,
+                USER_DATA_SEG.0,
+                "User code seg (dummy) is not followed by user data seg"
+            );
+            assert_eq!(
+                USER_CODE_SEG_DUMMY.0 + 16,
+                USER_CODE_SEG.0,
+                "User code seg (dummy) is not followed by the real user code seg"
+            );
             // SAFETY: The contract is checked above
             unsafe {
                 Efer::SystemCallExtensions.write_retained();
-                SystemCallStar { syscall_selector: *KERNEL_CODE_SEG, sysret_selector: *USER_CODE_SEG }.write();
+                SystemCallStar { syscall_selector: *KERNEL_CODE_SEG, sysret_selector: *USER_CODE_SEG_DUMMY }.write();
                 SystemCallLStar::write(VirtAddr::new(syscall_entry as *const () as u64));
             }
         })
