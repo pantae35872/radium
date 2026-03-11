@@ -77,7 +77,7 @@ pub unsafe fn init(ctx: &mut InitializationContext<Stage1>) {
     ctx.mapper().map_range::<Size4K>(
         heap_start,
         Page::containing_address(heap_start.start_address() + HEAP_SIZE - 1),
-        EntryFlags::WRITABLE,
+        EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
     );
     unsafe {
         GLOBAL_ALLOCATOR.lock().init(heap_start.start_address().as_u64() as usize, HEAP_SIZE as usize);

@@ -414,21 +414,15 @@ pub fn init(ctx: &mut InitializationContext<Stage2>) {
     ctx.mapper().map_range(
         start,
         Page::containing_address(start.start_address() + frame_buffer_data.size() - 1),
-        EntryFlags::WRITABLE,
+        EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE,
     );
-    let graphics = ctx
-        .mmio_device::<Graphic, _>(
-            (
-                unsafe {
-                    core::slice::from_raw_parts_mut(
-                        start.start_address().as_mut_ptr::<u32>(),
-                        frame_buffer_data.size() / size_of::<u32>(),
-                    )
-                },
-                graphics_info,
-            ),
-            None,
+    let backbuffer = unsafe {
+        core::slice::from_raw_parts_mut(
+            start.start_address().as_mut_ptr::<u32>(),
+            frame_buffer_data.size() / size_of::<u32>(),
         )
-        .expect("Failed to create graphics driver");
+    };
+    let graphics =
+        ctx.mmio_device::<Graphic, _>((backbuffer, graphics_info), None).expect("Failed to create graphics driver");
     DRIVER.init_once(|| Mutex::new(graphics));
 }
