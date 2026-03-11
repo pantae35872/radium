@@ -50,11 +50,19 @@ where
     for usable in ctx.context().boot_bridge().memory_map().entries().filter(|e| e.ty == MemoryType::CONVENTIONAL) {
         let virt = VirtAddr::new(KERNEL_DIRECT_PHYSICAL_MAP.as_u64() + usable.phys_start.as_u64()).into();
         let phys = usable.phys_start.into();
-        unsafe { new_table.map_to_auto(virt, phys, usable.page_count as usize, EntryFlags::WRITABLE, allocator) };
+        unsafe {
+            new_table.map_to_auto(
+                virt,
+                phys,
+                usable.page_count as usize,
+                EntryFlags::WRITABLE | EntryFlags::GLOBAL | EntryFlags::NO_EXECUTE,
+                allocator,
+            )
+        };
     }
 
-    new_table.transfer(&active_table, &mut ctx.context_mut().boot_bridge, allocator, true);
-    new_table.p4_mut()[511].set(p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE);
+    new_table.transfer(&active_table, &mut ctx.context_mut().boot_bridge, allocator, true, EntryFlags::GLOBAL);
+    new_table.p4_mut()[511].set(p4_frame, EntryFlags::PRESENT | EntryFlags::WRITABLE | EntryFlags::NO_EXECUTE);
 
     let mut context =
         TableManipulationContext { temporary_page: &mut temporary_page, allocator, temporary_page_mapper: None };

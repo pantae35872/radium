@@ -51,7 +51,7 @@ pub fn finialize_mapping(
 
     let mut bridge = BootBridge::new(builder.build());
 
-    mapper.transfer(&uefi_mapping, &mut bridge, &mut allocator, true);
+    mapper.transfer(&uefi_mapping, &mut bridge, &mut allocator, true, EntryFlags::empty());
 
     bridge.ptr()
 }

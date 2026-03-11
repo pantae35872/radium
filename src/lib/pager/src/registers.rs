@@ -475,7 +475,7 @@ impl Efer {
 
 bitflags! {
     #[derive(PartialEq, Eq, Debug, Clone, Copy)]
-    pub struct Cr4Flags: u64 {
+    pub struct Cr4: u64 {
         /// Virtual 8086 Mode Extensions
         const VME = 1 << 0;
         /// Protected-mode Virtual Interrupts
@@ -525,19 +525,17 @@ bitflags! {
     }
 }
 
-pub struct Cr4;
-
 impl Cr4 {
     /// Read from the cr4 into flags
     #[inline(always)]
-    pub fn read() -> Cr4Flags {
+    pub fn read() -> Self {
         let result: u64;
         // SAFETY: We reading the cr4 is safe we're not setting it
         unsafe {
             asm!("mov {}, cr4", out(reg) result, options(nostack, preserves_flags));
         }
 
-        Cr4Flags::from_bits_truncate(result)
+        Self::from_bits_truncate(result)
     }
 
     /// Read the cr4 and then perform bitwise or with the provided flags, and write that value back
@@ -546,12 +544,8 @@ impl Cr4 {
     ///
     /// the caller must ensure that the provided flags does not cause any unsafe side effects
     #[inline(always)]
-    pub unsafe fn write_or(flags: Cr4Flags) {
-        let flags = Self::read() | flags;
-
-        unsafe {
-            Cr4::write(flags);
-        }
+    pub unsafe fn write_retained(self) {
+        unsafe { (Self::read() | self).write() }
     }
 
     /// Write the flags into the Cr4 literally
@@ -561,9 +555,9 @@ impl Cr4 {
     /// the caller must ensure that the provided flags does not cause any unsafe side effects,
     /// or unset the flags that keep the system running
     #[inline(always)]
-    pub unsafe fn write(flags: Cr4Flags) {
+    pub unsafe fn write(self) {
         unsafe {
-            asm!("mov cr4, {}", in(reg) flags.bits(), options(nostack, preserves_flags));
+            asm!("mov cr4, {}", in(reg) self.bits(), options(nostack, preserves_flags));
         }
     }
 }

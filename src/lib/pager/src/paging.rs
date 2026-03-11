@@ -52,6 +52,7 @@ pub struct Transferor<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: Fram
     pub(crate) reference_mapping: &'a Mapper<RefRoot>,
     pub(crate) target_mapping: &'b mut Mapper<TargetRoot>,
     pub(crate) allocator: &'b mut A,
+    pub(crate) additional_flags: EntryFlags,
 }
 
 impl<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> Transferor<'a, 'b, RefRoot, TargetRoot, A> {
@@ -83,7 +84,15 @@ impl<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> Trans
             let start_frame =
                 Frame::<Size4K>::containing_address(frame.start_address() + (frame_offset as u64 * Size4K::SIZE));
 
-            unsafe { self.target_mapping.map_to_auto(target_page, start_frame, run_pages, flags, self.allocator) };
+            unsafe {
+                self.target_mapping.map_to_auto(
+                    target_page,
+                    start_frame,
+                    run_pages,
+                    flags | self.additional_flags,
+                    self.allocator,
+                )
+            };
 
             remaining = remaining.saturating_sub(run_pages);
             if remaining == 0 {

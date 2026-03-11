@@ -46,8 +46,9 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         reference_mapping: &Mapper<RefRoot>,
         transferable: &mut T,
         replace: bool,
+        additional_flags: EntryFlags,
     ) {
-        self.mapper.transfer(reference_mapping, transferable, self.allocator, replace)
+        self.mapper.transfer(reference_mapping, transferable, self.allocator, replace, additional_flags)
     }
 
     /// Just a mirror; see [`Mapper::translate`].
@@ -316,8 +317,12 @@ impl<Root: RootLevel> Mapper<Root> {
         transferable: &mut T,
         allocator: &mut A,
         replace: bool,
+        additional_flags: EntryFlags,
     ) {
-        transferable.transfer(&mut super::Transferor { reference_mapping, target_mapping: self, allocator }, replace);
+        transferable.transfer(
+            &mut super::Transferor { additional_flags, reference_mapping, target_mapping: self, allocator },
+            replace,
+        );
     }
 
     /// Translate the provided virtual address into the mapped physical address

@@ -10,7 +10,7 @@ use bootbridge::BootBridgeBuilder;
 use graphics::{initialize_graphics_bootloader, initialize_graphics_kernel};
 use kernel_loader::{load_kernel_elf, load_kernel_infos};
 use kernel_mapper::{finialize_mapping, prepare_kernel_page};
-use pager::registers::{Cr0, Efer};
+use pager::prepare_flags;
 use sentinel::{LogLevel, LoggerBackend, disable_logger, set_logger};
 use uefi::{
     Handle, Status, entry,
@@ -97,10 +97,9 @@ fn main(handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
     let table = stage5.context().table as u64;
 
     let boot_bridge = finialize_mapping(stage5, bootbridge_builder, memory_map);
+    unsafe { prepare_flags() };
 
     unsafe {
-        Efer::NoExecuteEnable.write_retained();
-        Cr0::WriteProtect.write_retained();
         asm!(
         r#"
             mov cr3, {}

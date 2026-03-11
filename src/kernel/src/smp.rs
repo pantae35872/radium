@@ -19,6 +19,7 @@ use pager::{
         table::{RootDirect, RootRecurseLowerHalf, RootRecurseUpperHalf, Table},
         temporary_page::TemporaryTable,
     },
+    prepare_flags,
 };
 use pager::{
     allocator::linear_allocator::LinearAllocator,
@@ -35,7 +36,7 @@ use crate::{
     },
     log,
     memory::{
-        self, Frame, WithMapper,
+        Frame, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,
         is_stack_aligned_16, mapper_lower, stack_allocator,
         stack_allocator::{Stack, StackAllocator},
@@ -94,7 +95,13 @@ impl ApInitializer {
             unsafe { Mapper::<RootDirect>::new_custom(p4_table.start_address().as_u64() as *mut Table<RootDirect>) };
 
         let ctx = ctx.context_mut();
-        bootstrap_table.transfer(&ctx.active_table, ctx.boot_bridge.loaded_kernel(), &mut boot_alloc, false);
+        bootstrap_table.transfer(
+            &ctx.active_table,
+            ctx.boot_bridge.loaded_kernel(),
+            &mut boot_alloc,
+            false,
+            EntryFlags::empty(),
+        );
 
         let mut mapper = MapperWithAllocator::new(&mut bootstrap_table, &mut boot_alloc);
         unsafe { mapper.identity_map_auto(PhysAddr::new(0x7000).into(), 4, EntryFlags::WRITABLE) };
@@ -183,7 +190,7 @@ static AP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn ap_startup(ctx: *const ApInitializationContext) -> ! {
     // SAFETY: This is safe if not we'll explode
-    unsafe { memory::prepare_flags() };
+    unsafe { prepare_flags() };
     // SAFETY: This is safe because we called into_raw in the ap startup code and pass through rdi
     // register in the boot.asm
     let ctx = unsafe { Arc::from_raw(ctx) };

@@ -14,10 +14,8 @@ use pager::{
         table::{RootLevel, RootLevelRecurse, RootRecurse, RootRecurseLowerHalf, RootRecurseUpperHalf},
         temporary_page::TemporaryTable,
     },
-    registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
     virt_addr_alloc,
 };
-use raw_cpuid::CpuId;
 use spin::Mutex;
 use stack_allocator::StackAllocator;
 
@@ -215,9 +213,6 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
 pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Stage1> {
     initialize_guard!();
     // SAFETY: This safe because the initialize_guard_above
-    unsafe { prepare_flags() };
-
-    // SAFETY: This safe because the initialize_guard_above
     let mut area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
     let active_table = unsafe { remap_the_kernel(&mut area_allocator, &mut ctx) };
     area_allocator.replace_memory_map(ctx.context().boot_bridge().memory_map().clone());
@@ -253,38 +248,6 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
     ctx
 }
 
-/// Prepare the processor flags
-/// e.g No-execute Write-protected
-///
-/// # Safety
-/// The caller must ensure that this is only called on kernel initialization
-pub unsafe fn prepare_flags() {
-    let esi = CpuId::new().get_extended_state_info().unwrap();
-    log!(Debug, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
-    log!(Debug, "Support AVX512 High?: {}", esi.xcr0_supports_avx512_zmm_hi256());
-    log!(Debug, "Support AVX512 High Regs?: {}", esi.xcr0_supports_avx512_zmm_hi16());
-    unsafe {
-        enable_nxe_bit();
-        enable_write_protect_bit();
-
-        Cr4::write_or(Cr4Flags::OSXSAVE | Cr4Flags::OSFXS);
-        let mut flags = Xcr0::empty();
-        if esi.xcr0_supports_sse_128() {
-            flags |= Xcr0::SEE;
-        }
-        if esi.xcr0_supports_avx_256() {
-            flags |= Xcr0::AVX;
-        }
-        if esi.xcr0_supports_avx512_zmm_hi256() {
-            flags |= Xcr0::ZMM_HIGH256;
-        }
-        if esi.xcr0_supports_avx512_zmm_hi16() {
-            flags |= Xcr0::HI16_ZMM;
-        }
-        flags.write_retained();
-    }
-}
-
 /// Initialize the buddy allocator and the kernel stack
 ///
 /// # Safety
@@ -306,14 +269,6 @@ unsafe fn init_allocator<'a>(
         },
     );
     unsafe { BuddyAllocator::new(area_allocator) }
-}
-
-unsafe fn enable_write_protect_bit() {
-    unsafe { Cr0::WriteProtect.write_retained() };
-}
-
-unsafe fn enable_nxe_bit() {
-    unsafe { Efer::NoExecuteEnable.write_retained() };
 }
 
 pub struct MMIOBuffer {

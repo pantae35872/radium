@@ -9,12 +9,14 @@ use core::{fmt::Display, ops::Deref, panic::Location};
 use address::{Page, PhysAddr, VirtAddr};
 use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
+use raw_cpuid::CpuId;
 use sentinel::log;
 
 use crate::{
     address::PageSize,
     allocator::FrameAllocator,
     paging::{Transferable, table::RootLevel},
+    registers::{Cr0, Cr4, Efer, Xcr0},
 };
 
 extern crate alloc;
@@ -174,4 +176,36 @@ pub enum PageLevel {
     Page4K, // 4 KiB pages
     Page2M, // 2 MiB pages (huge)
     Page1G, // 1 GiB pages (huge)
+}
+
+/// Prepare the processor flags
+/// e.g No-execute Write-protected
+///
+/// # Safety
+/// The caller must ensure that this is only called on kernel initialization
+pub unsafe fn prepare_flags() {
+    let esi = CpuId::new().get_extended_state_info().unwrap();
+    log!(Debug, "Support AVX256?: {}", esi.xcr0_supports_avx_256());
+    log!(Debug, "Support AVX512 High?: {}", esi.xcr0_supports_avx512_zmm_hi256());
+    log!(Debug, "Support AVX512 High Regs?: {}", esi.xcr0_supports_avx512_zmm_hi16());
+    unsafe {
+        Cr0::WriteProtect.write_retained();
+        Efer::NoExecuteEnable.write_retained();
+        (Cr4::read() | Cr4::OSXSAVE | Cr4::OSFXS | Cr4::PGE).write_retained();
+
+        let mut flags = Xcr0::empty();
+        if esi.xcr0_supports_sse_128() {
+            flags |= Xcr0::SEE;
+        }
+        if esi.xcr0_supports_avx_256() {
+            flags |= Xcr0::AVX;
+        }
+        if esi.xcr0_supports_avx512_zmm_hi256() {
+            flags |= Xcr0::ZMM_HIGH256;
+        }
+        if esi.xcr0_supports_avx512_zmm_hi16() {
+            flags |= Xcr0::HI16_ZMM;
+        }
+        flags.write_retained();
+    }
 }

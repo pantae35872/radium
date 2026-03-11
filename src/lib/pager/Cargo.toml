@@ -9,3 +9,4 @@ bitflags = "2.4.1"
 bit_field = "0.10.2"
 smart-default = "0.7.1"
 sentinel = { workspace = true }
+raw-cpuid = "11.5.0"
