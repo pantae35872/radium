@@ -1,22 +1,23 @@
 [workspace]
 members = [
     # Build tool
-    "build-tool", 
+    "build-tool",
 
-    "src/kernel", 
-    "src/bootloader", 
+    "src/kernel",
+    "src/bootloader",
 
     # static libs
-    "src/lib/bootbridge", 
-    "src/lib/santa", 
-    "src/lib/c_enum", 
-    "src/lib/bakery", 
-    "src/lib/pager", 
-    "src/lib/sentinel", 
-    "src/lib/packery", 
+    "src/lib/bootbridge",
+    "src/lib/santa",
+    "src/lib/c_enum",
+    "src/lib/bakery",
+    "src/lib/pager",
+    "src/lib/sentinel",
+    "src/lib/packery",
+    "src/lib/config",
 
     # proc macros
-    "src/proc/kernel", 
+    "src/proc/kernel",
     "src/proc/build-tool",
 
     "src/userland/init",
@@ -44,6 +45,7 @@ packery     = { path = "src/lib/packery" }
 pager       = { path = "src/lib/pager" }
 santa       = { path = "src/lib/santa" }
 sentinel    = { path = "src/lib/sentinel" }
+config      = { path = "src/lib/config" }
 # proc macros
 kernel_proc     = { path = "src/proc/kernel" }
 build_tool_proc = { path = "src/proc/build-tool" }

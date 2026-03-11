@@ -166,6 +166,10 @@ impl LocalApic {
         self.software_enable();
     }
 
+    pub fn reset_timer_ms(&mut self, ms: usize) {
+        self.registers.initial_count.write(*TPMS * ms);
+    }
+
     pub fn reset_timer(&mut self, count: usize) {
         self.registers.initial_count.write(count);
     }

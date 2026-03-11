@@ -1,4 +1,5 @@
 use bootbridge::{GraphicsInfo, PixelBitmask, PixelFormat, RawData};
+use config::config;
 use pager::address::PhysAddr;
 use uefi::{
     proto::console::{
@@ -12,10 +13,7 @@ use uefi::{
 };
 use uefi_services::system_table;
 
-use crate::{
-    config::config,
-    context::{InitializationContext, Stage3, Stage4},
-};
+use crate::context::{InitializationContext, Stage3, Stage4};
 
 pub fn initialize_graphics_bootloader(system_table: &mut SystemTable<Boot>) {
     if let Some(mode) = system_table.stdout().modes().max_by(|l, r| l.cmp(r)) {

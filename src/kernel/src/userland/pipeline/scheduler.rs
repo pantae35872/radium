@@ -4,10 +4,11 @@ use core::{
 };
 
 use alloc::collections::{binary_heap::BinaryHeap, vec_deque::VecDeque};
+use config::config;
 use derivative::Derivative;
 
 use crate::{
-    interrupt::{CORE_ID, InterruptIndex, LAPIC, TPMS},
+    interrupt::{CORE_ID, InterruptIndex, LAPIC},
     serial_print, serial_println,
     smp::{CoreId, MAX_CPU},
     userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
@@ -29,6 +30,10 @@ pub struct SchedulerPipeline {
     sleep_queue: BinaryHeap<Reverse<SleepEntry>>,
 
     timer_count: usize,
+}
+
+const fn timer_ms() -> usize {
+    1000 / config().kernel.clock_hz_rate as usize
 }
 
 impl SchedulerPipeline {
@@ -57,9 +62,8 @@ impl SchedulerPipeline {
     }
 
     fn handle_timer_interrupt(&mut self) {
-        self.timer_count += 10;
-        let tpms = *TPMS;
-        LAPIC.inner_mut().reset_timer(tpms * 10);
+        self.timer_count += timer_ms();
+        LAPIC.inner_mut().reset_timer_ms(timer_ms());
     }
 
     pub fn sleep_interrupted(&mut self, context: &mut PipelineContext, amount_millis: usize) {

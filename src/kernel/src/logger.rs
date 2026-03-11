@@ -3,11 +3,11 @@ use core::{
     fmt::{Arguments, Write},
 };
 
+use config::config;
 use sentinel::{LogLevel, LoggerBackend, log, set_logger};
 use static_log::StaticLog;
 
 use crate::{
-    config::{self, config},
     initialize_guard,
     interrupt::{self, CORE_ID, IS_IN_ISR},
     print, serial_print,

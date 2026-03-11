@@ -21,10 +21,6 @@ use uefi_services::{print, println};
 
 extern crate alloc;
 
-mod config {
-    include!(concat!(env!("OUT_DIR"), "/config.rs"));
-}
-
 pub mod boot_services;
 pub mod context;
 pub mod graphics;

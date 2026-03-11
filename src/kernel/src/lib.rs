@@ -43,10 +43,6 @@ pub mod syscall;
 pub mod userland;
 pub mod utils;
 
-pub mod config {
-    include!(concat!(env!("OUT_DIR"), "/config.rs"));
-}
-
 use core::arch::asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};

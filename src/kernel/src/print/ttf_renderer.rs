@@ -1,10 +1,10 @@
 use alloc::{string::String, vec::Vec};
+use config::config;
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
 use pager::{EntryFlags, PAGE_SIZE, address::Size4K, virt_addr_alloc};
 
 use crate::{
-    config::config,
     graphics::{color::Color, graphic},
     initialization_context::{InitializationContext, Stage2},
 };

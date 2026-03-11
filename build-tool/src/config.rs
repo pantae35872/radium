@@ -110,6 +110,9 @@ pub struct Kernel {
     #[config_name = "Font size"]
     #[default(14)]
     pub font_size: i32,
+    #[config_name = "Clock Hz rate"]
+    #[default(1000)]
+    pub clock_hz_rate: i32,
 }
 
 #[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]

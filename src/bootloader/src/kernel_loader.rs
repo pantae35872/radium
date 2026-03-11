@@ -1,4 +1,5 @@
 use bakery::DwarfBaker;
+use config::config;
 use packery::Packed;
 use pager::address::PhysAddr;
 use santa::Elf;
@@ -7,7 +8,6 @@ use uefi_services::system_table;
 
 use crate::{
     boot_services::LoaderFile,
-    config::config,
     context::{InitializationContext, Stage1, Stage2},
 };
 

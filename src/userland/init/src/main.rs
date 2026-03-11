@@ -1,7 +1,11 @@
 #![no_std]
 #![no_main]
 
-use core::{arch::asm, panic::PanicInfo};
+use core::{
+    arch::asm,
+    panic::PanicInfo,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 pub fn spawn(f: fn() -> !) {
     unsafe {
@@ -57,14 +61,22 @@ fn syscall_exit() -> ! {
     unreachable!("Sys exit doesn't work");
 }
 
+static COUNT: AtomicUsize = AtomicUsize::new(0);
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    syscall_sleep(5000);
+    syscall_sleep(10000);
     for _ in 0..512 {
         spawn(|| {
-            for _ in 0..1_000_000_00u64 {}
+            for _ in 0..1_000_000 {
+                COUNT.fetch_add(1, Ordering::Relaxed);
+            }
             syscall_exit_thread();
         });
+    }
+
+    while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
+        core::hint::spin_loop();
     }
     syscall_exit();
 }

@@ -21,7 +21,7 @@ use uefi::{
 use uefi_raw::protocol::file_system::FileAttribute;
 use uefi_services::{println, system_table};
 
-use crate::config::config;
+use config::config;
 
 const DEV_SERVER_IP: IpAddress = IpAddress::new_v4([192, 168, 69, 1]);
 

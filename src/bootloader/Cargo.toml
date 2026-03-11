@@ -14,3 +14,4 @@ packery = { workspace = true }
 bakery = { workspace = true }
 bootbridge = { workspace = true }
 santa = { workspace = true }
+config = { workspace = true }
