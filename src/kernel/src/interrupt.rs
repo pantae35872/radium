@@ -37,12 +37,14 @@ use io_apic::RedirectionTableEntry;
 use kernel_proc::def_local;
 use kernel_proc::local_builder;
 use kernel_proc::{fill_idt, generate_interrupt_handlers};
+use pager::PrivilegeLevel;
 use pager::address::VirtAddr;
 use pager::gdt::DOUBLE_FAULT_IST_INDEX;
 use pager::gdt::GENERAL_STACK_INDEX;
 use pager::registers::Cr2;
 use pager::registers::GsBase;
 use pager::registers::RFlags;
+use pager::registers::SegmentSelector;
 use sentinel::log;
 use spin::Mutex;
 
@@ -339,13 +341,15 @@ fn hlt_loop() {
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
-    if !GsBase::read().is_canonical_higher_half() {
+    let from_user = SegmentSelector(stack_frame.code_segment as u16).privilege_level() == PrivilegeLevel::Ring3
+        && SegmentSelector(stack_frame.stack_segment as u16).privilege_level() == PrivilegeLevel::Ring3;
+    if from_user {
         unsafe { GsBase::swap() };
     }
-    if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
+    if PANIC_COUNT.load(Ordering::Relaxed) > 0 {
         eoi(idx);
         disable();
-        return;
+        hlt_loop();
     }
 
     *LAST_INTERRUPT_NO.inner_mut() = idx;
@@ -361,7 +365,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     };
 
     let mut c_stack_frame = CommonRequestStackFrame::from(&*stack_frame);
-    let mut swap_to_user_gs = false;
+    let mut swap_to_user_gs = from_user;
 
     userland::pipeline::handle_request(
         CommonRequestContext::new(&mut c_stack_frame, RequestReferer::HardwareInterrupt(idx)),
@@ -389,7 +393,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     eoi(idx as u8);
     *IS_IN_ISR.inner_mut() = false;
 
-    if swap_to_user_gs && GsBase::read().is_canonical_higher_half() {
+    if swap_to_user_gs {
         unsafe { GsBase::swap() };
     }
 }

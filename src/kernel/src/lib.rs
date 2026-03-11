@@ -47,6 +47,7 @@ pub mod config {
     include!(concat!(env!("OUT_DIR"), "/config.rs"));
 }
 
+use core::arch::asm;
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{ffi::c_void, sync::atomic::AtomicBool};
@@ -64,6 +65,7 @@ use graphics::color::Color;
 use initialization_context::{InitializationContext, Stage0};
 use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
+use pager::registers::{CS, Cr0, Cr2, Cr3, Cr4, Efer, GsBase, KernelGsBase, RFlags, SS};
 use port::{Port, Port32Bit, PortWrite};
 use sentinel::log;
 use smp::cpu_local_avaiable;
@@ -152,8 +154,7 @@ static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     interrupt::disable();
-    print::DRIVER.get().inspect(|e| unsafe { e.force_unlock() });
-    unsafe { serial::SERIAL1.force_unlock() };
+    let regs = RegisterDump::capture();
     match PANIC_COUNT.fetch_add(1, Ordering::SeqCst) {
         0 => {}
         1 => {
@@ -165,8 +166,12 @@ fn panic(info: &PanicInfo) -> ! {
             serial_println!("TRIPLE PANIC, theres a bug in the logger code");
             hlt_loop();
         }
-        _ => hlt_loop(), // LAST CASE THERES A BUG IN THE SERIAL LOGGER
+        _ => hlt_loop(),
     };
+
+    print::DRIVER.get().inspect(|e| unsafe { e.force_unlock() });
+    unsafe { serial::SERIAL1.force_unlock() };
+
     if cpu_local_avaiable() {
         let id = match CURRENT_THREAD_ID.try_borrow() {
             Ok(id) => *id,
@@ -175,6 +180,8 @@ fn panic(info: &PanicInfo) -> ! {
         log!(Critical, "PANIC on core: {}, thread id: {id}", *CORE_ID,);
     }
     log!(Critical, "{}", info);
+
+    dump_registers(regs);
 
     log!(Info, "Backtrace:");
     struct CallbackData {
@@ -188,7 +195,7 @@ fn panic(info: &PanicInfo) -> ! {
             let (line_num, name, location) = dwarf.by_addr(ip as u64).unwrap_or((0, "unknown", "unknown"));
             log!(Info, "{:4}:{:#x} - {name}", data.counter, ip);
             log!(Info, "{:>12} at {:<30}:{:<4}", "", location, line_num);
-            if name == "start" || name == "ap_startup" || name.contains("thread_trampoline") {
+            if name == "start" || name == "ap_startup" || name == "syscall_entry" {
                 UnwindReasonCode::END_OF_STACK
             } else {
                 UnwindReasonCode::NO_REASON
@@ -212,6 +219,122 @@ fn panic(info: &PanicInfo) -> ! {
     } else {
         hlt_loop();
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RegisterDump {
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    rsp: u64,
+    r8: u64,
+    r9: u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+    rip: u64,
+}
+
+impl RegisterDump {
+    fn capture() -> Self {
+        let (rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15): (
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+            u64,
+        );
+        let rsp: u64;
+        let rip: u64;
+
+        unsafe {
+            asm!(
+                "mov {rax}, rax",
+                "mov {rbx}, rbx",
+                "mov {rcx}, rcx",
+                "mov {rdx}, rdx",
+                "mov {rsi}, rsi",
+                "mov {rdi}, rdi",
+                "mov {rbp}, rbp",
+                "mov {r8}, r8",
+                "mov {r9}, r9",
+                "mov {r10}, r10",
+                "mov {r11}, r11",
+                "mov {r12}, r12",
+                "mov {r13}, r13",
+                "mov {r14}, r14",
+                "mov {r15}, r15",
+                rax = out(reg) rax,
+                rbx = out(reg) rbx,
+                rcx = out(reg) rcx,
+                rdx = out(reg) rdx,
+                rsi = out(reg) rsi,
+                rdi = out(reg) rdi,
+                rbp = out(reg) rbp,
+                r8 = out(reg) r8,
+                r9 = out(reg) r9,
+                r10 = out(reg) r10,
+                r11 = out(reg) r11,
+                r12 = out(reg) r12,
+                r13 = out(reg) r13,
+                r14 = out(reg) r14,
+                r15 = out(reg) r15,
+                options(nostack, preserves_flags),
+            );
+            asm!("mov {0}, rsp", out(reg) rsp, options(nostack, preserves_flags));
+            asm!("lea {0}, [rip + 0]", out(reg) rip, options(nostack, preserves_flags));
+        }
+
+        Self { rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp, r8, r9, r10, r11, r12, r13, r14, r15, rip }
+    }
+}
+
+fn dump_registers(regs: RegisterDump) {
+    let rflags = RFlags::read();
+    let cs = CS::read();
+    let ss = SS::read();
+    let cr0 = Cr0::read();
+    let cr2 = Cr2::read().addr().as_u64();
+    let (cr3_frame, cr3_flags) = Cr3::read();
+    let cr4 = Cr4::read();
+    let efer = Efer::read();
+    let gs_base = GsBase::read().as_u64();
+    let kgs_base = KernelGsBase::read().as_u64();
+
+    log!(Critical, "Register dump:");
+    log!(Critical, "RAX={:#018x} RBX={:#018x} RCX={:#018x} RDX={:#018x}", regs.rax, regs.rbx, regs.rcx, regs.rdx);
+    log!(Critical, "RSI={:#018x} RDI={:#018x} RBP={:#018x} RSP={:#018x}", regs.rsi, regs.rdi, regs.rbp, regs.rsp);
+    log!(Critical, "R8 ={:#018x} R9 ={:#018x} R10={:#018x} R11={:#018x}", regs.r8, regs.r9, regs.r10, regs.r11);
+    log!(Critical, "R12={:#018x} R13={:#018x} R14={:#018x} R15={:#018x}", regs.r12, regs.r13, regs.r14, regs.r15);
+    log!(Critical, "RIP={:#018x} RFLAGS={:#018x}", regs.rip, rflags.bits());
+    log!(Critical, "CS={:#06x} SS={:#06x}", cs.0, ss.0);
+    log!(
+        Critical,
+        "CR0={:#018x} CR2={:#018x} CR3={:#018x} CR4={:#018x}",
+        cr0.bits(),
+        cr2,
+        cr3_frame.start_address().as_u64() | cr3_flags.bits(),
+        cr4.bits()
+    );
+    log!(Critical, "EFER={:#018x}", efer.bits());
+    log!(Critical, "GS_BASE={:#018x} KGS_BASE={:#018x}", gs_base, kgs_base);
 }
 
 impl<T> Testable for T

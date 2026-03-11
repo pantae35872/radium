@@ -125,7 +125,7 @@ impl Transferable for DataBuffer<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u16)]
 pub enum PrivilegeLevel {
     Ring0 = 0,
