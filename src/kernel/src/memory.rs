@@ -463,3 +463,18 @@ select_context! {
         }
     }
 }
+
+#[inline(always)]
+pub fn is_stack_aligned_16() -> bool {
+    let rsp: usize;
+
+    unsafe {
+        core::arch::asm!(
+            "mov {}, rsp",
+            out(reg) rsp,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+
+    rsp & 0xF == 0
+}

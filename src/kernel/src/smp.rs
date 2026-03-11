@@ -37,7 +37,7 @@ use crate::{
     memory::{
         self, Frame, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,
-        mapper_lower, stack_allocator,
+        is_stack_aligned_16, mapper_lower, stack_allocator,
         stack_allocator::{Stack, StackAllocator},
     },
     userland::{self, pipeline},
@@ -188,6 +188,8 @@ pub unsafe extern "C" fn ap_startup(ctx: *const ApInitializationContext) -> ! {
     // register in the boot.asm
     let ctx = unsafe { Arc::from_raw(ctx) };
     ctx.initializer.lock().initialize_current(&ctx);
+
+    assert!(is_stack_aligned_16(), "Unaligned ap stack");
 
     AP_INITIALIZED.store(true, Ordering::SeqCst);
 

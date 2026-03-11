@@ -8,12 +8,12 @@ use crate::gdt::KERNEL_CODE_SEG;
 use crate::gdt::KERNEL_DATA_SEG;
 use crate::gdt::USER_CODE_SEG;
 use crate::gdt::USER_DATA_SEG;
-use crate::hlt;
 use crate::initialization_context::InitializationContext;
 use crate::initialization_context::Stage3;
 use crate::initialization_context::Stage4;
 use crate::initialize_guard;
 use crate::interrupt::apic::ApicId;
+use crate::memory::is_stack_aligned_16;
 use crate::port::Port;
 use crate::port::Port8Bit;
 use crate::port::PortReadWrite;
@@ -333,10 +333,10 @@ where
     ret
 }
 
-fn hlt_loop() {
-    loop {
-        hlt();
-    }
+#[unsafe(no_mangle)]
+#[unsafe(naked)]
+extern "C" fn hlt_loop() {
+    core::arch::naked_asm!("2:", "hlt", "jmp 2b");
 }
 
 #[unsafe(no_mangle)]
@@ -351,6 +351,8 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         disable();
         hlt_loop();
     }
+
+    assert!(is_stack_aligned_16(), "Unaligned stack in interrupt handler");
 
     *LAST_INTERRUPT_NO.inner_mut() = idx;
     *IS_IN_ISR.inner_mut() = true;
@@ -376,6 +378,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
                     stack_frame.code_segment = KERNEL_CODE_SEG.0.into();
                     stack_frame.stack_segment = KERNEL_DATA_SEG.0.into();
+                    swap_to_user_gs = false;
                 }
                 DispatchAction::ReplaceState(state) => {
                     c_stack_frame.replace_with(state);
@@ -400,7 +403,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         code if USER_CODE_SEG.0 as u64 == code => {
             stack_frame.stack_segment = USER_DATA_SEG.0.into();
         }
-        unknown => panic!("Unknown code segment {stack_frame:?}"),
+        unknown => panic!("Unknown code segment {unknown:?}"),
     }
 
     if swap_to_user_gs {

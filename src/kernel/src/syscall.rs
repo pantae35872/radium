@@ -10,6 +10,7 @@ use crate::{
     hlt_loop,
     initialization_context::{InitializationContext, Stage4},
     interrupt,
+    memory::is_stack_aligned_16,
     userland::{
         self,
         pipeline::{CommonRequestContext, CommonRequestStackFrame, RequestReferer, dispatch::DispatchAction},
@@ -43,6 +44,8 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
 
 #[unsafe(no_mangle)]
 extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
+    assert!(is_stack_aligned_16(), "Unaligned stack in syscall handler");
+
     let id = SyscallId(stack_frame.rax as u32);
     let mut should_hlt = false;
     userland::pipeline::handle_request(

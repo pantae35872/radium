@@ -51,7 +51,7 @@ from_long:
     mov fs, ax
     mov gs, ax
     
-    jmp ap_startup
+    call ap_startup
     hlt
 
 ; ---------------------------------------

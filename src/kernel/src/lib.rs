@@ -73,6 +73,7 @@ use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};
 
 use crate::interrupt::CORE_ID;
+use crate::memory::is_stack_aligned_16;
 use crate::userland::pipeline::CURRENT_THREAD_ID;
 
 static DWARF_DATA: OnceCell<DwarfBaker<'static>> = OnceCell::uninit();
@@ -87,6 +88,7 @@ pub fn init(boot_bridge: *mut RawBootBridge) -> ! {
     let mut stage0 = InitializationContext::<Stage0>::start(boot_bridge);
     logger::init();
     qemu_init(&mut stage0);
+    assert!(is_stack_aligned_16(), "Unaligned stack");
     let stage1 = memory::init(stage0);
     let mut stage2 = acpi::init(stage1);
     graphics::init(&mut stage2);
