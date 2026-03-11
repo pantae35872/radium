@@ -6,13 +6,13 @@ use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
-        mapper::{Mapper, MapperWithAllocator, TopLevelP4, TopLevelRecurse},
-        table::{RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf},
-        temporary_page::TemporaryPage,
+        mapper::{Mapper, MapperWithAllocator},
+        table::{RootLevel, RootLevelRecurse, RootRecurse, RootRecurseLowerHalf, RootRecurseUpperHalf},
+        temporary_page::TemporaryTable,
     },
     registers::{Cr0, Cr4, Cr4Flags, Efer, Xcr0},
     virt_addr_alloc,
@@ -36,23 +36,40 @@ pub mod stack_allocator;
 
 pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
+pub type Frame = pager::address::Frame<Size4K>;
 
-def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
-def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RecurseLevel4LowerHalf>>);
+pub struct WithMapper<'a, T, A: FrameAllocator, R: RootLevel> {
+    pub inner: &'a mut T,
+    pub mapper: MapperWithAllocator<'a, R, A>,
+}
+
+impl<'a, T, A: FrameAllocator, R: RootLevel> WithMapper<'a, T, A, R> {
+    pub fn new(inner: &'a mut T, mapper: &'a mut Mapper<R>, allocator: &'a mut A) -> Self {
+        Self { inner, mapper: MapperWithAllocator::new(mapper, allocator) }
+    }
+}
+
+impl<'a, A: FrameAllocator, R: RootLevel> WithMapper<'a, StackAllocator, A, R> {
+    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<stack_allocator::Stack> {
+        self.inner.alloc_stack(self.mapper.mapper, self.mapper.allocator, size_in_pages)
+    }
+}
+
+def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RootRecurseUpperHalf>>>);
+def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RootRecurseLowerHalf>>);
 
 def_local!(pub static STACK_ALLOCATOR: Arc<Mutex<StackAllocator>>);
 def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
-def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryPage>>);
+def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryTable>>);
 
-pub fn stack_allocator<R>(
-    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
-) -> R {
+pub fn stack_allocator<R>(f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RootRecurseUpperHalf>) -> R) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
     let mut table = ACTIVE_TABLE_UPPER.lock();
-    f(stack_allocator.with_table(&mut *table, &mut BUDDY_ALLOCATOR.lock()))
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(WithMapper::new(&mut stack_allocator, &mut *table, &mut allocator))
 }
 
-pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> InactivePageTable<RecurseLevel4LowerHalf> {
+pub fn switch_lower_half(with: InactivePageTable<RootRecurseLowerHalf>) -> InactivePageTable<RootRecurseLowerHalf> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
@@ -69,10 +86,10 @@ pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> Ina
 ///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
-pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
+pub unsafe fn copy_mappings<Root: RootLevelRecurse>(
     options: InactivePageCopyOption,
-    copy_from: &InactivePageTable<From>,
-) -> InactivePageTable<To> {
+    copy_from: &InactivePageTable<Root>,
+) -> InactivePageTable<Root> {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
@@ -90,12 +107,9 @@ pub unsafe fn copy_mappings<From: TopLevelRecurse, To: TopLevelRecurse>(
 ///
 /// # Safety
 /// See [`ActivePageTable::create_mappings`].
-pub unsafe fn create_mappings_lower<F>(
-    f: F,
-    options: InactivePageCopyOption,
-) -> InactivePageTable<RecurseLevel4LowerHalf>
+pub unsafe fn create_mappings_lower<F>(f: F, options: InactivePageCopyOption) -> InactivePageTable<RootRecurseLowerHalf>
 where
-    F: FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator),
+    F: FnOnce(&mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator),
 {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
@@ -115,25 +129,31 @@ where
 /// # Safety
 /// See [`ActivePageTable::with`].
 pub unsafe fn mapper_lower_with<R>(
-    f: impl FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
-    with: &mut InactivePageTable<RecurseLevel4LowerHalf>,
+    f: impl FnOnce(MapperWithAllocator<RootRecurseLowerHalf, BuddyAllocator>) -> R,
+    with: &mut InactivePageTable<RootRecurseLowerHalf>,
 ) -> R {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
     unsafe {
-        upper.with(with, &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None }, f)
+        upper.with(
+            with,
+            &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None },
+            |mapper, allocator| f(MapperWithAllocator::new(mapper, allocator)),
+        )
     }
 }
 
-pub fn mapper_lower<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R) -> R {
+pub fn mapper_lower<R>(f: impl FnOnce(MapperWithAllocator<RootRecurseLowerHalf, BuddyAllocator>) -> R) -> R {
     let table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
-    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(MapperWithAllocator::new(table, &mut allocator))
 }
 
-pub fn mapper_upper<R>(f: impl FnOnce(&mut MapperWithAllocator<RecurseLevel4UpperHalf, BuddyAllocator>) -> R) -> R {
+pub fn mapper_upper<R>(f: impl FnOnce(MapperWithAllocator<RootRecurseUpperHalf, BuddyAllocator>) -> R) -> R {
     let mut table = ACTIVE_TABLE_UPPER.lock();
-    f(&mut table.mapper_with_allocator(&mut BUDDY_ALLOCATOR.lock()))
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(MapperWithAllocator::new(&mut *table, &mut allocator))
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
@@ -173,7 +193,7 @@ pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
             // SAFETY: Since the ACTIVE_TABLE_UPPER is locked behind a shared mutex, the safety
             // contract upholds
             let new_table = unsafe {
-                table_upper.create_mappings::<_, _, RecurseLevel4>(
+                table_upper.create_mappings::<_, _, RootRecurse>(
                     |_, _| {},
                     &mut table_manipulation_context,
                     InactivePageCopyOption::upper_half(),
@@ -198,8 +218,10 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
     unsafe { prepare_flags() };
 
     // SAFETY: This safe because the initialize_guard_above
-    let mut allocator = unsafe { init_allocator(&ctx) };
-    let active_table = unsafe { remap_the_kernel(&mut allocator, &mut ctx) };
+    let mut area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
+    let active_table = unsafe { remap_the_kernel(&mut area_allocator, &mut ctx) };
+    area_allocator.replace_memory_map(ctx.context().boot_bridge().memory_map().clone());
+    let allocator = unsafe { init_allocator(&ctx, area_allocator) };
 
     DWARF_DATA.init_once(|| ctx.context_mut().boot_bridge.dwarf_baker());
 
@@ -220,7 +242,7 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
             },
             false,
         ),
-        TemporaryPage::new(),
+        TemporaryTable::new(),
     ));
 
     unsafe {
@@ -268,8 +290,10 @@ pub unsafe fn prepare_flags() {
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 /// and the bootbridge memory map is valid
-unsafe fn init_allocator(ctx: &InitializationContext<Stage0>) -> BuddyAllocator<64> {
-    let area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
+unsafe fn init_allocator<'a>(
+    ctx: &InitializationContext<Stage0>,
+    area_allocator: AreaAllocator<'a>,
+) -> BuddyAllocator<64> {
     log!(Info, "UEFI memory map usable:");
     ctx.context().boot_bridge().memory_map().entries().filter(|e| e.ty == MemoryType::CONVENTIONAL).for_each(
         |descriptor| {
@@ -290,18 +314,6 @@ unsafe fn enable_write_protect_bit() {
 
 unsafe fn enable_nxe_bit() {
     unsafe { Efer::NoExecuteEnable.write_retained() };
-}
-
-pub struct WithMapper<'a, T, A: FrameAllocator, P4: TopLevelP4> {
-    table: &'a mut Mapper<P4>,
-    with_table: &'a mut T,
-    allocator: &'a mut A,
-}
-
-impl<'a, T, A: FrameAllocator, P4: TopLevelP4> WithMapper<'a, T, A, P4> {
-    pub fn new(active_table: &'a mut ActivePageTable<P4>, with_table: &'a mut T, allocator: &'a mut A) -> Self {
-        Self { table: active_table, with_table, allocator }
-    }
 }
 
 pub struct MMIOBuffer {
@@ -390,44 +402,45 @@ select_context! {
                 .or(T::acpi(self.context().acpi()))
                 .or(T::other())
                 .or(depends)?;
+
             let vaddr = virt_addr_alloc(info.size_in_pages() as u64);
             let ctx = self.context_mut();
-            // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
             unsafe {
-                ctx.active_table.map_to_range(
-                    Page::containing_address(vaddr.start_address()),
-                    Page::containing_address(vaddr.start_address() + info.size_in_bytes() as u64 - 1),
-                    Frame::containing_address(info.addr()),
-                    Frame::containing_address(info.addr() + info.size_in_bytes() - 1),
-                    EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE,
-                    &mut ctx.buddy_allocator,
-                )
+                // SAFETY: We know that the MMIOBufferInfo gurentee to be valid
+                ctx.active_table.map_to_auto(vaddr, info.addr().into(), info.size_in_pages(),
+                    EntryFlags::WRITABLE | EntryFlags::NO_CACHE | EntryFlags::NO_EXECUTE, &mut ctx.buddy_allocator);
             };
             let buf = MMIOBuffer {
-                start: vaddr.start_address().align_to(info.addr()),
+                start: vaddr.start_address().offset_by_page_misalignment::<Size4K>(info.addr()),
                 size_in_pages: info.size_in_pages(),
             };
             Some(T::new(buf, args))
         }
     }
     (Stage1, Stage2, Stage3, Stage4) => {
-        pub fn stack_allocator(&mut self) -> WithMapper<'_, StackAllocator, BuddyAllocator<64>, RecurseLevel4> {
+        pub fn mapper(&mut self) -> MapperWithAllocator<'_, RootRecurse, BuddyAllocator<64>> {
             let ctx = self.context_mut();
-            ctx.stack_allocator.with_table(&mut ctx.active_table, &mut ctx.buddy_allocator)
+            MapperWithAllocator::new(&mut ctx.active_table, &mut ctx.buddy_allocator)
         }
 
         /// Access the mapping of the InactivePageTable.
         ///
         /// # Safety
         /// See [`ActivePageTable::with`] safety docs
-        pub unsafe fn with_inactive(&mut self, table: &mut InactivePageTable<RecurseLevel4>, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
+        pub unsafe fn with_inactive(
+            &mut self,
+            table: &mut InactivePageTable<RootRecurse>,
+            f: impl FnOnce(MapperWithAllocator<RootRecurse, BuddyAllocator<64>>),
+        ) {
             let ctx = self.context_mut();
             unsafe {
                 ctx.active_table.with(table, &mut TableManipulationContext {
                     temporary_page: &mut ctx.temporary_page,
                     allocator: &mut ctx.buddy_allocator,
                     temporary_page_mapper: None
-                }, f)
+                }, |mapper, allocator| {
+                    f(MapperWithAllocator::new(mapper, allocator))
+                })
             }
         }
 
@@ -436,13 +449,7 @@ select_context! {
             &mut ctx.buddy_allocator
         }
 
-        pub fn mapper<'a>(&'a mut self) -> MapperWithAllocator<'a, RecurseLevel4, BuddyAllocator<64>> {
-            let ctx = self.context_mut();
-            ctx.active_table
-                .mapper_with_allocator(&mut ctx.buddy_allocator)
-        }
-
-        pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page {
+        pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page<Size4K> {
             let ctx = self.context_mut();
             let start_page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
             ctx.active_table.map_range(

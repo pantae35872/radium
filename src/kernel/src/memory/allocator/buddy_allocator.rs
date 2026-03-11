@@ -1,14 +1,10 @@
 use core::{marker::PhantomData, ptr};
 
-use bootbridge::MemoryDescriptor;
 use pager::KERNEL_DIRECT_PHYSICAL_MAP;
-use pager::address::PhysAddr;
+use pager::address::{Frame, PageSize, PhysAddr};
 use pager::allocator::FrameAllocator;
 
-use crate::{
-    memory::{Frame, MAX_ALIGN, PAGE_SIZE},
-    utils::NumberUtils,
-};
+use crate::{memory::MAX_ALIGN, utils::NumberUtils};
 
 use super::area_allocator::AreaAllocator;
 
@@ -20,17 +16,17 @@ pub struct BuddyAllocator<const ORDER: usize = 64> {
 
 // SAFETY: this is uphold by the implementation of the buddy allocator to be correct
 unsafe impl<const ORDER: usize> FrameAllocator for BuddyAllocator<ORDER> {
-    fn allocate_frame(&mut self) -> Option<Frame> {
-        self.allocate(PAGE_SIZE as usize).map(|e| Frame::containing_address(PhysAddr::new(e as u64)))
+    fn allocate_frame<S: PageSize>(&mut self) -> Option<Frame<S>> {
+        self.allocate(S::SIZE as usize).map(|e| Frame::containing_address(PhysAddr::new(e as u64)))
     }
 
-    fn deallocate_frame(&mut self, frame: Frame) {
-        self.dealloc(frame.start_address().as_u64() as *mut u8, PAGE_SIZE as usize);
+    fn deallocate_frame<S: PageSize>(&mut self, frame: Frame<S>) {
+        self.dealloc(frame.start_address().as_u64() as *mut u8, S::SIZE as usize);
     }
 }
 
 impl<const ORDER: usize> BuddyAllocator<ORDER> {
-    pub unsafe fn new<'a>(area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>) -> Self {
+    pub unsafe fn new<'a>(area_allocator: AreaAllocator<'a>) -> Self {
         let mut init = Self { free_lists: [const { unsafe { FreeList::new() } }; ORDER], max_mem: 0, allocated: 0 };
 
         unsafe { init.add_entire_memory_to_area(area_allocator) };
@@ -38,10 +34,7 @@ impl<const ORDER: usize> BuddyAllocator<ORDER> {
         return init;
     }
 
-    unsafe fn add_entire_memory_to_area<'a>(
-        &mut self,
-        mut area_allocator: AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>>,
-    ) {
+    unsafe fn add_entire_memory_to_area<'a>(&mut self, mut area_allocator: AreaAllocator<'a>) {
         while let Some((start, size)) = area_allocator.allocate_entire_buffer() {
             unsafe { self.add_area(start, size) };
         }

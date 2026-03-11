@@ -194,6 +194,7 @@ fn panic(info: &PanicInfo) -> ! {
                 UnwindReasonCode::NO_REASON
             }
         } else {
+            log!(Info, "No backtrace");
             // Since we can't know the name if the dwarf data is not initialized we assumed end of
             // stack for safety
             UnwindReasonCode::END_OF_STACK

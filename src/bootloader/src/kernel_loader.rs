@@ -2,10 +2,7 @@ use bakery::DwarfBaker;
 use packery::Packed;
 use pager::address::PhysAddr;
 use santa::Elf;
-use uefi::table::{
-    boot::{AllocateType, MemoryType},
-    cfg::ConfigTableEntry,
-};
+use uefi::table::cfg::ConfigTableEntry;
 use uefi_services::system_table;
 
 use crate::{
@@ -28,20 +25,8 @@ pub fn find_rsdp(config_table: &[ConfigTableEntry]) -> Option<u64> {
 
 pub fn load_kernel_elf(ctx: InitializationContext<Stage1>) -> InitializationContext<Stage2> {
     let elf = Elf::new(ctx.context().kernel_file).expect("Failed to create elf file from the kernel file buffer");
-    let program_ptr = match system_table().boot_services().allocate_pages(
-        AllocateType::AnyPages,
-        MemoryType::LOADER_CODE,
-        elf.page_needed(),
-    ) {
-        Ok(ptr) => ptr as *mut u8,
-        Err(err) => {
-            panic!("Failed to allocate memory for the kernel {:?}", err);
-        }
-    };
 
-    let entry = unsafe { elf.load_data(program_ptr) };
-
-    ctx.next((entry, PhysAddr::new(program_ptr as u64), elf))
+    ctx.next(elf)
 }
 
 pub fn load_kernel_infos() -> InitializationContext<Stage1> {

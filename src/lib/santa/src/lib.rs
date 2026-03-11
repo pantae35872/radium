@@ -8,8 +8,10 @@ use c_enum::c_enum;
 use core::fmt::Debug;
 use core::iter::Iterator;
 use pager::{
-    EntryFlags, IdentityMappable, IdentityReplaceable, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+    address::{Page, Size4K, VirtAddr},
+    allocator::{FrameAllocator, IdentityAllocator},
+    paging::{Transferable, mapper::Mapper, table::RootLevel},
 };
 use reader::{ElfBits, ElfHeader, ElfReader, ProgramType, SectionType};
 use sentinel::log;
@@ -198,7 +200,7 @@ impl<'a> Elf<'a> {
     }
 
     pub fn lookup_symbol(&self, name: &str, base: VirtAddr) -> Option<VirtAddr> {
-        log!(Debug, "Looking up synmbol `{}`", name);
+        log!(Debug, "Looking up symbol `{}`", name);
 
         let dynsym = self.reader.section_by_name(".dynsym")?;
         let dynstr = self.reader.section_by_name(".dynstr")?;
@@ -248,9 +250,15 @@ impl<'a> Elf<'a> {
     /// Load the elf, and map with user permission, and returns an entry point
     ///
     /// # Safety
-    /// this assume that the mapper, will take effect instantly (the memory became present
-    /// once it is mapped), method like with_inactive or with can't use this function
-    pub unsafe fn load_user(&self, mapper: &mut impl pager::Mapper) -> VirtAddr {
+    /// The caller must ensure that the provided mapper points to a page table where changes
+    /// are immediately effective for the elf address space.
+    pub unsafe fn load<Root: RootLevel, A: FrameAllocator>(
+        &self,
+        mapper: &mut Mapper<Root>,
+        user_accessable: bool,
+        allocator: &mut A,
+    ) -> LoadedElf<'a> {
+        let additional_flags = if user_accessable { EntryFlags::USER_ACCESSIBLE } else { EntryFlags::empty() };
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
                 continue;
@@ -263,12 +271,12 @@ impl<'a> Elf<'a> {
             log!(
                 Trace,
                 "Elf mapping [{virt_start:x}-{virt_end:x}] with {}",
-                EntryFlags::from(section.flags()) | EntryFlags::USER_ACCESSIBLE
+                EntryFlags::from(section.flags()) | additional_flags
             );
 
-            let start_page = Page::containing_address(virt_start);
-            let end_page = Page::containing_address(virt_end);
-            mapper.map_range(start_page, end_page, EntryFlags::WRITABLE);
+            let start_page = Page::<Size4K>::containing_address(virt_start);
+            let end_page = Page::<Size4K>::containing_address(virt_end);
+            mapper.map_range(start_page, end_page, EntryFlags::WRITABLE, allocator);
 
             let src = self.reader.buffer().as_ptr() as u64 + section.offset();
             let len = section.filesize();
@@ -280,72 +288,67 @@ impl<'a> Elf<'a> {
             }
 
             unsafe {
-                mapper.change_flags_ranges(start_page, end_page, |_| {
-                    EntryFlags::from(section.flags()) | EntryFlags::USER_ACCESSIBLE
-                })
+                mapper
+                    .change_flags_ranges(start_page, end_page, |_| EntryFlags::from(section.flags()) | additional_flags)
             };
         }
 
-        VirtAddr::new(self.reader.entry_point())
-    }
-
-    /// Load the elf file into the program ptr. without mapping with correct perrmission
-    ///
-    /// # Safety
-    /// The caller must ensure that the provided program_ptr is valid and marked as writeable and
-    /// overwriteable, with a size of max_memory_needed
-    pub unsafe fn load_data(&self, program_ptr: *mut u8) -> u64 {
-        for header in self.reader.program_header_iter() {
-            if header.segment_type() != ProgramType::Load {
-                continue;
-            }
-
-            let relative_offset = header.vaddr() - self.mem_min;
-
-            let dst = program_ptr as u64 + relative_offset.as_u64();
-            let src = self.reader.buffer().as_ptr() as u64 + header.offset();
-            let len = header.filesize();
-            let mem_sz = header.memsize();
-
-            unsafe {
-                core::ptr::write_bytes(dst as *mut u8, 0, mem_sz as usize);
-                core::ptr::copy(src as *const u8, dst as *mut u8, len as usize);
-            }
+        LoadedElf {
+            elf: Self::new(self.reader.buffer().buffer()).unwrap(),
+            entry: VirtAddr::new(self.reader.entry_point()),
         }
-        self.reader.entry_point()
     }
 
-    /// Map the permission releative to the physical base, and virtual base
-    ///
-    /// # Safety
-    /// Physical memory must be loaded with the correct data and have a contagious physical address
-    pub unsafe fn map_permission(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
+    /// A variant of [Self::load] where the allocator allocated page is assumed to be writeable
+    /// by the [IdentityAllocator] trait
+    pub fn load_assume_writeable<Root: RootLevel, A: IdentityAllocator>(
+        &self,
+        mapper: &mut Mapper<Root>,
+        user_accessable: bool,
+        allocator: &mut A,
+    ) -> LoadedElf<'a> {
+        let additional_flags = if user_accessable { EntryFlags::USER_ACCESSIBLE } else { EntryFlags::empty() };
         for section in self.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
                 continue;
             }
             assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
             let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
-            let virt_start = virt_base + relative_offset;
+            let virt_start = self.mem_min() + relative_offset;
             let virt_end = virt_start + section.memsize() - 1;
-            let phys_start = phys_base + relative_offset;
-            let phys_end = phys_base + relative_offset + section.memsize() - 1;
 
             log!(
                 Trace,
-                "Elf mapping [{virt_start:x}-{virt_end:x}] with {} to [{phys_start:x}-{phys_end:x}]",
-                EntryFlags::from(section.flags())
+                "Elf mapping [{virt_start:x}-{virt_end:x}] with {}",
+                EntryFlags::from(section.flags()) | additional_flags
             );
-            // SAFETY: We know this is safe because we're parsing the elf correctly
-            unsafe {
-                mapper.map_to_range(
-                    Page::containing_address(virt_start),
-                    Page::containing_address(virt_end),
-                    Frame::containing_address(phys_start),
-                    Frame::containing_address(phys_end),
-                    EntryFlags::from(section.flags()),
-                )
-            };
+
+            let start_page = Page::<Size4K>::containing_address(virt_start);
+            let end_page = Page::<Size4K>::containing_address(virt_end);
+            let src_base = self.reader.buffer().as_ptr() as u64 + section.offset();
+            let file_size = section.filesize() as usize;
+            for (index, page) in Page::range_inclusive(start_page, end_page).enumerate() {
+                let frame = allocator.allocate_frame::<Size4K>().expect("allocation failed");
+
+                let start = frame.start_address().assume_identity().as_mut_ptr::<u8>();
+                let page_offset = index * PAGE_SIZE as usize;
+
+                // SAFETY: The start is assumed to be writeable by the precondition
+                unsafe {
+                    core::ptr::write_bytes(start, 0, PAGE_SIZE as usize);
+                    if page_offset < file_size {
+                        let copy_len = core::cmp::min(PAGE_SIZE as usize, file_size - page_offset);
+                        core::ptr::copy((src_base + page_offset as u64) as *const u8, start, copy_len);
+                    }
+                }
+
+                unsafe { mapper.map_to(page, frame, EntryFlags::from(section.flags()) | additional_flags, allocator) };
+            }
+        }
+
+        LoadedElf {
+            elf: Self::new(self.reader.buffer().buffer()).unwrap(),
+            entry: VirtAddr::new(self.reader.entry_point()),
         }
     }
 
@@ -372,52 +375,53 @@ impl<'a> Elf<'a> {
     }
 }
 
-unsafe impl IdentityReplaceable for Elf<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.reader.identity_replace(mapper);
+impl Transferable for Elf<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
+        self.reader.transfer(transferor, replace);
     }
 }
 
-unsafe impl IdentityMappable for Elf<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.reader.map(mapper);
+#[derive(Debug)]
+pub struct LoadedElf<'a> {
+    elf: Elf<'a>,
+    entry: VirtAddr,
+}
+
+impl<'a> LoadedElf<'a> {
+    pub fn entry(&self) -> VirtAddr {
+        self.entry
+    }
+
+    pub fn elf(&'a self) -> &'a Elf<'a> {
+        &self.elf
     }
 }
 
-//impl VirtuallyMappable for Elf<'_> {
-//    fn virt_map(&self, mapper: &mut impl pager::Mapper, virt_base: VirtAddr, phys_base: PhysAddr) {
-//        for section in self.reader.program_header_iter() {
-//            if section.segment_type() != ProgramType::Load {
-//                continue;
-//            }
-//            assert!(
-//                section.vaddr().as_u64().is_multiple_of(PAGE_SIZE),
-//                "sections need to be page aligned"
-//            );
-//            let relative_offset = (section.vaddr() - self.mem_min()).as_u64();
-//            let virt_start = virt_base + relative_offset;
-//            let virt_end = virt_start + section.memsize() - 1;
-//            let phys_start = phys_base + relative_offset;
-//            let phys_end = phys_base + relative_offset + section.memsize() - 1;
-//
-//            log!(
-//                Trace,
-//                "Elf mapping [{virt_start:x}-{virt_end:x}] with {} to [{phys_start:x}-{phys_end:x}]",
-//                EntryFlags::from(section.flags())
-//            );
-//            // SAFETY: We know this is safe because we're parsing the elf correctly
-//            unsafe {
-//                mapper.map_to_range(
-//                    Page::containing_address(virt_start),
-//                    Page::containing_address(virt_end),
-//                    Frame::containing_address(phys_start),
-//                    Frame::containing_address(phys_end),
-//                    EntryFlags::from(section.flags()),
-//                )
-//            };
-//        }
-//    }
-//}
+impl Transferable for LoadedElf<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
+        for section in self.elf.reader.program_header_iter() {
+            if section.segment_type() != ProgramType::Load {
+                continue;
+            }
+            assert!(section.vaddr().as_u64().is_multiple_of(PAGE_SIZE), "sections need to be page aligned");
+
+            let relative_offset = (section.vaddr() - self.elf.mem_min()).as_u64();
+            let virt_start = self.elf.mem_min() + relative_offset;
+
+            let flags = EntryFlags::from(section.flags());
+            transferor.transfer_to(virt_start, virt_start, section.memsize() as usize, flags);
+        }
+        self.elf.transfer(transferor, replace);
+    }
+}
 
 #[derive(Debug)]
 #[repr(C)]

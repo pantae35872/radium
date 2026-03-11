@@ -34,8 +34,8 @@ use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use c_enum::c_enum;
 use conquer_once::spin::OnceCell;
 use pager::{
-    Mapper, PAGE_SIZE,
-    address::{PhysAddr, VirtAddr},
+    PAGE_SIZE,
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use sentinel::log;
@@ -330,21 +330,12 @@ impl UefiRuntime {
                 ufu_stuff.phys_start,
                 ufu_stuff.phys_start + (ufu_stuff.page_count * PAGE_SIZE) as usize - 1
             );
-            let page = virt_addr_alloc(ufu_stuff.page_count);
+            let page = virt_addr_alloc::<Size4K>(ufu_stuff.page_count);
 
-            mapper_upper(|mapper| unsafe {
-                mapper.identity_map_by_size(
-                    ufu_stuff.phys_start.into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                    ufu_stuff.att.into(),
-                );
-
-                mapper.map_to_range_by_size(
-                    page,
-                    ufu_stuff.phys_start.into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                    ufu_stuff.att.into(),
-                );
+            mapper_upper(|mut mapper| unsafe {
+                let page_count = ufu_stuff.page_count as usize;
+                mapper.identity_map_auto(ufu_stuff.phys_start.into(), page_count, ufu_stuff.att.into());
+                mapper.map_to_auto(page, ufu_stuff.phys_start.into(), page_count, ufu_stuff.att.into());
             });
             ufu_stuff.virt_start = page.start_address();
             if ufu_stuff.phys_start < runtime_table_raw
@@ -379,11 +370,9 @@ impl UefiRuntime {
             .entries_mut()
             .filter(|e| matches!(e.ty, MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA))
         {
-            mapper_upper(|mapper| unsafe {
-                mapper.unmap_addr_by_size(
-                    VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
-                    (ufu_stuff.page_count * PAGE_SIZE) as usize,
-                )
+            mapper_upper(|mut mapper| unsafe {
+                let start_page = Page::<Size4K>::containing_address(VirtAddr::new(ufu_stuff.phys_start.as_u64()));
+                mapper.unmap_page_size(start_page, (ufu_stuff.page_count * PAGE_SIZE) as usize);
             })
         }
 

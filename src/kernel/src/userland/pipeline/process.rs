@@ -8,11 +8,7 @@ use hashbrown::HashSet;
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
-    paging::{
-        InactivePageCopyOption, InactivePageTable,
-        mapper::{Mapper, MapperWithAllocator},
-        table::RecurseLevel4LowerHalf,
-    },
+    paging::{InactivePageCopyOption, InactivePageTable, mapper::{Mapper, MapperWithAllocator}, table::RootRecurseLowerHalf},
 };
 use spin::{Mutex, RwLock};
 
@@ -31,8 +27,8 @@ use crate::{
 
 #[derive(Default)]
 pub struct ProcessPipeline {
-    page_tables: Vec<Option<InactivePageTable<RecurseLevel4LowerHalf>>>,
-    hlt_page_table: Option<InactivePageTable<RecurseLevel4LowerHalf>>,
+    page_tables: Vec<Option<InactivePageTable<RootRecurseLowerHalf>>>,
+    hlt_page_table: Option<InactivePageTable<RootRecurseLowerHalf>>,
     free_data: Vec<usize>,
 }
 
@@ -94,7 +90,7 @@ impl ProcessPipeline {
 
     pub fn mem_access<R>(
         &mut self,
-        f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+        f: impl FnOnce(&mut Self, &mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator) -> R,
         process: Process,
     ) -> R {
         let pg_mod = &shared(&process).page_table_modification_lock;
@@ -115,14 +111,16 @@ impl ProcessPipeline {
 
     pub fn mapper<R>(
         &mut self,
-        f: impl FnOnce(&mut Self, &mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+        f: impl FnOnce(&mut Self, &mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator) -> R,
         process: Process,
     ) -> R {
         let pg_mod = &shared(&process).page_table_modification_lock;
         let _pg_mod = pg_mod.lock();
 
         if let Some(mut table) = self.page_tables[process.id].take() {
-            let r = unsafe { mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table) };
+            let r = unsafe {
+                mapper_lower_with(|MapperWithAllocator { mapper, allocator }| f(self, mapper, allocator), &mut table)
+            };
             self.page_tables[process.id] = Some(table);
             r
         } else {
@@ -298,7 +296,7 @@ impl ProcessShared {
 
 #[derive(Clone, IPPacket)]
 struct ExpandSharedPacket {
-    table_template: Arc<InactivePageTable<RecurseLevel4LowerHalf>>,
+    table_template: Arc<InactivePageTable<RootRecurseLowerHalf>>,
 }
 
 static SIG: AtomicUsize = AtomicUsize::new(1);

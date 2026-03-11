@@ -153,9 +153,7 @@ impl ControlPipeline {
         let process = self.alloc_process();
         let entry = self.process.mem_access(
             // SAFETY: The mem access uphold the contract
-            |_process, mapper, allocator| unsafe {
-                init_program.load_user(&mut mapper.mapper_with_allocator(allocator))
-            },
+            |_process, mapper, allocator| unsafe { init_program.load(mapper, true, allocator).entry() },
             process,
         );
 

@@ -1,12 +1,15 @@
 use alloc::string::String;
 use pager::{
-    EntryFlags, Mapper,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use sentinel::log;
 
-use crate::initialization_context::{InitializationContext, Stage1};
+use crate::{
+    initialization_context::{InitializationContext, Stage1},
+    memory::Frame,
+};
 
 use super::{AcpiRevisions, rsdt::Xrsdt};
 
@@ -36,45 +39,50 @@ pub enum Xrsdp {
 impl Xrsdp {
     pub unsafe fn new(rsdp_addr: PhysAddr, ctx: &mut InitializationContext<Stage1>) -> Self {
         // Map sdp for revision checking
+        let page_count = size_of::<Rsdp>().div_ceil(PAGE_SIZE as usize);
         unsafe {
-            ctx.mapper().identity_map_by_size(
-                Frame::containing_address(rsdp_addr),
-                size_of::<Rsdp>(),
-                EntryFlags::NO_CACHE,
-            )
+            ctx.mapper().identity_map_auto(Frame::containing_address(rsdp_addr), page_count, EntryFlags::NO_CACHE)
         };
         let check_rsdp = unsafe { Rsdp::new(rsdp_addr.as_u64()) };
         check_rsdp.validate();
         let revision = check_rsdp.revision();
         // After revision checking unmap the sdp.
-        unsafe { ctx.mapper().unmap_addr(Page::containing_address(VirtAddr::new(rsdp_addr.as_u64()))) };
+        unsafe {
+            let start_page = Page::<Size4K>::containing_address(VirtAddr::new(rsdp_addr.as_u64()));
+            ctx.mapper().unmap_page_size(start_page, size_of::<Rsdp>());
+        };
         // Create sdp based on readed revision
         log!(Trace, "Rsdp address: {:#x}", rsdp_addr);
         log!(Info, "Acpi revision: {}", revision);
         let sdp = match revision {
             AcpiRevisions::Rev1 => {
-                let virt_rdsp = virt_addr_alloc(1);
+                let virt_rdsp = virt_addr_alloc::<Size4K>(1);
+                let page_count = size_of::<Rsdp>().div_ceil(PAGE_SIZE as usize);
                 unsafe {
-                    ctx.mapper().map_to_range_by_size(
+                    ctx.mapper().map_to_auto(
                         virt_rdsp,
                         Frame::containing_address(rsdp_addr),
-                        size_of::<Rsdp>(),
+                        page_count,
                         EntryFlags::PRESENT,
                     )
                 };
-                Xrsdp::RSDP(unsafe { Rsdp::new(virt_rdsp.start_address().align_to(rsdp_addr).as_u64()) })
+                Xrsdp::RSDP(unsafe {
+                    Rsdp::new(virt_rdsp.start_address().offset_by_page_misalignment::<Size4K>(rsdp_addr).as_u64())
+                })
             }
             AcpiRevisions::Rev2 => {
-                let virt_xsdp = virt_addr_alloc(1);
+                let virt_xsdp = virt_addr_alloc::<Size4K>(1);
                 unsafe {
-                    ctx.mapper().map_to_range_by_size(
+                    ctx.mapper().map_to_auto(
                         virt_xsdp,
                         Frame::containing_address(rsdp_addr),
-                        size_of::<Xsdp>(),
+                        size_of::<Xsdp>().div_ceil(PAGE_SIZE as usize),
                         EntryFlags::PRESENT,
                     )
                 };
-                Xrsdp::XSDP(unsafe { Xsdp::new(virt_xsdp.start_address().align_to(rsdp_addr).as_u64()) })
+                Xrsdp::XSDP(unsafe {
+                    Xsdp::new(virt_xsdp.start_address().offset_by_page_misalignment::<Size4K>(rsdp_addr).as_u64())
+                })
             }
         };
         sdp.validate();

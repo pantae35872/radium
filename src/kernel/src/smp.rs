@@ -10,13 +10,14 @@ use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
-    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
-    address::{Frame, PhysAddr, VirtAddr},
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     allocator::FrameAllocator,
     paging::{
         ActivePageTable,
-        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
-        temporary_page::TemporaryPage,
+        mapper::{Mapper, MapperWithAllocator},
+        table::{RootDirect, RootRecurseLowerHalf, RootRecurseUpperHalf, Table},
+        temporary_page::TemporaryTable,
     },
 };
 use pager::{
@@ -34,7 +35,7 @@ use crate::{
     },
     log,
     memory::{
-        self, WithMapper,
+        self, Frame, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,
         mapper_lower, stack_allocator,
         stack_allocator::{Stack, StackAllocator},
@@ -78,34 +79,25 @@ impl ApInitializer {
         let trampoline_size =
             unsafe { &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize };
 
-        // Safety we already allocted this at the bootloader
+        // SAFETY: we already allocted this at the bootloader
         let mut boot_alloc = unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
 
-        unsafe { ctx.mapper().identity_map_object(&boot_alloc.mappings()) };
         unsafe {
-            core::ptr::write_bytes(boot_alloc.original_start().as_u64() as *mut u8, 0, boot_alloc.size());
-        }
+            let mappings = boot_alloc.mappings();
+            ctx.mapper().identity_map_addr_auto(mappings.start(), mappings.size(), EntryFlags::WRITABLE)
+        };
+
+        unsafe { core::ptr::write_bytes(boot_alloc.original_start().as_u64() as *mut u8, 0, boot_alloc.size()) };
 
         let p4_table = boot_alloc.allocate_frame().expect("Failed to allocate frame for temporary early boot");
-        let mut bootstrap_table = unsafe {
-            ActivePageTable::<DirectLevel4>::new_custom(p4_table.start_address().as_u64() as *mut Table<DirectLevel4>)
-        };
+        let mut bootstrap_table =
+            unsafe { Mapper::<RootDirect>::new_custom(p4_table.start_address().as_u64() as *mut Table<RootDirect>) };
 
-        unsafe {
-            ctx.context().boot_bridge().kernel_elf().map_permission(
-                &mut bootstrap_table.mapper_with_allocator(&mut boot_alloc),
-                KERNEL_START,
-                ctx.context().boot_bridge().kernel_base(),
-            )
-        };
+        let ctx = ctx.context_mut();
+        bootstrap_table.transfer(&ctx.active_table, ctx.boot_bridge.loaded_kernel(), &mut boot_alloc, false);
 
-        unsafe {
-            bootstrap_table.mapper_with_allocator(&mut boot_alloc).identity_map_by_size(
-                PhysAddr::new(0x7000).into(),
-                (PAGE_SIZE * 4) as usize,
-                EntryFlags::WRITABLE,
-            )
-        };
+        let mut mapper = MapperWithAllocator::new(&mut bootstrap_table, &mut boot_alloc);
+        unsafe { mapper.identity_map_auto(PhysAddr::new(0x7000).into(), 4, EntryFlags::WRITABLE) };
 
         unsafe {
             core::ptr::copy(
@@ -174,11 +166,10 @@ fn dumb_wait(ms: usize) {
 impl Drop for ApInitializer {
     fn drop(&mut self) {
         // SAFETY: We've identity mapped this in the new function, so we have to unmap it
-        mapper_lower(|mapper| unsafe {
-            mapper.unmap_addr_by_size(
-                VirtAddr::new(self.boot_alloc.original_start().as_u64()).into(),
-                self.boot_alloc.size(),
-            )
+        mapper_lower(|mut mapper| unsafe {
+            let start_page =
+                Page::<Size4K>::containing_address(VirtAddr::new(self.boot_alloc.original_start().as_u64()));
+            mapper.unmap_page_size(start_page, self.boot_alloc.size());
         })
     }
 }
@@ -241,11 +232,11 @@ macro_rules! builder {
 
 builder! {
     pub struct ApInitializationContext {
-        pub original_table: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>,
-        pub bsp_only_table: Arc<Mutex<Option<ActivePageTable<RecurseLevel4LowerHalf>>>>,
+        pub original_table: Arc<Mutex<ActivePageTable<RootRecurseUpperHalf>>>,
+        pub bsp_only_table: Arc<Mutex<Option<ActivePageTable<RootRecurseLowerHalf>>>>,
         pub stack_allocator: Arc<Mutex<StackAllocator>>,
         pub buddy_allocator: Arc<Mutex<BuddyAllocator>>,
-        pub temporary_page: Arc<Mutex<TemporaryPage>>,
+        pub temporary_page: Arc<Mutex<TemporaryTable>>,
         pub initializer: Mutex<LocalInitializer>,
         pub boot_bridge: Arc<BootBridge>,
         pub io_apic: Arc<Mutex<IoApicManager>>,
@@ -256,11 +247,12 @@ builder! {
 impl ApInitializationContext {
     pub fn stack_allocator<R>(
         &self,
-        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
+        f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RootRecurseUpperHalf>) -> R,
     ) -> R {
         let mut stack_allocator = self.stack_allocator.lock();
         let mut table = self.original_table.lock();
-        f(stack_allocator.with_table(&mut *table, &mut self.buddy_allocator.lock()))
+        let mut allocator = self.buddy_allocator.lock();
+        f(WithMapper::new(&mut stack_allocator, &mut *table, &mut allocator))
     }
 }
 

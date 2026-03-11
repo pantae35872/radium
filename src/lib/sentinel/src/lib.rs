@@ -1,6 +1,9 @@
 #![no_std]
 
-use core::fmt::{Arguments, Display, Formatter};
+use core::{
+    fmt::{Arguments, Display, Formatter},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use c_enum::c_enum;
 use conquer_once::spin::OnceCell;
@@ -13,6 +16,7 @@ macro_rules! log {
 }
 
 static LOGGER_BACKEND: OnceCell<&'static dyn LoggerBackend> = OnceCell::uninit();
+static LOGGER_ENABLED: AtomicBool = AtomicBool::new(true);
 
 c_enum! {
     #[derive(Debug)]
@@ -56,6 +60,10 @@ pub trait LoggerBackend: Sync {
     fn log(&self, module_path: &'static str, level: LogLevel, formatter: Arguments);
 }
 
+pub fn disable_logger() {
+    LOGGER_ENABLED.store(false, Ordering::SeqCst);
+}
+
 pub fn set_logger(backend: &'static dyn LoggerBackend) {
     LOGGER_BACKEND.init_once(|| backend);
 }
@@ -65,6 +73,10 @@ pub fn get_logger() -> Option<&'static dyn LoggerBackend> {
 }
 
 pub fn log_message(module_path: &'static str, level: LogLevel, formatter: Arguments) {
+    if !LOGGER_ENABLED.load(Ordering::SeqCst) {
+        return;
+    }
+
     if let Some(logger) = LOGGER_BACKEND.get() {
         logger.log(module_path, level, formatter);
     }

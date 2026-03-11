@@ -1,7 +1,4 @@
-use crate::{
-    EntryFlags, IdentityMappable, Mapper, PAGE_SIZE,
-    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
-};
+use crate::address::{Frame, FrameIter, Page, PageIter, PageSize, PhysAddr, VirtAddr};
 
 use super::FrameAllocator;
 
@@ -9,14 +6,6 @@ use super::FrameAllocator;
 pub struct LinearAllocator {
     orginal_start: PhysAddr,
     current: PhysAddr,
-    size: usize,
-}
-
-// This is to get around the borrow checker rules incase of mapping the same allocator using the
-// same allocator
-#[derive(Debug)]
-pub struct LinearAllocatorMappings {
-    start: PhysAddr,
     size: usize,
 }
 
@@ -34,11 +23,11 @@ impl LinearAllocator {
         LinearAllocatorMappings { start: self.orginal_start, size: self.size }
     }
 
-    pub fn range(&self) -> FrameIter {
+    pub fn range_frame<S: PageSize>(&self) -> FrameIter<S> {
         Frame::range_inclusive(self.original_start().into(), self.end().into())
     }
 
-    pub fn range_page(&self) -> PageIter {
+    pub fn range_page<S: PageSize>(&self) -> PageIter<S> {
         Page::range_inclusive(
             VirtAddr::new(self.original_start().as_u64()).into(),
             VirtAddr::new(self.end().as_u64()).into(),
@@ -84,21 +73,24 @@ impl LinearAllocatorMappings {
     }
 }
 
+// SAFETY: The ownership is guarantee by the caller of the [LinearAllocator::new] function
 unsafe impl FrameAllocator for LinearAllocator {
-    fn allocate_frame(&mut self) -> Option<Frame> {
+    fn allocate_frame<S: PageSize>(&mut self) -> Option<Frame<S>> {
         if self.current >= self.end() {
             return None;
         }
         let addr = self.current;
-        self.current += PAGE_SIZE;
+        self.current += S::SIZE;
 
         Some(Frame::containing_address(addr))
     }
-    fn deallocate_frame(&mut self, _frame: Frame) {}
+    fn deallocate_frame<S: PageSize>(&mut self, _frame: Frame<S>) {}
 }
 
-unsafe impl IdentityMappable for LinearAllocatorMappings {
-    fn map(&self, mapper: &mut impl Mapper) {
-        unsafe { mapper.identity_map_range(self.start().into(), self.end().into(), EntryFlags::WRITABLE) };
-    }
+// This is to get around the borrow checker rules incase of mapping the same allocator using the
+// same allocator
+#[derive(Debug)]
+pub struct LinearAllocatorMappings {
+    start: PhysAddr,
+    size: usize,
 }

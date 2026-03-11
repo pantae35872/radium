@@ -1,82 +1,167 @@
 use core::{
+    cmp::Ordering,
     fmt,
     hash::Hash,
+    marker::PhantomData,
     ops::{Add, AddAssign, Sub},
 };
 
-use crate::PAGE_SIZE;
+use crate::{PAGE_SIZE, PageLevel};
 
 const PHYS_ADDR_MASK: u64 = 0x000FFFFFFFFFFFFF;
 
-/// A structure that contains a valid physical address (bits 52-63 (inclusive) unset)
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PhysAddr(u64);
-
-/// A structure that is gurentee to contain a valid ([`canonical`]) virtual address
-///
-/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VirtAddr(u64);
-
-/// A structure that contains the invalid physical address (bits 52-63 (inclusive) set)
-#[repr(transparent)]
-pub struct InvalidPhysAddress(pub u64);
-
-/// A structure that contains non [`canonical`] virtual address
-///
-/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
-#[repr(transparent)]
-pub struct NonCanonicalVirtAddress(pub u64);
-
-/// A frame is an respresentation of an [`physical address`] that can be directly mapped in the
-/// page tables, and is aligned on 4KB boundries
+/// A frame is an representation of an [`physical address`] and is aligned to S::SIZE boundries
 ///
 /// [`physical address`]: <https://en.wikipedia.org/wiki/X86-64#Physical_address_space_details>
-#[derive(PartialEq, PartialOrd, Clone, Copy)]
-pub struct Frame {
+#[derive(Debug, Clone, Copy)]
+pub struct Frame<S: PageSize> {
     number: u64,
+    _marker: PhantomData<S>,
 }
 
-/// A page is an respresentation of an [`virtual address`] that is aligned on 4KB boundries
-///
-/// [`virtual address`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Page {
-    number: u64,
-}
+impl<S: PageSize> Frame<S> {
+    /// Create a frame containing the provided physical address
+    ///
+    /// if the address is not aligned this will create a frame contatining the frame that covers
+    /// that address
+    pub const fn containing_address(address: PhysAddr) -> Frame<S> {
+        Frame { number: address.as_u64() / S::SIZE, _marker: PhantomData }
+    }
 
-#[derive(Clone)]
-pub struct PageIter {
-    start: Page,
-    end: Page,
-}
+    pub const fn null() -> Frame<S> {
+        Frame { number: 0, _marker: PhantomData }
+    }
 
-#[derive(Clone)]
-pub struct FrameIter {
-    start: Frame,
-    end: Frame,
-}
+    pub const fn size(&self) -> u64 {
+        S::SIZE
+    }
 
-impl Iterator for PageIter {
-    type Item = Page;
+    /// Get the physical address back from the frame
+    pub const fn start_address(&self) -> PhysAddr {
+        PhysAddr::new(self.number * S::SIZE)
+    }
 
-    fn next(&mut self) -> Option<Page> {
-        if self.start <= self.end {
-            let page = self.start;
-            self.start.number += 1;
-            Some(page)
-        } else {
-            None
+    /// Create a iterator of frame start..start+size-1
+    pub fn range(start: Frame<S>, size_in_frames: u64) -> FrameIter<S> {
+        if size_in_frames == 0 {
+            return FrameIter::empty();
         }
+        FrameIter { start, end: Frame { number: start.number + size_in_frames - 1, _marker: PhantomData } }
+    }
+
+    /// Create a iterator of frame start-end (inclusive)
+    pub const fn range_inclusive(start: Frame<S>, end: Frame<S>) -> FrameIter<S> {
+        FrameIter { start, end }
+    }
+
+    pub const fn number(&self) -> u64 {
+        self.number
+    }
+
+    pub fn erase(self) -> AnyFrame
+    where
+        AnyFrame: From<Frame<S>>,
+    {
+        self.into()
     }
 }
 
-impl Iterator for FrameIter {
-    type Item = Frame;
+impl<S: PageSize> From<Frame<S>> for PhysAddr {
+    fn from(value: Frame<S>) -> Self {
+        value.start_address()
+    }
+}
 
-    fn next(&mut self) -> Option<Frame> {
+impl<S: PageSize> From<PhysAddr> for Frame<S> {
+    fn from(value: PhysAddr) -> Self {
+        Self::containing_address(value)
+    }
+}
+
+impl<S: PageSize, O: PageSize> PartialEq<Frame<O>> for Frame<S> {
+    fn eq(&self, other: &Frame<O>) -> bool {
+        self.start_address() == other.start_address()
+    }
+}
+
+impl<S: PageSize> Eq for Frame<S> {}
+
+impl<S: PageSize, O: PageSize> PartialOrd<Frame<O>> for Frame<S> {
+    fn partial_cmp(&self, other: &Frame<O>) -> Option<Ordering> {
+        Some(self.start_address().cmp(&other.start_address()))
+    }
+}
+
+impl<S: PageSize> Ord for Frame<S> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.start_address().cmp(&other.start_address())
+    }
+}
+
+/// A dynamically sized frame
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnyFrame {
+    Frame4K(Frame<Size4K>),
+    Frame2M(Frame<Size2M>),
+    Frame1G(Frame<Size1G>),
+}
+
+#[macro_export]
+macro_rules! any_frame_select {
+    ($dyn: ident, ($name: ident) => $select: expr) => {
+        match $dyn {
+            AnyFrame::Frame4K($name) => $select,
+            AnyFrame::Frame2M($name) => $select,
+            AnyFrame::Frame1G($name) => $select,
+        }
+    };
+}
+
+impl AnyFrame {
+    /// See [Frame::start_address]
+    pub const fn start_address(&self) -> PhysAddr {
+        any_frame_select!(self, (frame) => frame.start_address())
+    }
+
+    pub const fn size(&self) -> u64 {
+        any_frame_select!(self, (frame) => frame.size())
+    }
+}
+
+impl From<Frame<Size4K>> for AnyFrame {
+    fn from(value: Frame<Size4K>) -> Self {
+        Self::Frame4K(value)
+    }
+}
+
+impl From<Frame<Size2M>> for AnyFrame {
+    fn from(value: Frame<Size2M>) -> Self {
+        Self::Frame2M(value)
+    }
+}
+
+impl From<Frame<Size1G>> for AnyFrame {
+    fn from(value: Frame<Size1G>) -> Self {
+        Self::Frame1G(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct FrameIter<S: PageSize> {
+    start: Frame<S>,
+    end: Frame<S>,
+}
+
+impl<S: PageSize> FrameIter<S> {
+    pub fn empty() -> Self {
+        Self { start: Frame { number: 1, _marker: PhantomData }, end: Frame { number: 0, _marker: PhantomData } }
+    }
+}
+
+impl<S: PageSize> Iterator for FrameIter<S> {
+    type Item = Frame<S>;
+
+    fn next(&mut self) -> Option<Frame<S>> {
         if self.start <= self.end {
             let frame = self.start;
             self.start.number += 1;
@@ -87,68 +172,51 @@ impl Iterator for FrameIter {
     }
 }
 
-impl From<PhysAddr> for Frame {
-    fn from(value: PhysAddr) -> Self {
-        Self::containing_address(value)
-    }
+/// A page is an representation of an [`virtual address`] that is aligned on 4KB boundries
+///
+/// [`virtual address`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
+#[derive(Debug, Clone, Copy)]
+pub struct Page<S: PageSize> {
+    number: u64,
+    _marker: PhantomData<S>,
 }
 
-impl Frame {
-    /// Create a frame containing the provided physical address
-    ///
-    /// if the address is not aligned this will create a frame contatining the frame that covers
-    /// that address
-    pub const fn containing_address(address: PhysAddr) -> Frame {
-        Frame { number: address.as_u64() / PAGE_SIZE }
-    }
-
-    pub const fn null() -> Frame {
-        Frame { number: 0 }
-    }
-
-    /// Get the physical address back from the frame
-    pub const fn start_address(&self) -> PhysAddr {
-        PhysAddr::new(self.number * PAGE_SIZE)
-    }
-
-    /// Create a iterator of frame start-end (inclusive)
-    pub const fn range_inclusive(start: Frame, end: Frame) -> FrameIter {
-        FrameIter { start, end }
-    }
-
-    /// Get the frame number
-    pub const fn number(&self) -> u64 {
-        self.number
-    }
-
-    /// Add the frame number by the page number, and consume the current one
-    pub const fn add_by_page(mut self, number: u64) -> Frame {
-        self.number += number;
-        self
-    }
-}
-
-impl Page {
+impl<S: PageSize> Page<S> {
     /// Create a page contating the provided virtual address
     ///
     /// if the address is not aligned this will create a page contatining the frame that covers
     /// that address
-    pub const fn containing_address(address: VirtAddr) -> Page {
-        Page { number: address.0 / PAGE_SIZE }
+    pub const fn containing_address(address: VirtAddr) -> Page<S> {
+        Page { number: address.0 / S::SIZE, _marker: PhantomData }
     }
 
     /// Just a dummy page if anyone needs it
     ///
     /// Create a deadbeef page
     pub const fn deadbeef() -> Self {
-        Self { number: 0xdeadbeef }
+        Self { number: 0xdeadbeef, _marker: PhantomData }
     }
 
     /// Also just a dummy page if anyone needs it
     ///
     /// Create a cafebabe page
     pub const fn cafebabe() -> Self {
-        Self { number: 0xcafebabe }
+        Self { number: 0xcafebabe, _marker: PhantomData }
+    }
+
+    /// Create a iterator of page start-start+size (inclusive)
+    pub fn range(start: Page<S>, size_in_pages: u64) -> PageIter<S> {
+        if size_in_pages == 0 {
+            return PageIter::empty();
+        }
+
+        PageIter { start, end: Page { number: start.number + size_in_pages - 1, _marker: PhantomData } }
+    }
+
+    /// Create a iterator of page start-end (inclusive)
+    pub fn range_inclusive(start: Page<S>, end: Page<S>) -> PageIter<S> {
+        assert!(start <= end);
+        PageIter { start, end }
     }
 
     /// Get the start address of this frame
@@ -157,7 +225,7 @@ impl Page {
     /// if this was created from contating address, this function does not return the original
     /// virtual address
     pub const fn start_address(&self) -> VirtAddr {
-        VirtAddr::new(self.number * PAGE_SIZE)
+        VirtAddr::new(self.number * S::SIZE)
     }
 
     pub const fn page_number(&self) -> u64 {
@@ -167,115 +235,225 @@ impl Page {
     /// Get the page 4 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p4_index(&self) -> u64 {
-        (self.number >> 27) & 0o777
+    pub const fn p4_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 27) & 0o777
     }
 
     /// Get the page 3 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p3_index(&self) -> u64 {
-        (self.number >> 18) & 0o777
+    pub const fn p3_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 18) & 0o777
     }
 
     /// Get the page 2 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p2_index(&self) -> u64 {
-        (self.number >> 9) & 0o777
+    pub const fn p2_index(&self) -> u64 {
+        ((self.number * S::SIZE / PAGE_SIZE) >> 9) & 0o777
     }
 
     /// Get the page 1 index of the containing page (use in [`paging`])
     ///
     /// [`paging`]: <https://wiki.osdev.org/Paging>
-    pub fn p1_index(&self) -> u64 {
-        self.number & 0o777
+    pub const fn p1_index(&self) -> u64 {
+        (self.number * S::SIZE / PAGE_SIZE) & 0o777
     }
 
-    /// Create a iterator of page start-end (inclusive)
-    pub fn range_inclusive(start: Page, end: Page) -> PageIter {
-        PageIter { start, end }
+    pub const fn size(&self) -> u64 {
+        S::SIZE
+    }
+
+    pub fn erase(self) -> AnyPage
+    where
+        AnyPage: From<Page<S>>,
+    {
+        self.into()
     }
 }
 
-impl From<VirtAddr> for Page {
+impl<S: PageSize> From<Page<S>> for VirtAddr {
+    fn from(value: Page<S>) -> Self {
+        value.start_address()
+    }
+}
+
+impl<S: PageSize> From<VirtAddr> for Page<S> {
     fn from(value: VirtAddr) -> Self {
         Self::containing_address(value)
     }
 }
 
-impl PhysAddr {
-    /// Create a new physical address from u64
-    ///
-    /// # Panics
-    ///
-    /// If the bit 52-63 (inclusive) was set, this will panic
-    #[inline(always)]
-    pub const fn new(address: u64) -> Self {
-        let truncated = Self::new_truncate(address);
-        if truncated.0 != address {
-            panic!("bits 52-63 in physical address was set");
+impl<S: PageSize, O: PageSize> PartialEq<Page<O>> for Page<S> {
+    fn eq(&self, other: &Page<O>) -> bool {
+        self.start_address() == other.start_address()
+    }
+}
+
+impl<S: PageSize> Eq for Page<S> {}
+
+impl<S: PageSize, O: PageSize> PartialOrd<Page<O>> for Page<S> {
+    fn partial_cmp(&self, other: &Page<O>) -> Option<Ordering> {
+        Some(self.start_address().cmp(&other.start_address()))
+    }
+}
+
+impl<S: PageSize> Ord for Page<S> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.start_address().cmp(&other.start_address())
+    }
+}
+
+/// A dynamically sized page
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnyPage {
+    Page4K(Page<Size4K>),
+    Page2M(Page<Size2M>),
+    Page1G(Page<Size1G>),
+}
+
+#[macro_export]
+macro_rules! any_page_select {
+    ($dyn: ident, ($name: ident) => $select: expr) => {
+        match $dyn {
+            AnyPage::Page4K($name) => $select,
+            AnyPage::Page2M($name) => $select,
+            AnyPage::Page1G($name) => $select,
         }
-        truncated
+    };
+}
+
+impl AnyPage {
+    /// See [Page::start_address]
+    pub const fn start_address(&self) -> VirtAddr {
+        any_page_select!(self, (page) => page.start_address())
     }
 
-    /// Check if the physical address is null
-    #[inline(always)]
-    pub const fn is_null(self) -> bool {
-        self.0 == 0
+    /// See [Page::p4_index()]
+    pub const fn p4_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p4_index())
     }
 
-    /// Create a new physical address from u64
-    ///
-    /// Returns Err if bits 52-63 (inclusive) was set
-    #[inline(always)]
-    pub const fn new_checked(address: u64) -> Result<Self, InvalidPhysAddress> {
-        if address & PHYS_ADDR_MASK != address {
-            return Err(InvalidPhysAddress(address));
+    /// See [Page::p3_index()]
+    pub const fn p3_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p3_index())
+    }
+
+    /// See [Page::p2_index()]
+    pub const fn p2_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p2_index())
+    }
+
+    /// See [Page::p1_index()]
+    pub const fn p1_index(&self) -> u64 {
+        any_page_select!(self, (page) => page.p1_index())
+    }
+
+    /// See [Page::page_number()]
+    pub const fn page_number(&self) -> u64 {
+        any_page_select!(self, (page) => page.page_number())
+    }
+
+    pub const fn size(&self) -> u64 {
+        any_page_select!(self, (page) => page.size())
+    }
+}
+
+impl From<Page<Size4K>> for AnyPage {
+    fn from(value: Page<Size4K>) -> Self {
+        Self::Page4K(value)
+    }
+}
+
+impl From<Page<Size2M>> for AnyPage {
+    fn from(value: Page<Size2M>) -> Self {
+        Self::Page2M(value)
+    }
+}
+
+impl From<Page<Size1G>> for AnyPage {
+    fn from(value: Page<Size1G>) -> Self {
+        Self::Page1G(value)
+    }
+}
+
+#[derive(Clone)]
+pub struct PageIter<S: PageSize> {
+    start: Page<S>,
+    end: Page<S>,
+}
+
+impl<S: PageSize> PageIter<S> {
+    pub fn empty() -> Self {
+        Self { start: Page { number: 1, _marker: PhantomData }, end: Page { number: 0, _marker: PhantomData } }
+    }
+}
+
+impl<S: PageSize> Iterator for PageIter<S> {
+    type Item = Page<S>;
+
+    fn next(&mut self) -> Option<Page<S>> {
+        if self.start <= self.end {
+            let page = self.start;
+            self.start.number += 1;
+            Some(page)
+        } else {
+            None
         }
-        // SAFETY: we already check for the bit 52-63 above
-        unsafe { Ok(Self::new_unchecked(address)) }
-    }
-
-    /// Create a new physical address from u64 and truncate the bits 52-63 (inclusive)
-    #[inline(always)]
-    pub const fn new_truncate(address: u64) -> Self {
-        // SAFETY: we truncate the 52-63 using the bits mask
-        unsafe { Self::new_unchecked(address & PHYS_ADDR_MASK) }
-    }
-
-    /// Create a new physical address from u64
-    ///
-    /// # Safety
-    ///
-    /// The caller must ensure that bits 52-63 (inclusive) is set to zero
-    #[inline(always)]
-    pub const unsafe fn new_unchecked(address: u64) -> Self {
-        Self(address)
-    }
-
-    /// Get the inner value as u64
-    ///
-    /// The value is gurentee to have bits 52-63 unset if this was constructed safely
-    #[inline(always)]
-    pub const fn as_u64(&self) -> u64 {
-        self.0
     }
 }
 
-impl TryFrom<u64> for PhysAddr {
-    type Error = InvalidPhysAddress;
+pub trait PageSize: Clone + Copy {
+    const SIZE: u64;
+    const LEVEL: PageLevel;
 
-    fn try_from(value: u64) -> Result<Self, Self::Error> {
-        Self::new_checked(value)
+    /// get the equivalent page number count of this page size to the target page size
+    fn count_of<O: PageSize>() -> u64 {
+        Self::SIZE / O::SIZE
     }
 }
 
-impl From<PhysAddr> for u64 {
-    fn from(value: PhysAddr) -> Self {
-        value.0
-    }
+impl PageSize for () {
+    const SIZE: u64 = 0;
+    const LEVEL: PageLevel = PageLevel::Page4K;
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size4K;
+
+impl PageSize for Size4K {
+    const SIZE: u64 = 0x1000;
+    const LEVEL: PageLevel = PageLevel::Page4K;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size2M;
+
+impl PageSize for Size2M {
+    const SIZE: u64 = 0x200_000;
+    const LEVEL: PageLevel = PageLevel::Page2M;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Size1G;
+
+impl PageSize for Size1G {
+    const SIZE: u64 = 0x40_000_000;
+    const LEVEL: PageLevel = PageLevel::Page1G;
+}
+
+/// A structure that is gurentee to contain a valid ([`canonical`]) virtual address
+///
+/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VirtAddr(u64);
+
+/// A structure that contains non [`canonical`] virtual address
+///
+/// [`canonical`]: <https://en.wikipedia.org/wiki/X86-64#Virtual_address_space_details>
+#[repr(transparent)]
+pub struct NonCanonicalVirtAddress(pub u64);
 
 impl VirtAddr {
     /// Create a new virtual address from u64
@@ -293,6 +471,16 @@ impl VirtAddr {
         } else {
             panic!("The virtual address is not caniconal and can cause gp fault");
         }
+    }
+
+    pub const fn is_page_align<S: PageSize>(&self) -> bool {
+        debug_assert!(S::SIZE.is_power_of_two());
+        self.0 & (S::SIZE - 1) == 0
+    }
+
+    /// Offset the virtual address by the misalignment of the physical address to the page size
+    pub const fn offset_by_page_misalignment<P: PageSize>(&self, addr: PhysAddr) -> Self {
+        VirtAddr::new(self.as_u64() + (addr.as_u64() & (P::SIZE - 1)))
     }
 
     /// Check if the address is within the canonical upper half
@@ -317,20 +505,12 @@ impl VirtAddr {
         unsafe { Self::new_unchecked(0xffff_ffff_ffff_ffff) }
     }
 
-    pub fn align_to(&self, phys: PhysAddr) -> Self {
-        let misalignment = phys.as_u64() & (PAGE_SIZE - 1);
-        // add it on to the virtual base
-        let raw = self.as_u64().checked_add(misalignment).expect("VirtAddr overflow in align_to");
-        // we know that (self + misalignment) stays canonical if self was
-        unsafe { VirtAddr::new_unchecked(raw) }
-    }
-
     /// Create a new virtual address from u64
     ///
     /// Returns Err if bits 52-63 (inclusive) was set
     #[inline(always)]
     pub const fn new_checked(address: u64) -> Result<Self, NonCanonicalVirtAddress> {
-        if address & PHYS_ADDR_MASK != address {
+        if !Self::is_canonical(address) {
             return Err(NonCanonicalVirtAddress(address));
         }
         // SAFETY: we already check if it's a canonical or not
@@ -399,43 +579,7 @@ impl Hash for VirtAddr {
     }
 }
 
-impl Sub<usize> for PhysAddr {
-    type Output = PhysAddr;
-
-    fn sub(self, rhs: usize) -> Self::Output {
-        Self::new(self.0 - rhs as u64)
-    }
-}
-
-impl Add<u64> for PhysAddr {
-    type Output = PhysAddr;
-
-    fn add(self, rhs: u64) -> Self::Output {
-        Self::new(self.0 + rhs)
-    }
-}
-
-impl Add<usize> for PhysAddr {
-    type Output = PhysAddr;
-
-    fn add(self, rhs: usize) -> Self::Output {
-        Self::new(self.0 + rhs as u64)
-    }
-}
-
-impl AddAssign<u64> for PhysAddr {
-    fn add_assign(&mut self, rhs: u64) {
-        self.0 = Self::new(self.0 + rhs).0;
-    }
-}
-
-impl AddAssign<usize> for PhysAddr {
-    fn add_assign(&mut self, rhs: usize) {
-        self.0 = Self::new(self.0 + rhs as u64).0;
-    }
-}
-
-impl fmt::LowerHex for PhysAddr {
+impl fmt::Display for VirtAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::LowerHex::fmt(&self.0, f)
     }
@@ -496,5 +640,144 @@ impl AddAssign<u64> for VirtAddr {
 impl AddAssign<usize> for VirtAddr {
     fn add_assign(&mut self, rhs: usize) {
         self.0 = Self::new(self.0 + rhs as u64).0;
+    }
+}
+
+/// A structure that contains a valid physical address (bits 52-63 (inclusive) unset)
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PhysAddr(u64);
+
+/// A structure that contains the invalid physical address (bits 52-63 (inclusive) set)
+#[repr(transparent)]
+pub struct InvalidPhysAddress(pub u64);
+
+impl PhysAddr {
+    /// Create a new physical address from u64
+    ///
+    /// # Panics
+    ///
+    /// If the bit 52-63 (inclusive) was set, this will panic
+    #[inline(always)]
+    pub const fn new(address: u64) -> Self {
+        let truncated = Self::new_truncate(address);
+        if truncated.0 != address {
+            panic!("bits 52-63 in physical address was set");
+        }
+        truncated
+    }
+
+    /// Check if the physical address is null
+    #[inline(always)]
+    pub const fn is_null(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn is_page_align<S: PageSize>(&self) -> bool {
+        debug_assert!(S::SIZE.is_power_of_two());
+        self.0 & (S::SIZE - 1) == 0
+    }
+
+    /// Create a new physical address from u64
+    ///
+    /// Returns Err if bits 52-63 (inclusive) was set
+    #[inline(always)]
+    pub const fn new_checked(address: u64) -> Result<Self, InvalidPhysAddress> {
+        if address & PHYS_ADDR_MASK != address {
+            return Err(InvalidPhysAddress(address));
+        }
+        // SAFETY: we already check for the bit 52-63 above
+        unsafe { Ok(Self::new_unchecked(address)) }
+    }
+
+    /// Create a new physical address from u64 and truncate the bits 52-63 (inclusive)
+    #[inline(always)]
+    pub const fn new_truncate(address: u64) -> Self {
+        // SAFETY: we truncate the 52-63 using the bits mask
+        unsafe { Self::new_unchecked(address & PHYS_ADDR_MASK) }
+    }
+
+    /// Create a new physical address from u64
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that bits 52-63 (inclusive) is set to zero
+    #[inline(always)]
+    pub const unsafe fn new_unchecked(address: u64) -> Self {
+        Self(address)
+    }
+
+    pub const fn assume_identity(&self) -> VirtAddr {
+        VirtAddr::new(self.0)
+    }
+
+    /// Get the inner value as u64
+    ///
+    /// The value is gurentee to have bits 52-63 unset if this was constructed safely
+    #[inline(always)]
+    pub const fn as_u64(&self) -> u64 {
+        self.0
+    }
+}
+
+impl TryFrom<u64> for PhysAddr {
+    type Error = InvalidPhysAddress;
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        Self::new_checked(value)
+    }
+}
+
+impl From<PhysAddr> for u64 {
+    fn from(value: PhysAddr) -> Self {
+        value.0
+    }
+}
+
+impl Sub<usize> for PhysAddr {
+    type Output = PhysAddr;
+
+    fn sub(self, rhs: usize) -> Self::Output {
+        Self::new(self.0 - rhs as u64)
+    }
+}
+
+impl Add<u64> for PhysAddr {
+    type Output = PhysAddr;
+
+    fn add(self, rhs: u64) -> Self::Output {
+        Self::new(self.0 + rhs)
+    }
+}
+
+impl Add<usize> for PhysAddr {
+    type Output = PhysAddr;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        Self::new(self.0 + rhs as u64)
+    }
+}
+
+impl AddAssign<u64> for PhysAddr {
+    fn add_assign(&mut self, rhs: u64) {
+        self.0 = Self::new(self.0 + rhs).0;
+    }
+}
+
+impl AddAssign<usize> for PhysAddr {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 = Self::new(self.0 + rhs as u64).0;
+    }
+}
+
+impl fmt::Display for PhysAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
+impl fmt::LowerHex for PhysAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
     }
 }

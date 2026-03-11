@@ -2,7 +2,12 @@ use core::fmt::{Debug, Display};
 
 use bitflags::bitflags;
 use c_enum::c_enum;
-use pager::{DataBuffer, EntryFlags, IdentityMappable, IdentityReplaceable, address::VirtAddr};
+use pager::{
+    DataBuffer, EntryFlags,
+    address::VirtAddr,
+    allocator::FrameAllocator,
+    paging::{Transferable, table::RootLevel},
+};
 
 use crate::ElfError;
 
@@ -136,15 +141,13 @@ impl<'a> ElfReader<'a> {
     }
 }
 
-unsafe impl IdentityReplaceable for ElfReader<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.buffer.identity_replace(mapper);
-    }
-}
-
-unsafe impl IdentityMappable for ElfReader<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.buffer.map(mapper);
+impl Transferable for ElfReader<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
+        self.buffer.transfer(transferor, replace);
     }
 }
 

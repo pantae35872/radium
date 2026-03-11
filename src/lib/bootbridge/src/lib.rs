@@ -10,11 +10,12 @@ use bitflags::bitflags;
 use c_enum::c_enum;
 use packery::Packed;
 use pager::{
-    DataBuffer, EntryFlags, IdentityMappable, IdentityReplaceable,
-    address::{Frame, PhysAddr, VirtAddr},
-    allocator::linear_allocator::LinearAllocator,
+    DataBuffer, EntryFlags,
+    address::{PhysAddr, VirtAddr},
+    allocator::FrameAllocator,
+    paging::{Transferable, table::RootLevel},
 };
-use santa::Elf;
+use santa::{Elf, LoadedElf};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RawData {
@@ -39,12 +40,6 @@ impl RawData {
 
     pub fn end(&self) -> PhysAddr {
         self.start + self.size - 1
-    }
-}
-
-unsafe impl IdentityMappable for RawData {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe { mapper.identity_map_by_size(self.start().into(), self.size(), EntryFlags::WRITABLE) };
     }
 }
 
@@ -128,18 +123,6 @@ pub enum MemoryType: u32 {
 }
 }
 
-#[derive(Debug)]
-pub struct MemoryMapIterMut<'map, 'buf> {
-    memory_map: &'map mut MemoryMap<'buf>,
-    index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryMapIter<'buf> {
-    memory_map: &'buf MemoryMap<'buf>,
-    index: usize,
-}
-
 /// A reimplementation of the uefi memory map
 #[derive(Debug, Clone)]
 pub struct MemoryMap<'a> {
@@ -178,30 +161,16 @@ pub struct RawBootBridge {
     dwarf_data: Option<DwarfBaker<'static>>,
     packed: Option<Packed<'static>>,
     kernel_elf: Elf<'static>,
+    loaded_kernel_elf: LoadedElf<'static>,
     memory_map: MemoryMap<'static>,
     graphics_info: GraphicsInfo,
     rsdp: PhysAddr,
-    kernel_base: PhysAddr,
-    early_alloc: LinearAllocator,
     runtime_service_ptr: PhysAddr,
 }
 
 #[derive(Debug)]
 pub struct BootBridgeBuilder {
     pub boot_bridge: *mut RawBootBridge,
-}
-
-unsafe impl IdentityMappable for BootBridgeBuilder {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        let boot_bridge = self.boot_bridge;
-        unsafe {
-            mapper.identity_map_by_size(
-                Frame::containing_address(PhysAddr::new(boot_bridge as u64)),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            );
-        };
-    }
 }
 
 impl BootBridgeBuilder {
@@ -230,15 +199,15 @@ impl BootBridgeBuilder {
         self
     }
 
-    pub fn kernel_elf(&mut self, elf: Elf<'static>) -> &mut Self {
+    pub fn kernel_loaded_elf(&mut self, elf: LoadedElf<'static>) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_elf = elf;
+        boot_bridge.loaded_kernel_elf = elf;
         self
     }
 
-    pub fn early_alloc(&mut self, early_alloc: LinearAllocator) -> &mut Self {
+    pub fn kernel_elf(&mut self, elf: Elf<'static>) -> &mut Self {
         let boot_bridge = self.inner_bridge();
-        boot_bridge.early_alloc = early_alloc;
+        boot_bridge.kernel_elf = elf;
         self
     }
 
@@ -263,12 +232,6 @@ impl BootBridgeBuilder {
     pub fn memory_map(&mut self, memory_map: MemoryMap<'static>) -> &mut Self {
         let boot_bridge = self.inner_bridge();
         boot_bridge.memory_map = memory_map;
-        self
-    }
-
-    pub fn kernel_base(&mut self, base: PhysAddr) -> &mut Self {
-        let boot_bridge = self.inner_bridge();
-        boot_bridge.kernel_base = base;
         self
     }
 
@@ -326,16 +289,12 @@ impl BootBridge {
         self.deref().font_data
     }
 
-    pub fn kernel_base(&self) -> PhysAddr {
-        self.deref().kernel_base
-    }
-
-    pub fn early_alloc(&self) -> &LinearAllocator {
-        &self.deref().early_alloc
-    }
-
     pub fn kernel_elf(&self) -> &Elf<'static> {
         &self.deref().kernel_elf
+    }
+
+    pub fn loaded_kernel(&mut self) -> &mut LoadedElf<'static> {
+        &mut self.deref_mut().loaded_kernel_elf
     }
 
     pub fn packed_programs(&mut self) -> Packed<'static> {
@@ -350,47 +309,39 @@ impl BootBridge {
         self.deref().runtime_service_ptr
     }
 
-    pub fn ptr(&self) -> usize {
-        self.0.load(Ordering::SeqCst) as usize
+    pub fn ptr(&self) -> *mut RawBootBridge {
+        self.0.load(Ordering::SeqCst)
     }
 }
 
-unsafe impl IdentityReplaceable for BootBridge {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
+impl Transferable for BootBridge {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
         let current = self.0.load(Ordering::SeqCst);
-        let new =
-            unsafe { mapper.map(PhysAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE) };
-        self.deref_mut().memory_map.identity_replace(mapper);
-        self.deref_mut().kernel_elf.identity_replace(mapper);
-        self.deref_mut().dwarf_data.identity_replace(mapper);
-        self.deref_mut().packed.identity_replace(mapper);
-        *self = Self::new(new.as_mut_ptr())
+
+        self.deref_mut().memory_map.transfer(transferor, replace);
+        self.deref_mut().kernel_elf.transfer(transferor, replace);
+        self.deref_mut().dwarf_data.transfer(transferor, replace);
+        self.deref_mut().packed.transfer(transferor, replace);
+        self.deref_mut().loaded_kernel_elf.transfer(transferor, replace);
+
+        let new = transferor
+            .transfer(VirtAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE)
+            .expect("Boot bridge transfer failed");
+        self.0 = AtomicPtr::new(new.as_mut_ptr());
     }
 }
 
-unsafe impl IdentityReplaceable for MemoryMap<'_> {
-    fn identity_replace<T: pager::Mapper>(&mut self, mapper: &mut pager::MapperWithVirtualAllocator<T>) {
-        self.memory_map.identity_replace(mapper);
-    }
-}
-
-unsafe impl IdentityMappable for BootBridge {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        unsafe {
-            mapper.identity_map_by_size(
-                PhysAddr::new(self.0.load(Ordering::SeqCst) as u64).into(),
-                size_of::<RawBootBridge>(),
-                EntryFlags::WRITABLE,
-            );
-        };
-        self.deref().memory_map.map(mapper);
-        self.deref().kernel_elf.map(mapper);
-    }
-}
-
-unsafe impl IdentityMappable for MemoryMap<'_> {
-    fn map(&self, mapper: &mut impl pager::Mapper) {
-        self.memory_map.map(mapper);
+impl Transferable for MemoryMap<'_> {
+    fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
+        &mut self,
+        transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
+        replace: bool,
+    ) {
+        self.memory_map.transfer(transferor, replace);
     }
 }
 
@@ -438,6 +389,10 @@ impl<'a> MemoryMap<'a> {
     pub fn entries_mut<'b>(&'b mut self) -> MemoryMapIterMut<'b, 'a> {
         MemoryMapIterMut { memory_map: self, index: 0 }
     }
+
+    pub fn entries_owned(&self) -> MemoryMapIterOwned<'a> {
+        MemoryMapIterOwned { memory_map: self.clone(), index: 0 }
+    }
 }
 
 impl GraphicsInfo {
@@ -458,6 +413,12 @@ impl GraphicsInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MemoryMapIter<'buf> {
+    memory_map: &'buf MemoryMap<'buf>,
+    index: usize,
+}
+
 impl<'a> Iterator for MemoryMapIter<'a> {
     type Item = &'a MemoryDescriptor;
 
@@ -470,11 +431,40 @@ impl<'a> Iterator for MemoryMapIter<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct MemoryMapIterMut<'map, 'buf> {
+    memory_map: &'map mut MemoryMap<'buf>,
+    index: usize,
+}
+
 impl<'b> Iterator for MemoryMapIterMut<'_, 'b> {
     type Item = &'b mut MemoryDescriptor;
 
     fn next(&mut self) -> Option<Self::Item> {
         let desc = self.memory_map.get_mut(self.index)?;
+
+        self.index += 1;
+        Some(desc)
+    }
+}
+
+#[derive(Debug)]
+pub struct MemoryMapIterOwned<'buf> {
+    memory_map: MemoryMap<'buf>,
+    index: usize,
+}
+
+impl<'a> MemoryMapIterOwned<'a> {
+    pub fn replace_map(&mut self, owned: MemoryMap<'a>) {
+        self.memory_map = owned;
+    }
+}
+
+impl<'buf> Iterator for MemoryMapIterOwned<'buf> {
+    type Item = &'buf MemoryDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let desc = self.memory_map.get(self.index)?;
 
         self.index += 1;
         Some(desc)

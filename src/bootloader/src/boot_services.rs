@@ -1,8 +1,12 @@
 use alloc::{ffi::CString, format};
 use bootbridge::RawData;
-use pager::address::PhysAddr;
+use pager::{
+    address::{PhysAddr, Size4K},
+    allocator::{FrameAllocator, IdentityAllocator},
+};
 use uefi::{
     CStr16,
+    prelude::BootServices,
     proto::{
         loaded_image::LoadedImage,
         media::{
@@ -11,7 +15,7 @@ use uefi::{
         },
         network::{IpAddress, pxe::BaseCode},
     },
-    table::boot::MemoryType,
+    table::boot::{AllocateType, MemoryType},
 };
 
 use uefi_raw::protocol::file_system::FileAttribute;
@@ -140,3 +144,26 @@ impl Drop for LoaderFile {
         }
     }
 }
+
+pub struct BootServiceFrameAlloc<'a>(pub &'a BootServices);
+
+/// SAFETY: This is just a relay to []
+unsafe impl FrameAllocator for BootServiceFrameAlloc<'_> {
+    fn allocate_frame<S: pager::address::PageSize>(&mut self) -> Option<pager::address::Frame<S>> {
+        self.0
+            .allocate_pages(AllocateType::AnyPages, MemoryType::LOADER_CODE, S::count_of::<Size4K>() as usize)
+            .map(|e| PhysAddr::new(e).into())
+            .ok()
+    }
+
+    fn deallocate_frame<S: pager::address::PageSize>(&mut self, frame: pager::address::Frame<S>) {
+        unsafe {
+            system_table().boot_services().free_pages(frame.start_address().as_u64(), S::count_of::<Size4K>() as usize)
+        }
+        .unwrap();
+    }
+}
+
+// SAFETY: UEFI somewhat guarantee that the frame will be accessable and writeable since most of
+// the time the firmware implemenation identity mapped memories
+unsafe impl IdentityAllocator for BootServiceFrameAlloc<'_> {}

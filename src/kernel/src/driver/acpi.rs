@@ -5,8 +5,8 @@ use aml::{AmlContext, AmlHandle};
 use fadt::Fadt;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
-    EntryFlags, Mapper, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+    address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use rsdt::Xrsdt;
@@ -17,6 +17,7 @@ use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
     initialize_guard,
     interrupt::apic::ApicId,
+    memory::Frame,
     memory::MMIOBufferInfo,
 };
 
@@ -140,9 +141,9 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
     unsafe fn new(address: u64, ctx: &mut InitializationContext<Stage1>) -> Option<&'static AcpiSdt<T>> {
         log!(Trace, "Accessing acpi table. address: {:#x}", address);
         unsafe {
-            ctx.mapper().identity_map_by_size(
+            ctx.mapper().identity_map_auto(
                 Frame::containing_address(PhysAddr::new(address)),
-                size_of::<AcpiSdt<EmptySdt>>(),
+                size_of::<AcpiSdt<EmptySdt>>().div_ceil(PAGE_SIZE as usize),
                 EntryFlags::PRESENT | EntryFlags::NO_CACHE,
             )
         };
@@ -152,21 +153,25 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         let sdt_size = detect_sdt.length;
         let _ = detect_sdt;
         unsafe {
-            ctx.mapper().unmap_addr(Page::containing_address(VirtAddr::new(address)));
+            let start_page = Page::<Size4K>::containing_address(VirtAddr::new(address));
+            ctx.mapper().unmap_page_size(start_page, size_of::<AcpiSdt<EmptySdt>>());
         }
         if sdt_signature != T::signature() {
             return None;
         }
-        let virt_sdt = virt_addr_alloc(sdt_size as u64 / PAGE_SIZE + 1);
+        let virt_sdt = virt_addr_alloc::<Size4K>(sdt_size as u64 / PAGE_SIZE + 1);
+        let page_count = (sdt_size as usize).div_ceil(PAGE_SIZE as usize);
         unsafe {
-            ctx.mapper().map_to_range_by_size(
+            ctx.mapper().map_to_auto(
                 virt_sdt,
                 Frame::containing_address(PhysAddr::new(address)),
-                sdt_size as usize,
+                page_count,
                 EntryFlags::NO_EXECUTE,
             )
         };
-        let table = unsafe { Self::from_raw(virt_sdt.start_address().align_to(PhysAddr::new(address))) };
+        let table = unsafe {
+            Self::from_raw(virt_sdt.start_address().offset_by_page_misalignment::<Size4K>(PhysAddr::new(address)))
+        };
         table.validate_checksum();
         return Some(table);
     }

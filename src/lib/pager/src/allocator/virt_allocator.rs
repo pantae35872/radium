@@ -1,9 +1,6 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use crate::{
-    PAGE_SIZE,
-    address::{Frame, FrameIter, Page, PageIter, PhysAddr, VirtAddr},
-};
+use crate::address::{Frame, FrameIter, Page, PageIter, PageSize, PhysAddr, VirtAddr};
 
 /// Same as linear allocator but allocate virtual address instead
 /// and atomic too
@@ -20,14 +17,14 @@ impl VirtualAllocator {
         Self { orginal_start: start, current: AtomicU64::new(start.as_u64()), size }
     }
 
-    pub fn range_frame(&self) -> FrameIter {
+    pub fn range_frame<S: PageSize>(&self) -> FrameIter<S> {
         Frame::range_inclusive(
             PhysAddr::new(self.original_start().as_u64()).into(),
             PhysAddr::new(self.end().as_u64()).into(),
         )
     }
 
-    pub fn range(&self) -> PageIter {
+    pub fn range<S: PageSize>(&self) -> PageIter<S> {
         Page::range_inclusive(self.original_start().into(), self.end().into())
     }
 
@@ -47,10 +44,10 @@ impl VirtualAllocator {
         VirtAddr::new(self.current.load(Ordering::Relaxed))
     }
 
-    pub fn allocate(&self, size_in_pages: usize) -> Option<Page> {
+    pub fn allocate<S: PageSize>(&self, size_in_pages: usize) -> Option<Page<S>> {
         assert_ne!(size_in_pages, 0);
         // + 1 for the guard page, in case i messed up
-        let current = self.current.fetch_add(PAGE_SIZE * (size_in_pages + 1) as u64, Ordering::SeqCst);
+        let current = self.current.fetch_add(S::SIZE * (size_in_pages + 1) as u64, Ordering::SeqCst);
         if current >= self.end().as_u64() {
             return None;
         }
