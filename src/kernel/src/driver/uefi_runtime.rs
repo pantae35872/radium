@@ -372,10 +372,7 @@ impl UefiRuntime {
         {
             mapper_upper(|mut mapper| unsafe {
                 let start_page = Page::<Size4K>::containing_address(VirtAddr::new(ufu_stuff.phys_start.as_u64()));
-                let end_page = Page::<Size4K>::containing_address(
-                    VirtAddr::new(ufu_stuff.phys_start.as_u64() + ufu_stuff.page_count * PAGE_SIZE - 1),
-                );
-                mapper.unmap_page_ranges(start_page, end_page);
+                mapper.unmap_page_size(start_page, (ufu_stuff.page_count * PAGE_SIZE) as usize);
             })
         }
 

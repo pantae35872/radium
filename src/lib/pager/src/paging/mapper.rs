@@ -10,10 +10,6 @@ use super::EntryFlags;
 use super::table::Table;
 use core::ptr::NonNull;
 
-pub struct Mapper<Root: RootLevel> {
-    p4: NonNull<Table<Root>>,
-}
-
 pub struct MapperWithAllocator<'a, Root: RootLevel, A: FrameAllocator> {
     pub mapper: &'a mut Mapper<Root>,
     pub allocator: &'a mut A,
@@ -24,22 +20,27 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         Self { mapper, allocator }
     }
 
+    /// Just a mirror; see [`Mapper::p4`].
     pub fn p4(&self) -> &Table<Root> {
         self.mapper.p4()
     }
 
+    /// Just a mirror; see [`Mapper::p4_mut`].
     pub fn p4_mut(&mut self) -> &mut Table<Root> {
         self.mapper.p4_mut()
     }
 
+    /// Just a mirror; see [`Mapper::populate_p4_lower_half`].
     pub fn populate_p4_lower_half(&mut self) {
         self.mapper.populate_p4_lower_half(self.allocator);
     }
 
+    /// Just a mirror; see [`Mapper::populate_p4_upper_half`].
     pub fn populate_p4_upper_half(&mut self) {
         self.mapper.populate_p4_upper_half(self.allocator);
     }
 
+    /// Just a mirror; see [`Mapper::transfer`].
     pub fn transfer<T: Transferable, RefRoot: RootLevel>(
         &mut self,
         reference_mapping: &Mapper<RefRoot>,
@@ -49,18 +50,28 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         self.mapper.transfer(reference_mapping, transferable, self.allocator, replace)
     }
 
+    /// Just a mirror; see [`Mapper::translate`].
     pub fn translate(&self, virtual_address: VirtAddr) -> Option<PhysAddr> {
         self.mapper.translate(virtual_address)
     }
 
+    /// Just a mirror; see [`Mapper::translate_page`].
     pub fn translate_page<S: PageSize>(&self, page: Page<S>) -> Option<AnyFrame> {
         self.mapper.translate_page(page)
     }
 
+    /// Just a mirror; see [`Mapper::change_flags`].
+    ///
+    /// # Safety
+    /// See [`Mapper::change_flags`].
     pub unsafe fn change_flags<S: PageSize>(&mut self, page: Page<S>, map: impl FnOnce(EntryFlags) -> EntryFlags) {
         unsafe { self.mapper.change_flags(page, map) }
     }
 
+    /// Just a mirror; see [`Mapper::change_flags_ranges`].
+    ///
+    /// # Safety
+    /// See [`Mapper::change_flags_ranges`].
     pub unsafe fn change_flags_ranges<S: PageSize>(
         &mut self,
         start_page: Page<S>,
@@ -70,22 +81,36 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         unsafe { self.mapper.change_flags_ranges(start_page, end_page, map) }
     }
 
+    /// Just a mirror; see [`Mapper::map`].
     pub fn map<S: PageSize>(&mut self, page: Page<S>, flags: EntryFlags) {
         self.mapper.map(page, flags, self.allocator)
     }
 
+    /// Just a mirror; see [`Mapper::map_range`].
     pub fn map_range<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>, flags: EntryFlags) {
         self.mapper.map_range(start_page, end_page, flags, self.allocator)
     }
 
+    /// Just a mirror; see [`Mapper::map_to`].
+    ///
+    /// # Safety
+    /// See [`Mapper::map_to`].
     pub unsafe fn map_to<S: PageSize>(&mut self, page: Page<S>, frame: Frame<S>, flags: EntryFlags) {
         unsafe { self.mapper.map_to(page, frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::map_to_any`].
+    ///
+    /// # Safety
+    /// See [`Mapper::map_to_any`].
     pub unsafe fn map_to_any(&mut self, page: AnyPage, frame: AnyFrame, flags: EntryFlags) {
         unsafe { self.mapper.map_to_any(page, frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::map_to_range`].
+    ///
+    /// # Safety
+    /// See [`Mapper::map_to_range`].
     pub unsafe fn map_to_range<S: PageSize>(
         &mut self,
         start_page: Page<S>,
@@ -97,6 +122,10 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         unsafe { self.mapper.map_to_range(start_page, end_page, start_frame, end_frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::map_to_range_size`].
+    ///
+    /// # Safety
+    /// See [`Mapper::map_to_range_size`].
     pub unsafe fn map_to_range_size<S: PageSize>(
         &mut self,
         start_page: Page<S>,
@@ -107,6 +136,10 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         unsafe { self.mapper.map_to_range_size(start_page, start_frame, size, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::map_to_auto`].
+    ///
+    /// # Safety
+    /// See [`Mapper::map_to_auto`].
     pub unsafe fn map_to_auto(
         &mut self,
         start_page: Page<Size4K>,
@@ -117,14 +150,26 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         unsafe { self.mapper.map_to_auto(start_page, start_frame, page_count, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::identity_map`].
+    ///
+    /// # Safety
+    /// See [`Mapper::identity_map`].
     pub unsafe fn identity_map<S: PageSize>(&mut self, frame: Frame<S>, flags: EntryFlags) {
         unsafe { self.mapper.identity_map(frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::identity_map_any`].
+    ///
+    /// # Safety
+    /// See [`Mapper::identity_map_any`].
     pub unsafe fn identity_map_any<S: PageSize>(&mut self, frame: AnyFrame, flags: EntryFlags) {
         unsafe { self.mapper.identity_map_any::<_, S>(frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::identity_map_range`].
+    ///
+    /// # Safety
+    /// See [`Mapper::identity_map_range`].
     pub unsafe fn identity_map_range<S: PageSize>(
         &mut self,
         start_frame: Frame<S>,
@@ -134,33 +179,73 @@ impl<'a, Root: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, Root, A> {
         unsafe { self.mapper.identity_map_range(start_frame, end_frame, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::identity_map_auto`].
+    ///
+    /// # Safety
+    /// See [`Mapper::identity_map_auto`].
     pub unsafe fn identity_map_auto(&mut self, frame: Frame<Size4K>, page_count: usize, flags: EntryFlags) {
         unsafe { self.mapper.identity_map_auto(frame, page_count, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::identity_map_addr_auto`].
+    ///
+    /// # Safety
+    /// See [`Mapper::identity_map_addr_auto`].
     pub unsafe fn identity_map_addr_auto(&mut self, addr: PhysAddr, size: usize, flags: EntryFlags) {
         unsafe { self.mapper.identity_map_addr_auto(addr, size, flags, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::unmap_page_ranges`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap_page_ranges`].
     pub unsafe fn unmap_page_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
         unsafe { self.mapper.unmap_page_ranges(start_page, end_page) }
     }
 
+    /// Just a mirror; see [`Mapper::unmap_page_size`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap_page_size`].
+    pub unsafe fn unmap_page_size<S: PageSize>(&mut self, start_page: Page<S>, size: usize) {
+        unsafe { self.mapper.unmap_page_size(start_page, size) }
+    }
+
+    /// Just a mirror; see [`Mapper::unmap_page`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap_page`].
     pub unsafe fn unmap_page<S: PageSize>(&mut self, page: Page<S>) -> AnyFrame {
         unsafe { self.mapper.unmap_page(page) }
     }
 
+    /// Just a mirror; see [`Mapper::unmap_addr_any`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap_addr_any`].
     pub unsafe fn unmap_addr_any<S: PageSize>(&mut self, page: AnyPage) -> AnyFrame {
         unsafe { self.mapper.unmap_addr_any::<S>(page) }
     }
 
+    /// Just a mirror; see [`Mapper::unmap_ranges`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap_ranges`].
     pub unsafe fn unmap_ranges<S: PageSize>(&mut self, start_page: Page<S>, end_page: Page<S>) {
         unsafe { self.mapper.unmap_ranges(start_page, end_page, self.allocator) }
     }
 
+    /// Just a mirror; see [`Mapper::unmap`].
+    ///
+    /// # Safety
+    /// See [`Mapper::unmap`].
     pub unsafe fn unmap<S: PageSize>(&mut self, page: Page<S>) {
         unsafe { self.mapper.unmap(page, self.allocator) }
     }
+}
+
+pub struct Mapper<Root: RootLevel> {
+    p4: NonNull<Table<Root>>,
 }
 
 impl<Root> Mapper<Root>
@@ -609,6 +694,15 @@ impl<Root: RootLevel> Mapper<Root> {
         Page::range_inclusive(start_page, end_page).for_each(|page| unsafe {
             self.unmap_page(page);
         })
+    }
+
+    /// Unmap a range starting at `start_page` for `size` bytes.
+    ///
+    /// # Safety
+    /// See [`Self::unmap_addr`]
+    pub unsafe fn unmap_page_size<S: PageSize>(&mut self, start_page: Page<S>, size: usize) {
+        let end_page = Page::containing_address(start_page.start_address() + size - 1);
+        unsafe { self.unmap_page_ranges(start_page, end_page) };
     }
 
     /// Unmap the page from the page table and return the pointed frame

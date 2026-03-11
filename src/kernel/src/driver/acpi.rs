@@ -154,9 +154,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         let _ = detect_sdt;
         unsafe {
             let start_page = Page::<Size4K>::containing_address(VirtAddr::new(address));
-            let end_page =
-                Page::<Size4K>::containing_address(VirtAddr::new(address + size_of::<AcpiSdt<EmptySdt>>() as u64 - 1));
-            ctx.mapper().unmap_page_ranges(start_page, end_page);
+            ctx.mapper().unmap_page_size(start_page, size_of::<AcpiSdt<EmptySdt>>());
         }
         if sdt_signature != T::signature() {
             return None;

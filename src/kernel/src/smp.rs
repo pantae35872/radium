@@ -79,17 +79,15 @@ impl ApInitializer {
         let trampoline_size =
             unsafe { &__trampoline_end as *const u8 as usize - &__trampoline_start as *const u8 as usize };
 
-        // Safety we already allocted this at the bootloader
+        // SAFETY: we already allocted this at the bootloader
         let mut boot_alloc = unsafe { LinearAllocator::new(PhysAddr::new(0x100000), 64 * PAGE_SIZE as usize) };
 
         unsafe {
             let mappings = boot_alloc.mappings();
-            ctx.mapper()
-                .identity_map_addr_auto(mappings.start(), mappings.size(), EntryFlags::WRITABLE);
+            ctx.mapper().identity_map_addr_auto(mappings.start(), mappings.size(), EntryFlags::WRITABLE)
         };
-        unsafe {
-            core::ptr::write_bytes(boot_alloc.original_start().as_u64() as *mut u8, 0, boot_alloc.size());
-        }
+
+        unsafe { core::ptr::write_bytes(boot_alloc.original_start().as_u64() as *mut u8, 0, boot_alloc.size()) };
 
         let p4_table = boot_alloc.allocate_frame().expect("Failed to allocate frame for temporary early boot");
         let mut bootstrap_table =
@@ -98,11 +96,8 @@ impl ApInitializer {
         let ctx = ctx.context_mut();
         bootstrap_table.transfer(&ctx.active_table, ctx.boot_bridge.loaded_kernel(), &mut boot_alloc, false);
 
-        {
-            let mut mapper = MapperWithAllocator::new(&mut bootstrap_table, &mut boot_alloc);
-            let page_count = (PAGE_SIZE as usize * 4).div_ceil(PAGE_SIZE as usize);
-            unsafe { mapper.identity_map_auto(PhysAddr::new(0x7000).into(), page_count, EntryFlags::WRITABLE) };
-        }
+        let mut mapper = MapperWithAllocator::new(&mut bootstrap_table, &mut boot_alloc);
+        unsafe { mapper.identity_map_auto(PhysAddr::new(0x7000).into(), 4, EntryFlags::WRITABLE) };
 
         unsafe {
             core::ptr::copy(
@@ -174,10 +169,7 @@ impl Drop for ApInitializer {
         mapper_lower(|mut mapper| unsafe {
             let start_page =
                 Page::<Size4K>::containing_address(VirtAddr::new(self.boot_alloc.original_start().as_u64()));
-            let end_page = Page::<Size4K>::containing_address(
-                VirtAddr::new(self.boot_alloc.original_start().as_u64() + self.boot_alloc.size() as u64 - 1),
-            );
-            mapper.unmap_page_ranges(start_page, end_page);
+            mapper.unmap_page_size(start_page, self.boot_alloc.size());
         })
     }
 }

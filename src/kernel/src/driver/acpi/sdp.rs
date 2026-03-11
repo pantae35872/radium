@@ -49,9 +49,7 @@ impl Xrsdp {
         // After revision checking unmap the sdp.
         unsafe {
             let start_page = Page::<Size4K>::containing_address(VirtAddr::new(rsdp_addr.as_u64()));
-            let end_page =
-                Page::<Size4K>::containing_address(VirtAddr::new(rsdp_addr.as_u64() + size_of::<Rsdp>() as u64 - 1));
-            ctx.mapper().unmap_page_ranges(start_page, end_page);
+            ctx.mapper().unmap_page_size(start_page, size_of::<Rsdp>());
         };
         // Create sdp based on readed revision
         log!(Trace, "Rsdp address: {:#x}", rsdp_addr);
