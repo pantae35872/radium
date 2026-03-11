@@ -579,6 +579,12 @@ impl Hash for VirtAddr {
     }
 }
 
+impl fmt::Display for VirtAddr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
 impl fmt::LowerHex for VirtAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::LowerHex::fmt(&self.0, f)

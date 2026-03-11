@@ -1,3 +1,5 @@
+use sentinel::log;
+
 use crate::address::{Frame, Page, PageSize, Size4K, VirtAddr};
 use crate::allocator::FrameAllocator;
 use crate::paging::table::entry::Entry;
@@ -63,12 +65,18 @@ impl<'a, 'b, RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator> Trans
         let mut new_mapping =
             Page::<Size4K>::range(src_start, size_in_pages).zip(Page::range(target_start, size_in_pages));
 
+        log!(
+            Trace,
+            "Transfering pages from {} to {} size in page {size_in_pages}",
+            src_start.start_address(),
+            target_start.start_address()
+        );
+
         let mut remaining = size_in_pages as usize;
         while let Some((src_page, target_page)) = new_mapping.next() {
             let frame = self.reference_mapping.translate_page(src_page)?;
 
-            let frame_offset =
-                ((src_page.start_address().as_u64() - frame.start_address().as_u64()) / Size4K::SIZE) as usize;
+            let frame_offset = ((src_page.start_address().as_u64() & (frame.size() - 1)) / Size4K::SIZE) as usize;
             let frame_pages = (frame.size() / Size4K::SIZE) as usize;
             let run_pages = min(remaining, frame_pages.saturating_sub(frame_offset));
 

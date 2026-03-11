@@ -1,24 +1,24 @@
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Page, PageIter, VirtAddr},
+    address::{Page, PageIter, Size4K, VirtAddr},
     allocator::FrameAllocator,
     paging::{mapper::Mapper, table::RootLevel},
 };
 use sentinel::log;
 
 pub struct StackAllocator {
-    range: PageIter,
-    original_range: PageIter,
+    range: PageIter<Size4K>,
+    original_range: PageIter<Size4K>,
     ua: bool,
 }
 
 impl StackAllocator {
     /// Create a new stack allocator
-    pub fn new(page_range: PageIter, ua: bool) -> StackAllocator {
+    pub fn new(page_range: PageIter<Size4K>, ua: bool) -> StackAllocator {
         StackAllocator { range: page_range.clone(), original_range: page_range, ua }
     }
 
-    pub fn original_range(&self) -> PageIter {
+    pub fn original_range(&self) -> PageIter<Size4K> {
         self.original_range.clone()
     }
 

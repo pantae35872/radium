@@ -1,7 +1,7 @@
 use alloc::{string::String, vec::Vec};
 use fontdue::{Font, FontSettings, Metrics};
 use hashbrown::HashMap;
-use pager::{EntryFlags, Mapper, PAGE_SIZE, virt_addr_alloc};
+use pager::{EntryFlags, PAGE_SIZE, address::Size4K, virt_addr_alloc};
 
 use crate::{
     config::config,
@@ -37,7 +37,10 @@ impl TtfRenderer {
         unsafe { ctx.mapper().map_to_range_by_size(font_addr, font.start().into(), font.size(), EntryFlags::WRITABLE) };
         let font = Font::from_bytes(
             unsafe {
-                core::slice::from_raw_parts(font_addr.start_address().align_to(font.start()).as_ptr(), font.size())
+                core::slice::from_raw_parts(
+                    font_addr.start_address().offset_by_page_misalignment::<Size4K>(font.start()).as_ptr(),
+                    font.size(),
+                )
             },
             FontSettings::default(),
         )

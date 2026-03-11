@@ -34,8 +34,8 @@ use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
 use c_enum::c_enum;
 use conquer_once::spin::OnceCell;
 use pager::{
-    Mapper, PAGE_SIZE,
-    address::{PhysAddr, VirtAddr},
+    PAGE_SIZE,
+    address::{PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use sentinel::log;
@@ -330,9 +330,9 @@ impl UefiRuntime {
                 ufu_stuff.phys_start,
                 ufu_stuff.phys_start + (ufu_stuff.page_count * PAGE_SIZE) as usize - 1
             );
-            let page = virt_addr_alloc(ufu_stuff.page_count);
+            let page = virt_addr_alloc::<Size4K>(ufu_stuff.page_count);
 
-            mapper_upper(|mapper| unsafe {
+            mapper_upper(|mut mapper| unsafe {
                 mapper.identity_map_by_size(
                     ufu_stuff.phys_start.into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,
@@ -379,7 +379,7 @@ impl UefiRuntime {
             .entries_mut()
             .filter(|e| matches!(e.ty, MemoryType::RUNTIME_SERVICES_CODE | MemoryType::RUNTIME_SERVICES_DATA))
         {
-            mapper_upper(|mapper| unsafe {
+            mapper_upper(|mut mapper| unsafe {
                 mapper.unmap_addr_by_size(
                     VirtAddr::new(ufu_stuff.phys_start.as_u64()).into(),
                     (ufu_stuff.page_count * PAGE_SIZE) as usize,

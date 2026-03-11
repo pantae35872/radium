@@ -10,12 +10,13 @@ use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
 use pager::{
-    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, KERNEL_START, Mapper, PAGE_SIZE,
-    address::{Frame, PhysAddr, VirtAddr},
+    EntryFlags, KERNEL_DIRECT_PHYSICAL_MAP, PAGE_SIZE,
+    address::{PhysAddr, VirtAddr},
     allocator::FrameAllocator,
     paging::{
         ActivePageTable,
-        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, Table},
+        mapper::Mapper,
+        table::{DirectLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootDirect, Table},
         temporary_page::TemporaryTable,
     },
 };
@@ -34,7 +35,7 @@ use crate::{
     },
     log,
     memory::{
-        self, WithMapper,
+        self, Frame, MapperWithAllocator, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,
         mapper_lower, stack_allocator,
         stack_allocator::{Stack, StackAllocator},
@@ -87,25 +88,22 @@ impl ApInitializer {
         }
 
         let p4_table = boot_alloc.allocate_frame().expect("Failed to allocate frame for temporary early boot");
-        let mut bootstrap_table = unsafe {
-            ActivePageTable::<DirectLevel4>::new_custom(p4_table.start_address().as_u64() as *mut Table<DirectLevel4>)
-        };
+        let mut bootstrap_table =
+            unsafe { Mapper::<RootDirect>::new_custom(p4_table.start_address().as_u64() as *mut Table<DirectLevel4>) };
 
-        unsafe {
-            ctx.context().boot_bridge().kernel_elf().map_permission(
-                &mut bootstrap_table.mapper_with_allocator(&mut boot_alloc),
-                KERNEL_START,
-                ctx.context().boot_bridge().kernel_base(),
-            )
-        };
+        let ctx = ctx.context_mut();
+        bootstrap_table.transfer(&ctx.active_table, ctx.boot_bridge.loaded_kernel(), &mut boot_alloc, false);
 
-        unsafe {
-            bootstrap_table.mapper_with_allocator(&mut boot_alloc).identity_map_by_size(
-                PhysAddr::new(0x7000).into(),
-                (PAGE_SIZE * 4) as usize,
-                EntryFlags::WRITABLE,
-            )
-        };
+        {
+            let mut mapper = MapperWithAllocator::new(&mut bootstrap_table, &mut boot_alloc);
+            unsafe {
+                mapper.identity_map_by_size(
+                    PhysAddr::new(0x7000).into(),
+                    (PAGE_SIZE * 4) as usize,
+                    EntryFlags::WRITABLE,
+                )
+            };
+        }
 
         unsafe {
             core::ptr::copy(
@@ -174,7 +172,7 @@ fn dumb_wait(ms: usize) {
 impl Drop for ApInitializer {
     fn drop(&mut self) {
         // SAFETY: We've identity mapped this in the new function, so we have to unmap it
-        mapper_lower(|mapper| unsafe {
+        mapper_lower(|mut mapper| unsafe {
             mapper.unmap_addr_by_size(
                 VirtAddr::new(self.boot_alloc.original_start().as_u64()).into(),
                 self.boot_alloc.size(),
@@ -260,7 +258,8 @@ impl ApInitializationContext {
     ) -> R {
         let mut stack_allocator = self.stack_allocator.lock();
         let mut table = self.original_table.lock();
-        f(stack_allocator.with_table(&mut *table, &mut self.buddy_allocator.lock()))
+        let mut allocator = self.buddy_allocator.lock();
+        f(WithMapper::new(&mut stack_allocator, &mut *table, &mut allocator))
     }
 }
 

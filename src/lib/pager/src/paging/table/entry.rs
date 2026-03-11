@@ -42,7 +42,7 @@ impl<L: TableLevel> Entry<L> {
     where
         L::PageSize: PageSize,
     {
-        if !self.value.is_multiple_of(L::PageSize::SIZE) {
+        if !self.mask_flags().is_multiple_of(L::PageSize::SIZE) {
             return None;
         }
         if !self.flags().contains(EntryFlags::PRESENT) {

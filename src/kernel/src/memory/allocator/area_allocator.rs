@@ -1,21 +1,18 @@
-use core::marker::PhantomData;
-
-use bootbridge::{MemoryDescriptor, MemoryMap, MemoryType};
+use bootbridge::{MemoryDescriptor, MemoryMap, MemoryMapIterOwned, MemoryType};
 use pager::{
     PAGE_SIZE,
-    address::{Frame, PhysAddr},
+    address::{Frame, PageSize, PhysAddr},
     allocator::{FrameAllocator, linear_allocator::LinearAllocator},
 };
 
 use sentinel::log;
 
-pub struct AreaAllocator<'a, I> {
-    areas: I,
+pub struct AreaAllocator<'a> {
     current_area: Option<LinearAllocator>,
-    _phantom: PhantomData<&'a I>,
+    areas: MemoryMapIterOwned<'a>,
 }
 
-impl<'a> AreaAllocator<'a, ()> {
+impl<'a> AreaAllocator<'a> {
     /// Create a new area allocator
     ///
     /// # Safety
@@ -25,20 +22,34 @@ impl<'a> AreaAllocator<'a, ()> {
     ///
     /// and the [`FrameAllocator`] require that the allocated address is valid, and is the only
     /// owner ship of the frame
-    pub unsafe fn new(areas: &'a MemoryMap) -> AreaAllocator<'a, impl Iterator<Item = &'a MemoryDescriptor>> {
-        let areas = areas.entries().filter(|e| e.ty == MemoryType::CONVENTIONAL);
-        AreaAllocator { areas, current_area: None, _phantom: PhantomData }
+    pub unsafe fn new(memory_map: &MemoryMap<'a>) -> AreaAllocator<'a> {
+        AreaAllocator { areas: memory_map.entries_owned(), current_area: None }
+    }
+
+    pub fn replace_memory_map(&mut self, memory_map: MemoryMap<'a>) {
+        self.areas.replace_map(memory_map);
     }
 }
 
-impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
+impl<'a> AreaAllocator<'a> {
+    fn next_filter(&mut self) -> Option<&'a MemoryDescriptor> {
+        while let Some(descriptor) = self.areas.next() {
+            if descriptor.ty != MemoryType::CONVENTIONAL {
+                continue;
+            }
+
+            return Some(descriptor);
+        }
+        None
+    }
+
     fn next_area(&mut self) {
-        let Some(mut area) = self.areas.next() else {
+        let Some(mut area) = self.next_filter() else {
             return;
         };
         // Reserved the first entry if null
         if area.phys_start.is_null() {
-            area = match self.areas.next() {
+            area = match self.next_filter() {
                 Some(area) => area,
                 None => return,
             }
@@ -64,21 +75,21 @@ impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> AreaAllocator<'a, I> {
     }
 }
 
-unsafe impl<'a, I: Iterator<Item = &'a MemoryDescriptor>> FrameAllocator for AreaAllocator<'a, I> {
-    fn allocate_frame(&mut self) -> Option<Frame> {
+unsafe impl<'a> FrameAllocator for AreaAllocator<'a> {
+    fn allocate_frame<S: PageSize>(&mut self) -> Option<Frame<S>> {
         if self.current_area.is_none() {
             self.next_area();
         }
 
         let current_area = self.current_area.as_mut()?;
 
-        current_area.allocate_frame().or_else(|| {
+        current_area.allocate_frame::<S>().or_else(|| {
             self.current_area = None;
             self.allocate_frame()
         })
     }
 
-    fn deallocate_frame(&mut self, frame: Frame) {
+    fn deallocate_frame<S: PageSize>(&mut self, frame: Frame<S>) {
         log!(Warning, "deallocate called on area allocator with frame: {:#x}", frame.start_address());
     }
 }

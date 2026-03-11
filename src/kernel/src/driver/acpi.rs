@@ -5,8 +5,8 @@ use aml::{AmlContext, AmlHandle};
 use fadt::Fadt;
 use madt::{InterruptControllerStructure, IoApicInterruptSourceOverride, Madt};
 use pager::{
-    EntryFlags, Mapper, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, VirtAddr},
+    EntryFlags, PAGE_SIZE,
+    address::{PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
 use rsdt::Xrsdt;
@@ -17,6 +17,7 @@ use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},
     initialize_guard,
     interrupt::apic::ApicId,
+    memory::Frame,
     memory::MMIOBufferInfo,
 };
 
@@ -152,7 +153,7 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
         let sdt_size = detect_sdt.length;
         let _ = detect_sdt;
         unsafe {
-            ctx.mapper().unmap_addr(Page::containing_address(VirtAddr::new(address)));
+            ctx.mapper().unmap_addr::<Size4K>(VirtAddr::new(address).into());
         }
         if sdt_signature != T::signature() {
             return None;
@@ -166,7 +167,9 @@ impl<T: AcpiSdtData> AcpiSdt<T> {
                 EntryFlags::NO_EXECUTE,
             )
         };
-        let table = unsafe { Self::from_raw(virt_sdt.start_address().align_to(PhysAddr::new(address))) };
+        let table = unsafe {
+            Self::from_raw(virt_sdt.start_address().offset_by_page_misalignment::<Size4K>(PhysAddr::new(address)))
+        };
         table.validate_checksum();
         return Some(table);
     }

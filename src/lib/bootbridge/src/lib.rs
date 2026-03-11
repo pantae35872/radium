@@ -129,18 +129,6 @@ pub enum MemoryType: u32 {
 }
 }
 
-#[derive(Debug)]
-pub struct MemoryMapIterMut<'map, 'buf> {
-    memory_map: &'map mut MemoryMap<'buf>,
-    index: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct MemoryMapIter<'buf> {
-    memory_map: &'buf MemoryMap<'buf>,
-    index: usize,
-}
-
 /// A reimplementation of the uefi memory map
 #[derive(Debug, Clone)]
 pub struct MemoryMap<'a> {
@@ -354,14 +342,13 @@ impl Transferable for BootBridge {
         let current = self.0.load(Ordering::SeqCst);
 
         self.deref_mut().memory_map.transfer(transferor, replace);
-        // We didn't transfer the loaded_kernel here because that would've transfered the loaded
-        // kernel in the new page table which we haven't loaded yet
         self.deref_mut().kernel_elf.transfer(transferor, replace);
         self.deref_mut().dwarf_data.transfer(transferor, replace);
         self.deref_mut().packed.transfer(transferor, replace);
+        self.deref_mut().loaded_kernel_elf.transfer(transferor, replace);
 
         let new = transferor
-            .transfer(VirtAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::PRESENT)
+            .transfer(VirtAddr::new(current as u64), size_of::<RawBootBridge>(), EntryFlags::WRITABLE)
             .expect("Boot bridge transfer failed");
         self.0 = AtomicPtr::new(new.as_mut_ptr());
     }
@@ -421,6 +408,10 @@ impl<'a> MemoryMap<'a> {
     pub fn entries_mut<'b>(&'b mut self) -> MemoryMapIterMut<'b, 'a> {
         MemoryMapIterMut { memory_map: self, index: 0 }
     }
+
+    pub fn entries_owned(&self) -> MemoryMapIterOwned<'a> {
+        MemoryMapIterOwned { memory_map: self.clone(), index: 0 }
+    }
 }
 
 impl GraphicsInfo {
@@ -441,6 +432,12 @@ impl GraphicsInfo {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct MemoryMapIter<'buf> {
+    memory_map: &'buf MemoryMap<'buf>,
+    index: usize,
+}
+
 impl<'a> Iterator for MemoryMapIter<'a> {
     type Item = &'a MemoryDescriptor;
 
@@ -453,11 +450,40 @@ impl<'a> Iterator for MemoryMapIter<'a> {
     }
 }
 
+#[derive(Debug)]
+pub struct MemoryMapIterMut<'map, 'buf> {
+    memory_map: &'map mut MemoryMap<'buf>,
+    index: usize,
+}
+
 impl<'b> Iterator for MemoryMapIterMut<'_, 'b> {
     type Item = &'b mut MemoryDescriptor;
 
     fn next(&mut self) -> Option<Self::Item> {
         let desc = self.memory_map.get_mut(self.index)?;
+
+        self.index += 1;
+        Some(desc)
+    }
+}
+
+#[derive(Debug)]
+pub struct MemoryMapIterOwned<'buf> {
+    memory_map: MemoryMap<'buf>,
+    index: usize,
+}
+
+impl<'a> MemoryMapIterOwned<'a> {
+    pub fn replace_map(&mut self, owned: MemoryMap<'a>) {
+        self.memory_map = owned;
+    }
+}
+
+impl<'buf> Iterator for MemoryMapIterOwned<'buf> {
+    type Item = &'buf MemoryDescriptor;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let desc = self.memory_map.get(self.index)?;
 
         self.index += 1;
         Some(desc)

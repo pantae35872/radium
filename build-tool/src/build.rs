@@ -219,7 +219,16 @@ impl Builder {
             ]);
             if self.config.config.qemu.enable_kvm {
                 command.args(["-enable-kvm", "-cpu", "host,+rdrand,+sse,+mmx"]);
+            } else {
+                command.args(["-cpu", "Skylake-Client"]);
             }
+            if self.config.config.qemu.gdb {
+                command.args(["-S", "-s"]);
+            }
+            if self.config.config.qemu.monitor {
+                command.args(["-monitor", "unix:qemu-monitor-socket,server,nowait"]);
+            }
+
             command.args(["-cdrom", &format!("{}", self.build_path.join("radium.iso").display())]);
             self.executor.run(command.clone()).map_err(|error| Error::Qemu { error })?;
         }

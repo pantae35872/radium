@@ -8,7 +8,7 @@ use crate::{
 use alloc::alloc::*;
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Page, VirtAddr},
+    address::{Page, Size4K},
 };
 
 pub mod area_allocator;
@@ -74,9 +74,9 @@ static GLOBAL_ALLOCATOR: Locked<LinkedListAllocator> = Locked::new(LinkedListAll
 /// And must be called after the memory controller is initialize
 pub unsafe fn init(ctx: &mut InitializationContext<Stage1>) {
     let heap_start = virt_addr_alloc(HEAP_SIZE / PAGE_SIZE);
-    ctx.mapper().map_range(
+    ctx.mapper().map_range::<Size4K>(
         heap_start,
-        Page::containing_address(VirtAddr::new(heap_start.start_address().as_u64() + HEAP_SIZE - 1)),
+        Page::containing_address(heap_start.start_address() + HEAP_SIZE - 1),
         EntryFlags::WRITABLE,
     );
     unsafe {

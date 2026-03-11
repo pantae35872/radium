@@ -6,7 +6,12 @@ use color::Color;
 use conquer_once::spin::OnceCell;
 use core::arch::asm;
 use frame_tracker::FrameTracker;
-use pager::{EntryFlags, Mapper, PAGE_SIZE, address::Page, registers::Xcr0, virt_addr_alloc};
+use pager::{
+    EntryFlags, PAGE_SIZE,
+    address::{Page, Size4K},
+    registers::Xcr0,
+    virt_addr_alloc,
+};
 use spin::Mutex;
 
 use crate::{
@@ -404,7 +409,7 @@ pub fn init(ctx: &mut InitializationContext<Stage2>) {
     initialize_guard!();
     log!(Trace, "Registering graphic");
     let graphics_info = ctx.context().boot_bridge().graphics_info();
-    let start = virt_addr_alloc(ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE + 1);
+    let start = virt_addr_alloc::<Size4K>(ctx.context().boot_bridge().framebuffer_data().size() as u64 / PAGE_SIZE + 1);
     let frame_buffer_data = ctx.context().boot_bridge().framebuffer_data();
     ctx.mapper().map_range(
         start,

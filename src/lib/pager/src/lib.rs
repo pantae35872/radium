@@ -7,7 +7,6 @@
 use core::{fmt::Display, ops::Deref, panic::Location};
 
 use address::{Page, PhysAddr, VirtAddr};
-use alloc::vec::Vec;
 use allocator::virt_allocator::VirtualAllocator;
 use bitflags::bitflags;
 use sentinel::log;
@@ -94,7 +93,7 @@ impl Display for EntryFlags {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[repr(transparent)]
 pub struct DataBuffer<'a> {
     buffer: &'a [u8],
@@ -167,12 +166,6 @@ impl Display for DataBuffer<'_> {
         let buf_end = PhysAddr::new(buf_start.as_u64() + self.buffer.len() as u64 - 1);
 
         write!(f, "[{:#x}-{:#x}]", buf_start, buf_end)
-    }
-}
-
-impl Clone for DataBuffer<'_> {
-    fn clone(&self) -> Self {
-        Self { buffer: Vec::leak(self.buffer.to_vec()) }
     }
 }
 

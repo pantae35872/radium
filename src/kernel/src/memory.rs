@@ -6,13 +6,14 @@ use bootbridge::{BootBridge, MemoryType, RawData};
 use kernel_proc::{def_local, local_builder};
 use pager::{
     EntryFlags, PAGE_SIZE,
-    address::{Frame, Page, PhysAddr, Size4K, VirtAddr},
+    address::{Page, PageSize, PhysAddr, Size4K, VirtAddr},
+    allocator::FrameAllocator,
     paging::{
         ActivePageTable, InactivePageCopyOption, InactivePageTable, TableManipulationContext,
         mapper::Mapper,
         table::{
-            RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevelRecurse, RootRecurseLowerHalf,
-            RootRecurseUpperHalf,
+            RecurseLevel4, RecurseLevel4LowerHalf, RecurseLevel4UpperHalf, RootLevel, RootLevelRecurse, RootRecurse,
+            RootRecurseLowerHalf, RootRecurseUpperHalf,
         },
         temporary_page::TemporaryTable,
     },
@@ -38,6 +39,98 @@ pub mod stack_allocator;
 
 pub const MAX_ALIGN: usize = 8192;
 pub const STACK_ALLOC_SIZE: u64 = 32768;
+pub type Frame = pager::address::Frame<Size4K>;
+
+pub struct MapperWithAllocator<'a, R: RootLevel, A: FrameAllocator> {
+    pub mapper: &'a mut Mapper<R>,
+    pub allocator: &'a mut A,
+}
+
+impl<'a, R: RootLevel, A: FrameAllocator> MapperWithAllocator<'a, R, A> {
+    pub fn new(mapper: &'a mut Mapper<R>, allocator: &'a mut A) -> Self {
+        Self { mapper, allocator }
+    }
+
+    pub fn map_range<S: pager::address::PageSize>(
+        &mut self,
+        start_page: Page<S>,
+        end_page: Page<S>,
+        flags: EntryFlags,
+    ) {
+        self.mapper.map_range(start_page, end_page, flags, self.allocator);
+    }
+
+    /// Map a range using 4K page accounting with huge-page auto selection.
+    ///
+    /// # Safety
+    /// See [`pager::paging::mapper::Mapper::map_to_auto`].
+    pub unsafe fn map_to_range_by_size(
+        &mut self,
+        start_page: Page<Size4K>,
+        start_frame: Frame,
+        size: usize,
+        flags: EntryFlags,
+    ) {
+        let pages = size.div_ceil(Size4K::SIZE as usize);
+        unsafe { self.mapper.map_to_auto(start_page, start_frame, pages, flags, self.allocator) };
+    }
+
+    /// Identity map a range using 4K page accounting with huge-page auto selection.
+    ///
+    /// # Safety
+    /// See [`pager::paging::mapper::Mapper::identity_map_auto`].
+    pub unsafe fn identity_map_by_size(&mut self, frame: Frame, size: usize, flags: EntryFlags) {
+        let pages = size.div_ceil(Size4K::SIZE as usize);
+        unsafe { self.mapper.identity_map_auto(frame, pages, flags, self.allocator) };
+    }
+
+    /// Identity map a linear allocator mapping with writeable permissions.
+    ///
+    /// # Safety
+    /// See [`pager::paging::mapper::Mapper::identity_map_addr_auto`].
+    pub unsafe fn identity_map_object(
+        &mut self,
+        mappings: &pager::allocator::linear_allocator::LinearAllocatorMappings,
+    ) {
+        unsafe {
+            self.mapper.identity_map_addr_auto(mappings.start(), mappings.size(), EntryFlags::WRITABLE, self.allocator)
+        };
+    }
+
+    /// Unmap a single page.
+    ///
+    /// # Safety
+    /// See [`pager::paging::mapper::Mapper::unmap_page`].
+    pub unsafe fn unmap_addr<S: pager::address::PageSize>(&mut self, page: Page<S>) {
+        let _ = unsafe { self.mapper.unmap_page(page) };
+    }
+
+    /// Unmap an address range without deallocating frames.
+    ///
+    /// # Safety
+    /// See [`pager::paging::mapper::Mapper::unmap_page_ranges`].
+    pub unsafe fn unmap_addr_by_size(&mut self, start_page: Page<Size4K>, size: usize) {
+        let end_page = Page::containing_address(start_page.start_address() + size - 1);
+        unsafe { self.mapper.unmap_page_ranges(start_page, end_page) };
+    }
+}
+
+pub struct WithMapper<'a, T, A: FrameAllocator, R: RootLevel> {
+    pub inner: &'a mut T,
+    pub mapper: MapperWithAllocator<'a, R, A>,
+}
+
+impl<'a, T, A: FrameAllocator, R: RootLevel> WithMapper<'a, T, A, R> {
+    pub fn new(inner: &'a mut T, mapper: &'a mut Mapper<R>, allocator: &'a mut A) -> Self {
+        Self { inner, mapper: MapperWithAllocator::new(mapper, allocator) }
+    }
+}
+
+impl<'a, A: FrameAllocator, R: RootLevel> WithMapper<'a, StackAllocator, A, R> {
+    pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<stack_allocator::Stack> {
+        self.inner.alloc_stack(self.mapper.mapper, self.mapper.allocator, size_in_pages)
+    }
+}
 
 def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RecurseLevel4UpperHalf>>>);
 def_local!(pub static ACTIVE_TABLE_LOWER: RefCell<ActivePageTable<RecurseLevel4LowerHalf>>);
@@ -47,11 +140,12 @@ def_local!(pub static BUDDY_ALLOCATOR: Arc<Mutex<BuddyAllocator<64>>>);
 def_local!(pub static TEMPORARY_PAGE: Arc<Mutex<TemporaryTable>>);
 
 pub fn stack_allocator<R>(
-    f: impl FnOnce(&mut Mapper<RecurseLevel4UpperHalf>, &mut BuddyAllocator, &mut StackAllocator) -> R,
+    f: impl FnOnce(WithMapper<StackAllocator, BuddyAllocator, RecurseLevel4UpperHalf>) -> R,
 ) -> R {
     let mut stack_allocator = STACK_ALLOCATOR.lock();
     let mut table = ACTIVE_TABLE_UPPER.lock();
-    f(&mut *table, &mut BUDDY_ALLOCATOR.lock(), &mut stack_allocator)
+    let mut allocator = BUDDY_ALLOCATOR.lock();
+    f(WithMapper::new(&mut stack_allocator, &mut *table, &mut allocator))
 }
 
 pub fn switch_lower_half(with: InactivePageTable<RecurseLevel4LowerHalf>) -> InactivePageTable<RecurseLevel4LowerHalf> {
@@ -117,27 +211,31 @@ where
 /// # Safety
 /// See [`ActivePageTable::with`].
 pub unsafe fn mapper_lower_with<R>(
-    f: impl FnOnce(&mut Mapper<RecurseLevel4LowerHalf>, &mut BuddyAllocator) -> R,
+    f: impl FnOnce(MapperWithAllocator<RecurseLevel4LowerHalf, BuddyAllocator>) -> R,
     with: &mut InactivePageTable<RecurseLevel4LowerHalf>,
 ) -> R {
     let upper = &mut *ACTIVE_TABLE_UPPER.lock();
     let allocator = &mut *BUDDY_ALLOCATOR.lock();
     let temporary_page = &mut TEMPORARY_PAGE.lock();
     unsafe {
-        upper.with(with, &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None }, f)
+        upper.with(
+            with,
+            &mut TableManipulationContext { temporary_page, allocator, temporary_page_mapper: None },
+            |mapper, allocator| f(MapperWithAllocator::new(mapper, allocator)),
+        )
     }
 }
 
-pub fn mapper_lower<R>(f: impl FnOnce(&mut Mapper<RootRecurseLowerHalf>, &mut BuddyAllocator) -> R) -> R {
-    let mut table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
+pub fn mapper_lower<R>(f: impl FnOnce(MapperWithAllocator<RootRecurseLowerHalf, BuddyAllocator>) -> R) -> R {
+    let table = ACTIVE_TABLE_LOWER.inner_mut().get_mut();
     let mut allocator = BUDDY_ALLOCATOR.lock();
-    f(&mut table, &mut allocator)
+    f(MapperWithAllocator::new(table, &mut allocator))
 }
 
-pub fn mapper_upper<R>(f: impl FnOnce(&mut Mapper<RootRecurseUpperHalf>, &mut BuddyAllocator) -> R) -> R {
+pub fn mapper_upper<R>(f: impl FnOnce(MapperWithAllocator<RootRecurseUpperHalf, BuddyAllocator>) -> R) -> R {
     let mut table = ACTIVE_TABLE_UPPER.lock();
     let mut allocator = BUDDY_ALLOCATOR.lock();
-    f(&mut table, &mut allocator)
+    f(MapperWithAllocator::new(&mut *table, &mut allocator))
 }
 
 pub fn init_local(ctx: &mut InitializationContext<Stage4>) {
@@ -202,8 +300,10 @@ pub fn init(mut ctx: InitializationContext<Stage0>) -> InitializationContext<Sta
     unsafe { prepare_flags() };
 
     // SAFETY: This safe because the initialize_guard_above
-    let mut allocator = unsafe { init_allocator(&ctx) };
-    let active_table = unsafe { remap_the_kernel(&mut allocator, &mut ctx) };
+    let mut area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
+    let active_table = unsafe { remap_the_kernel(&mut area_allocator, &mut ctx) };
+    area_allocator.replace_memory_map(ctx.context().boot_bridge().memory_map().clone());
+    let allocator = unsafe { init_allocator(&ctx, area_allocator) };
 
     DWARF_DATA.init_once(|| ctx.context_mut().boot_bridge.dwarf_baker());
 
@@ -272,8 +372,10 @@ pub unsafe fn prepare_flags() {
 /// # Safety
 /// The caller must ensure that this is only called on kernel initialization
 /// and the bootbridge memory map is valid
-unsafe fn init_allocator(ctx: &InitializationContext<Stage0>) -> BuddyAllocator<64> {
-    let area_allocator = unsafe { AreaAllocator::new(ctx.context().boot_bridge().memory_map()) };
+unsafe fn init_allocator<'a>(
+    ctx: &InitializationContext<Stage0>,
+    area_allocator: AreaAllocator<'a>,
+) -> BuddyAllocator<64> {
     log!(Info, "UEFI memory map usable:");
     ctx.context().boot_bridge().memory_map().entries().filter(|e| e.ty == MemoryType::CONVENTIONAL).for_each(
         |descriptor| {
@@ -398,18 +500,29 @@ select_context! {
         }
     }
     (Stage1, Stage2, Stage3, Stage4) => {
+        pub fn mapper(&mut self) -> MapperWithAllocator<'_, RootRecurse, BuddyAllocator<64>> {
+            let ctx = self.context_mut();
+            MapperWithAllocator::new(&mut ctx.active_table, &mut ctx.buddy_allocator)
+        }
+
         /// Access the mapping of the InactivePageTable.
         ///
         /// # Safety
         /// See [`ActivePageTable::with`] safety docs
-        pub unsafe fn with_inactive(&mut self, table: &mut InactivePageTable<RecurseLevel4>, f: impl FnOnce(&mut Mapper<RecurseLevel4>, &mut BuddyAllocator<64>)) {
+        pub unsafe fn with_inactive(
+            &mut self,
+            table: &mut InactivePageTable<RecurseLevel4>,
+            f: impl FnOnce(MapperWithAllocator<RecurseLevel4, BuddyAllocator<64>>),
+        ) {
             let ctx = self.context_mut();
             unsafe {
                 ctx.active_table.with(table, &mut TableManipulationContext {
                     temporary_page: &mut ctx.temporary_page,
                     allocator: &mut ctx.buddy_allocator,
                     temporary_page_mapper: None
-                }, f)
+                }, |mapper, allocator| {
+                    f(MapperWithAllocator::new(mapper, allocator))
+                })
             }
         }
 
@@ -418,7 +531,7 @@ select_context! {
             &mut ctx.buddy_allocator
         }
 
-        pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page {
+        pub fn map(&mut self, size: usize, flags: EntryFlags) -> Page<Size4K> {
             let ctx = self.context_mut();
             let start_page = virt_addr_alloc(size as u64 / PAGE_SIZE + 1);
             ctx.active_table.map_range(

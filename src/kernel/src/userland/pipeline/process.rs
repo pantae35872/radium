@@ -8,16 +8,13 @@ use hashbrown::HashSet;
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
-    paging::{
-        InactivePageCopyOption, InactivePageTable,
-        mapper::{Mapper, MapperWithAllocator},
-        table::RecurseLevel4LowerHalf,
-    },
+    paging::{InactivePageCopyOption, InactivePageTable, mapper::Mapper, table::RecurseLevel4LowerHalf},
 };
 use spin::{Mutex, RwLock};
 
 use crate::{
     memory::{
+        MapperWithAllocator,
         allocator::buddy_allocator::BuddyAllocator,
         copy_mappings, create_mappings_lower, mapper_lower, mapper_lower_with,
         stack_allocator::{Stack, StackAllocator},
@@ -122,7 +119,9 @@ impl ProcessPipeline {
         let _pg_mod = pg_mod.lock();
 
         if let Some(mut table) = self.page_tables[process.id].take() {
-            let r = unsafe { mapper_lower_with(|mapper, allocator| f(self, mapper, allocator), &mut table) };
+            let r = unsafe {
+                mapper_lower_with(|MapperWithAllocator { mapper, allocator }| f(self, mapper, allocator), &mut table)
+            };
             self.page_tables[process.id] = Some(table);
             r
         } else {

@@ -46,6 +46,12 @@ pub struct Qemu {
     #[config_name = "SMP Core count"]
     #[default = 8]
     pub core_count: i32,
+    #[config_name = "Open GDB Server"]
+    #[default = false]
+    pub gdb: bool,
+    #[config_name = "Open QEMU monitor console"]
+    #[default = false]
+    pub monitor: bool,
     #[config_name = "Enable KVM"]
     #[default = true]
     pub enable_kvm: bool,
@@ -85,10 +91,6 @@ pub struct Bootloader {
     #[config_name = "Packed File"]
     #[default = "usr_bin.pak"]
     pub packed_file: String,
-
-    #[config_name = "Early Boot Kernel Page Table Page count"]
-    #[default = 64]
-    pub early_boot_kernel_page_table_page_count: i32,
 }
 
 #[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]

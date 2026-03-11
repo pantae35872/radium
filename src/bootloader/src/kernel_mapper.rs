@@ -70,6 +70,7 @@ pub fn prepare_kernel_page(mut ctx: InitializationContext<Stage2>) -> Initializa
 
     let p4_frame = allocator.allocate_frame::<Size4K>().unwrap();
     let p4_table = p4_frame.start_address().as_u64() as *mut Table<RootDirect>;
+    unsafe { p4_frame.start_address().assume_identity().as_mut_ptr::<u8>().write_bytes(0, Size4K::SIZE as usize) };
     let mut kernel_mapper = unsafe { Mapper::new_custom(p4_table) };
 
     let protocol = boot_service

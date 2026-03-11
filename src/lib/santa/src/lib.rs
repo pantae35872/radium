@@ -11,7 +11,7 @@ use pager::{
     EntryFlags, PAGE_SIZE,
     address::{Page, Size4K, VirtAddr},
     allocator::{FrameAllocator, IdentityAllocator},
-    paging::{ActivePageTable, Transferable, mapper::Mapper, table::RootLevel},
+    paging::{Transferable, mapper::Mapper, table::RootLevel},
 };
 use reader::{ElfBits, ElfHeader, ElfReader, ProgramType, SectionType};
 use sentinel::log;
@@ -248,9 +248,13 @@ impl<'a> Elf<'a> {
     }
 
     /// Load the elf, and map with user permission, and returns an entry point
-    pub fn load<Root: RootLevel, A: FrameAllocator>(
-        &'a self,
-        table: &mut ActivePageTable<Root>,
+    ///
+    /// # Safety
+    /// The caller must ensure that the provided mapper points to a page table where changes
+    /// are immediately effective for the elf address space.
+    pub unsafe fn load<Root: RootLevel, A: FrameAllocator>(
+        &self,
+        mapper: &mut Mapper<Root>,
         user_accessable: bool,
         allocator: &mut A,
     ) -> LoadedElf<'a> {
@@ -272,7 +276,7 @@ impl<'a> Elf<'a> {
 
             let start_page = Page::<Size4K>::containing_address(virt_start);
             let end_page = Page::<Size4K>::containing_address(virt_end);
-            table.map_range(start_page, end_page, EntryFlags::WRITABLE, allocator);
+            mapper.map_range(start_page, end_page, EntryFlags::WRITABLE, allocator);
 
             let src = self.reader.buffer().as_ptr() as u64 + section.offset();
             let len = section.filesize();
@@ -284,7 +288,7 @@ impl<'a> Elf<'a> {
             }
 
             unsafe {
-                table
+                mapper
                     .change_flags_ranges(start_page, end_page, |_| EntryFlags::from(section.flags()) | additional_flags)
             };
         }
@@ -321,19 +325,21 @@ impl<'a> Elf<'a> {
 
             let start_page = Page::<Size4K>::containing_address(virt_start);
             let end_page = Page::<Size4K>::containing_address(virt_end);
-            for page in Page::range_inclusive(start_page, end_page) {
+            let src_base = self.reader.buffer().as_ptr() as u64 + section.offset();
+            let file_size = section.filesize() as usize;
+            for (index, page) in Page::range_inclusive(start_page, end_page).enumerate() {
                 let frame = allocator.allocate_frame::<Size4K>().expect("allocation failed");
 
-                let src = self.reader.buffer().as_ptr() as u64 + section.offset();
-                let len = section.filesize();
-                let mem_size = section.memsize();
-
                 let start = frame.start_address().assume_identity().as_mut_ptr::<u8>();
+                let page_offset = index * PAGE_SIZE as usize;
 
                 // SAFETY: The start is assumed to be writeable by the precondition
                 unsafe {
-                    core::ptr::write_bytes(start, 0, mem_size as usize);
-                    core::ptr::copy(src as *const u8, start, len as usize);
+                    core::ptr::write_bytes(start, 0, PAGE_SIZE as usize);
+                    if page_offset < file_size {
+                        let copy_len = core::cmp::min(PAGE_SIZE as usize, file_size - page_offset);
+                        core::ptr::copy((src_base + page_offset as u64) as *const u8, start, copy_len);
+                    }
                 }
 
                 unsafe { mapper.map_to(page, frame, EntryFlags::from(section.flags()) | additional_flags, allocator) };
@@ -399,7 +405,7 @@ impl Transferable for LoadedElf<'_> {
     fn transfer<RefRoot: RootLevel, TargetRoot: RootLevel, A: FrameAllocator>(
         &mut self,
         transferor: &mut pager::paging::Transferor<RefRoot, TargetRoot, A>,
-        _replace: bool,
+        replace: bool,
     ) {
         for section in self.elf.reader.program_header_iter() {
             if section.segment_type() != ProgramType::Load {
@@ -413,6 +419,7 @@ impl Transferable for LoadedElf<'_> {
             let flags = EntryFlags::from(section.flags());
             transferor.transfer_to(virt_start, virt_start, section.memsize() as usize, flags);
         }
+        self.elf.transfer(transferor, replace);
     }
 }
 
