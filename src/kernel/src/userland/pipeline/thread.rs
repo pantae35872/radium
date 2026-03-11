@@ -136,7 +136,7 @@ impl ThreadPipeline {
                     // TODO: Zero out the stack if possible
                     thread_ctx.processor_state = TaskProcesserState {
                         instruction_pointer: start,
-                        stack_pointer: thread_ctx.stack.top(),
+                        stack_pointer: thread_ctx.stack.top() - 8usize,
                         ..Default::default()
                     };
                 }
@@ -194,7 +194,7 @@ impl ThreadContext {
             state: ThreadState::Active,
             processor_state: TaskProcesserState {
                 instruction_pointer: start,
-                stack_pointer: stack.top(),
+                stack_pointer: stack.top() - 8usize,
                 ..Default::default()
             },
             parent_process: parent,

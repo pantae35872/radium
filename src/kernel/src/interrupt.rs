@@ -374,6 +374,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         |CommonRequestContext { stack_frame: c_stack_frame, .. }, dispatcher| {
             dispatcher.dispatch(|action| match action {
                 DispatchAction::HltLoop => {
+                    *c_stack_frame = Default::default();
                     c_stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
 
                     stack_frame.code_segment = KERNEL_CODE_SEG.0.into();

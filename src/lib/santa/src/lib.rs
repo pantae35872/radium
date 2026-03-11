@@ -81,6 +81,7 @@ impl<'a> Elf<'a> {
         let mut mem_max: u64 = 0;
 
         for header in reader.program_header_iter() {
+            log!(Debug, "{:?}", header);
             if header.segment_type() != ProgramType::Load {
                 continue;
             }

@@ -8,7 +8,11 @@ use hashbrown::HashSet;
 use kernel_proc::IPPacket;
 use pager::{
     address::Page,
-    paging::{InactivePageCopyOption, InactivePageTable, mapper::{Mapper, MapperWithAllocator}, table::RootRecurseLowerHalf},
+    paging::{
+        InactivePageCopyOption, InactivePageTable,
+        mapper::{Mapper, MapperWithAllocator},
+        table::RootRecurseLowerHalf,
+    },
 };
 use spin::{Mutex, RwLock};
 
@@ -65,6 +69,7 @@ impl ProcessPipeline {
             }
             (Some(TaskBlock { process, .. }), None) if context.should_schedule => {
                 let hlt_table = self.hlt_page_table.take().expect("HLT Page table stolen or uninitialized");
+
                 self.page_tables[process.id] = Some(switch_lower_half(hlt_table));
             }
             _ => {}
