@@ -1,7 +1,12 @@
 #![no_std]
 #![no_main]
 
-use core::{arch::asm, hint::black_box, panic::PanicInfo, sync::atomic::AtomicUsize};
+use core::{
+    arch::asm,
+    hint::black_box,
+    panic::PanicInfo,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 pub fn spawn(f: fn() -> !) {
     unsafe {
@@ -116,36 +121,36 @@ fn computation() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    for _ in 0..512 {
-        spawn(computation);
-    }
-    computation();
-    //if !is_stack_aligned_16() {
-    //    syscall_exit();
-    //}
-
-    //syscall_sleep(10000);
     //for _ in 0..512 {
-    //    spawn(|| {
-    //        if !is_stack_aligned_16() {
-    //            syscall_exit();
-    //        }
-
-    //        for _ in 0..1_000_000 {
-    //            COUNT.fetch_add(1, Ordering::Relaxed);
-    //        }
-
-    //        syscall_exit_thread();
-    //    });
+    //    spawn(computation);
     //}
+    //computation();
+    if !is_stack_aligned_16() {
+        syscall_exit();
+    }
 
-    //while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
-    //    core::hint::spin_loop();
-    //}
+    syscall_sleep(10000);
+    for _ in 0..512 {
+        spawn(|| {
+            if !is_stack_aligned_16() {
+                syscall_exit();
+            }
 
-    //syscall_test();
+            for _ in 0..1_000_000 {
+                COUNT.fetch_add(1, Ordering::Relaxed);
+            }
 
-    //syscall_exit();
+            syscall_exit_thread();
+        });
+    }
+
+    while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
+        core::hint::spin_loop();
+    }
+
+    syscall_test();
+
+    syscall_exit();
 }
 
 #[panic_handler]

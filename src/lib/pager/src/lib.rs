@@ -1,6 +1,4 @@
 #![no_std]
-#![feature(pointer_is_aligned_to)]
-#![feature(ptr_internals)]
 #![feature(iter_advance_by)]
 #![allow(internal_features)]
 

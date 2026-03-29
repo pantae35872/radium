@@ -7,10 +7,8 @@ use core::{
 use bit_field::BitField;
 use pager::{
     address::VirtAddr,
-    registers::{CS, Cr2, DescriptorTablePointer, SegmentSelector, lidt},
+    registers::{CS, DescriptorTablePointer, SegmentSelector, lidt},
 };
-
-use sentinel::log;
 
 use crate::const_assert_eq;
 
@@ -71,39 +69,20 @@ pub trait InterruptHandler {
 }
 
 handler_fn_impl! {
-    NormalHandler => missing_gate(stack_frame: InterruptStackFrame) {
-        log!(Critical, "UNHANDLED CPU EXCEPTIONS");
-        log!(Critical, "{:#?}", stack_frame);
-        panic!("Unhandled Exceptions");
+    NormalHandler => missing_gate(_stack_frame: InterruptStackFrame) {
+        panic!("Unhandled interrupt");
     }
-    HandlerWithErrorCode => missing_gate_with_error_code(stack_frame: InterruptStackFrame, error_code: u64) {
-        log!(Critical, "UNHANDLED CPU EXCEPTIONS");
-        log!(Critical, "Error Code: {:?}", error_code);
-        log!(Critical, "{:#?}", stack_frame);
-        panic!("Unhandled Exceptions");
+    HandlerWithErrorCode => missing_gate_with_error_code(_stack_frame: InterruptStackFrame, _error_code: u64) {
+        panic!("Unhandled exception");
     }
-    NoReturnHandler => missing_gate_no_return(stack_frame: InterruptStackFrame) -> ! {
-        log!(Critical, "UNHANDLED CPU EXCEPTIONS");
-        log!(Critical, "{:#?}", stack_frame);
-        panic!("UNHANDLED CPU EXCEPTIONS");
+    NoReturnHandler => missing_gate_no_return(_stack_frame: InterruptStackFrame) -> ! {
+        panic!("Unhandled exception");
     }
-    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
-        log!(Critical, "UNHANDLED CPU EXCEPTIONS");
-        log!(Critical, "Error Code: {:?}", error_code);
-        log!(Critical, "{:#?}", stack_frame);
-        panic!("UNHANDLED CPU EXCEPTIONS");
+    NoReturnHandlerWithErrorCode => missing_gate_with_error_code_no_return(_stack_frame: InterruptStackFrame, _error_code: u64) -> ! {
+        panic!("Unhandled exception");
     }
-    PageFaultHandler => page_fault_handler(stack_frame: InterruptStackFrame, error_code: PageFaultErrorCode) {
-        log!(Critical, "UNHANDLED PAGE FAULT");
-        log!(Critical, "EXCEPTION: PAGE FAULT");
-        log!(Critical, "Accessed Address: {:?}", Cr2::read());
-        log!(
-            Critical,
-            "ERROR CODE: {:?}",
-            error_code
-        );
-        log!(Critical, "{:#?}", stack_frame);
-        panic!("UNHANDLED PAGE FAULT");
+    PageFaultHandler => page_fault_handler(_stack_frame: InterruptStackFrame, _error_code: PageFaultErrorCode) {
+        panic!("Unhandled page fault");
     }
 }
 
@@ -327,9 +306,9 @@ impl Index<usize> for Idt {
 
     fn index(&self, index: usize) -> &Self::Output {
         match index {
-            3 => &self.nmi_external,
+            2 => &self.nmi_external,
             i @ 32..=255 => &self.external_interrupts[i - 32],
-            _ => panic!("Trying to index into an autistic interrupt vector"), // Get it?, not normal
+            _ => panic!("Trying to index into an autistic interrupt vector"),
         }
     }
 }
@@ -337,9 +316,9 @@ impl Index<usize> for Idt {
 impl IndexMut<usize> for Idt {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         match index {
-            3 => &mut self.nmi_external,
+            2 => &mut self.nmi_external,
             i @ 32..=255 => &mut self.external_interrupts[i - 32],
-            _ => panic!("Trying to index into an autistic interrupt vector"), // Get it?, not normal
+            _ => panic!("Trying to index into an autistic interrupt vector"),
         }
     }
 }

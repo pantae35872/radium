@@ -1,7 +1,5 @@
 #![no_main]
 #![no_std]
-#![feature(str_from_raw_parts)]
-#![feature(allocator_api)]
 #![allow(dead_code)]
 
 use core::arch::asm;

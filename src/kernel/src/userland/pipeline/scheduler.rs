@@ -9,7 +9,6 @@ use derivative::Derivative;
 
 use crate::{
     interrupt::{CORE_ID, InterruptIndex, LAPIC},
-    serial_print, serial_println,
     smp::{CoreId, MAX_CPU},
     userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
 };

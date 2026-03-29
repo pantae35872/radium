@@ -1,5 +1,4 @@
 #![no_std]
-#![feature(custom_test_frameworks)]
 #![allow(dead_code)]
 
 extern crate alloc;

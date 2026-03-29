@@ -111,9 +111,7 @@ fn create_idt() -> &'static Idt {
     unsafe {
         idt.general_protection.set_handler_fn(general_protection_fault_handler).set_stack_index(GENERAL_STACK_INDEX);
         idt.page_fault.set_handler_fn(page_fault_handler).set_stack_index(GENERAL_STACK_INDEX);
-        idt.invalid_opcode
-            .set_handler_addr(VirtAddr::new(invalid_opcode as *const () as u64))
-            .set_stack_index(GENERAL_STACK_INDEX);
+        //idt.invalid_opcode.set_handler_fn(invalid_opcode).set_stack_index(GENERAL_STACK_INDEX);
         idt.break_point.set_handler_fn(break_point);
         idt.double_fault.set_handler_fn(double_fault_handler).set_stack_index(DOUBLE_FAULT_IST_INDEX);
     }
