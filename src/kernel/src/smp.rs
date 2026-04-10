@@ -34,7 +34,6 @@ use crate::{
         apic::{ApicId, apic_id},
         io_apic::IoApicManager,
     },
-    log,
     memory::{
         Frame, WithMapper,
         allocator::buddy_allocator::BuddyAllocator,

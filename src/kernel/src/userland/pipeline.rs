@@ -28,7 +28,6 @@ use alloc::vec::Vec;
 use kernel_proc::{def_local, local_builder};
 use pager::{address::VirtAddr, registers::RFlags};
 use santa::Elf;
-use sentinel::log;
 use smart_default::SmartDefault;
 
 use crate::{

@@ -46,7 +46,6 @@ use pager::registers::Cr2;
 use pager::registers::GsBase;
 use pager::registers::RFlags;
 use pager::registers::SegmentSelector;
-use sentinel::log;
 use spin::Mutex;
 
 pub mod apic;

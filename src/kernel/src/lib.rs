@@ -8,6 +8,7 @@
 #![feature(sync_unsafe_cell)]
 #![feature(iter_next_chunk)]
 #![feature(decl_macro)]
+#![feature(prelude_import)]
 #![recursion_limit = "16384"]
 #![allow(internal_features)]
 #![allow(dead_code)]
@@ -16,10 +17,15 @@
 
 #[macro_use]
 extern crate bitflags;
+
 extern crate alloc;
 extern crate core;
-extern crate lazy_static;
-extern crate spin;
+
+pub mod prelude;
+
+#[prelude_import]
+#[allow(unused)]
+use prelude::*;
 
 pub mod buffer;
 pub mod driver;
@@ -57,7 +63,6 @@ use kernel_proc::{def_local, local_builder};
 use logger::LOGGER;
 use pager::registers::{CS, Cr0, Cr2, Cr3, Cr4, Efer, GsBase, KernelGsBase, RFlags, SS};
 use port::{Port, Port32Bit, PortWrite};
-use sentinel::log;
 use smp::cpu_local_avaiable;
 use spin::Mutex;
 use unwinding::abi::{_Unwind_Backtrace, _Unwind_GetIP, UnwindContext, UnwindReasonCode};

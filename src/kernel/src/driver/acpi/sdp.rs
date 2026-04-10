@@ -4,7 +4,6 @@ use pager::{
     address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
-use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Stage1},

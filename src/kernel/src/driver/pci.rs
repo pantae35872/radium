@@ -1,6 +1,5 @@
 use alloc::{sync::Arc, vec::Vec};
 use bit_field::BitField;
-use sentinel::log;
 use spin::Mutex;
 
 use crate::{

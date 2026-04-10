@@ -38,7 +38,6 @@ use pager::{
     address::{Page, PhysAddr, Size4K, VirtAddr},
     virt_addr_alloc,
 };
-use sentinel::log;
 use spin::Mutex;
 use uguid::Guid;
 

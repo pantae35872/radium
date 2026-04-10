@@ -1,9 +1,6 @@
 use pager::address::VirtAddr;
 
-use crate::{
-    serial_print,
-    userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext},
-};
+use crate::userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallId(pub u32);

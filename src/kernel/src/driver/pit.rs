@@ -1,6 +1,5 @@
 use bit_field::BitField;
 use conquer_once::spin::OnceCell;
-use sentinel::log;
 use spin::Mutex;
 
 use crate::{

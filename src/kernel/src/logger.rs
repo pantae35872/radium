@@ -4,13 +4,12 @@ use core::{
 };
 
 use config::config;
-use sentinel::{LogLevel, LoggerBackend, log, set_logger};
+use sentinel::{LogLevel, LoggerBackend, set_logger};
 use static_log::StaticLog;
 
 use crate::{
     initialize_guard,
     interrupt::{self, CORE_ID, IS_IN_ISR},
-    print, serial_print,
     smp::cpu_local_avaiable,
     userland::pipeline::CURRENT_THREAD_ID,
 };

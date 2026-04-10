@@ -13,7 +13,6 @@ use crate::{
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     sync::VolatileCell,
 };
-use sentinel::log;
 
 use super::{InterruptIndex, apic::ApicId};
 

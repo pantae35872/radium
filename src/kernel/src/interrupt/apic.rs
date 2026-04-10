@@ -1,4 +1,4 @@
-use core::{fmt::Display, usize};
+use core::fmt::Display;
 
 use ipi::{IcrBuilder, IpiDeliveryMode, IpiDestination, IpiDestinationShorthand, IpiTriggerMode};
 use pager::{
@@ -15,7 +15,6 @@ use crate::{
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
     smp::{APIC_ID_TO_CPU_ID, CoreId, core_id_to_apic_id},
 };
-use sentinel::log;
 
 use super::InterruptIndex;
 

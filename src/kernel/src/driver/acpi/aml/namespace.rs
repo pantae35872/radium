@@ -5,7 +5,6 @@ use core::str::FromStr;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
-use sentinel::log;
 
 use super::AmlError;
 

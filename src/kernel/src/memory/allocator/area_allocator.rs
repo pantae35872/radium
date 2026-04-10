@@ -5,8 +5,6 @@ use pager::{
     allocator::{FrameAllocator, linear_allocator::LinearAllocator},
 };
 
-use sentinel::log;
-
 pub struct AreaAllocator<'a> {
     current_area: Option<LinearAllocator>,
     areas: MemoryMapIterOwned<'a>,

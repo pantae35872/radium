@@ -11,7 +11,6 @@ use pager::{
 };
 use rsdt::Xrsdt;
 use sdp::Xrsdp;
-use sentinel::log;
 
 use crate::{
     initialization_context::{InitializationContext, Stage1, Stage2},

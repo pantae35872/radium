@@ -23,7 +23,7 @@ use crate::{
     DWARF_DATA,
     driver::acpi::Acpi,
     initialization_context::{InitializationContext, Stage0, Stage1, Stage4, select_context},
-    initialize_guard, log,
+    initialize_guard,
 };
 
 pub use self::paging::remap_the_kernel;

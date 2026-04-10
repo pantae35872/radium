@@ -19,7 +19,6 @@ use crate::{
     interrupt,
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
 };
-use sentinel::log;
 
 pub mod color;
 mod frame_tracker;

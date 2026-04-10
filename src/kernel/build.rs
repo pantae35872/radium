@@ -32,6 +32,6 @@ fn main() {
     println!("cargo:rustc-link-arg={}", trampoline_o.display());
     println!("cargo:rustc-link-arg={}", boot_o.display());
     println!("cargo:rustc-link-arg=-T");
-    println!("cargo:rustc-link-arg=linker.ld");
+    println!("cargo:rustc-link-arg=./src/kernel/linker.ld");
     println!("cargo:rustc-env=BUILD_UUID={}", Uuid::new_v4());
 }

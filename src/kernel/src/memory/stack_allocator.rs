@@ -4,7 +4,6 @@ use pager::{
     allocator::FrameAllocator,
     paging::{mapper::Mapper, table::RootLevel},
 };
-use sentinel::log;
 
 pub struct StackAllocator {
     range: PageIter<Size4K>,

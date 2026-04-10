@@ -7,7 +7,6 @@ use pager::registers::{CS, SS, load_tss};
 use crate::initialization_context::{InitializationContext, Stage3};
 use crate::initialize_guard;
 use crate::smp::{ApInitializationContext, CpuLocalBuilder};
-use sentinel::log;
 
 def_local!(pub static GDT: &'static pager::gdt::Gdt);
 def_local!(pub static KERNEL_CODE_SEG: pager::registers::SegmentSelector);
