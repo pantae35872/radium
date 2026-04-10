@@ -21,7 +21,10 @@ fn main() {
 
     let trampoline_o = Path::new(&outdir).join("trampoline.o");
     run(
-        Command::new("ld").args(["-r", "-b", "binary", "-o"]).arg(&trampoline_o).arg(&trampoline_bin),
+        Command::new("ld")
+            .args(["-m", "elf_x86_64", "-r", "-b", "binary", "-o"])
+            .arg(&trampoline_o)
+            .arg(&trampoline_bin),
         "Failed to convert flat binary to .o",
     );
     run(
