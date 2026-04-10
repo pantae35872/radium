@@ -17,6 +17,7 @@ git clone https://github.com/pantae35872/radium
 cd radium
 ```
 ## Build and Run
+#### Unix
 ```bash
 cargo run --release
 ```
@@ -29,5 +30,7 @@ RADIUM_BUILD_TOOL_NO_TUI=true cargo run --release -- build
 # with qemu
 RADIUM_BUILD_TOOL_NO_TUI=true cargo run --release -- build -qemu.run true
 ```
+#### What about windows...
+No just no (but wsl should work)
 ## Contributing
 At this time, I am not planning to accept contributions to the project.
