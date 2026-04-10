@@ -1,9 +1,11 @@
+#[cfg(unix)]
+use std::os::unix::process::{CommandExt, ExitStatusExt};
+
 use std::{
     env,
     ffi::OsStr,
     fs::{self, OpenOptions, create_dir, remove_file},
     io::{self, IsTerminal, Read, Write, stdout},
-    os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, mpsc::Sender},
@@ -178,6 +180,14 @@ impl Builder {
         let (build_tool, modified) = self.project(&self.root_path.join("build-tool")).build()?;
         if modified && self.config.config.build_tool.reexec {
             ratatui::restore();
+
+            #[cfg(not(unix))]
+            {
+                Command::new(build_tool).arg(self.reexec_command).spawn().command_io_err()?;
+                std::process::exit(0);
+            }
+
+            #[cfg(unix)]
             return Err(Error::ReExecFailed { error: Command::new(build_tool).arg(self.reexec_command).exec() });
         }
 
@@ -507,10 +517,16 @@ impl CmdExecutor {
         let result = child.wait()?;
         let _ = self.0.send(AppEvent::CmdStopped);
 
-        Ok(if let Some(signal) = result.signal() {
+        #[cfg(not(unix))]
+        let status = ExitStatus::with_exit_code(result.code().unwrap_or(1) as u32);
+
+        #[cfg(unix)]
+        let status = if let Some(signal) = result.signal() {
             ExitStatus::with_signal(&signal.to_string())
         } else {
             ExitStatus::with_exit_code(result.code().unwrap_or(1) as u32)
-        })
+        };
+
+        Ok(status)
     }
 }
