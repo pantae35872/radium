@@ -8,7 +8,6 @@ Radium OS is currently in the very early stages of development and is no where n
 ## Build Dependices
 * ```rust``` (lastest nightly)
 * ```fasm```
-* ```wget```
 * ```qemu``` (optional: require if you want to test or run it in qemu)
 ## Getting the source code
 Do not do recursive submodule the build system will do it if required
