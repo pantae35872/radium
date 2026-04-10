@@ -96,11 +96,23 @@ fn find_executable(base: &Path) -> Result<PathBuf, super::Error> {
 
     let so = base.with_extension("so");
     let efi = base.with_extension("efi");
+    let exe = base.with_extension("exe");
 
-    match (so.exists(), efi.exists()) {
-        (true, false) => Ok(so),
-        (false, true) => Ok(efi),
-        (true, true) => Err(super::Error::AmbiguousExecutable { exe: base.display().to_string() }),
-        (false, false) => panic!("Cargo built no known executable: {}(.so|.efi)", base.display()),
+    let mut found = vec![];
+
+    if so.exists() {
+        found.push(so);
+    }
+    if efi.exists() {
+        found.push(efi);
+    }
+    if exe.exists() {
+        found.push(exe);
+    }
+
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => panic!("Cargo built no known executable: {}(.so|.efi|.exe)", base.display()),
+        _ => Err(super::Error::AmbiguousExecutable { exe: base.display().to_string() }),
     }
 }

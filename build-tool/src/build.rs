@@ -434,7 +434,14 @@ impl CmdExecutor {
     }
 
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
-        if !stdout().is_terminal() { self.run_cmd_no_pty(command) } else { self.run_cmd_pty(command) }
+        #[cfg(not(unix))]
+        let result = return self.run_cmd_no_pty(command);
+
+        //FIXME: Portable pty doesn't work with windows (cargo child process hangs)
+        #[cfg(unix)]
+        let result = if !stdout().is_terminal() { self.run_cmd_no_pty(command) } else { self.run_cmd_pty(command) };
+
+        result
     }
 
     fn run_cmd_pty(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
