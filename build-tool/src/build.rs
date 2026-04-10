@@ -5,7 +5,7 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, File, OpenOptions, create_dir, remove_file},
-    io::{self, IsTerminal, Read, Write, stdout},
+    io::{self, IsTerminal, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, mpsc::Sender},
@@ -435,11 +435,12 @@ impl CmdExecutor {
 
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
         #[cfg(not(unix))]
-        let result = return self.run_cmd_no_pty(command);
+        let result = self.run_cmd_no_pty(command);
 
         //FIXME: Portable pty doesn't work with windows (cargo child process hangs)
         #[cfg(unix)]
-        let result = if !stdout().is_terminal() { self.run_cmd_no_pty(command) } else { self.run_cmd_pty(command) };
+        let result =
+            if !std::io::stdout().is_terminal() { self.run_cmd_no_pty(command) } else { self.run_cmd_pty(command) };
 
         result
     }
