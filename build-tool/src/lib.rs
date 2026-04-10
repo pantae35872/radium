@@ -5,7 +5,8 @@
 use std::{
     collections::VecDeque,
     fmt::{self, Arguments},
-    io::{self, Write},
+    io::{self, Write, stdout},
+    process::exit,
     sync::{
         Arc,
         mpsc::{Receiver, Sender, channel},
@@ -77,17 +78,6 @@ macro_rules! result_err_ext {
     };
 }
 
-#[derive(Debug)]
-enum AppEvent {
-    Ui(Event),
-    Render(Duration),
-    Output(Vec<u8>),
-    RunningCmd(String),
-    ChildProcessStarted(Box<dyn ChildKiller + Send + Sync>),
-    CmdStopped,
-    Terminated,
-}
-
 pub struct App {
     prompt: PromtState,
     event: Receiver<AppEvent>,
@@ -107,15 +97,6 @@ pub struct App {
 
     collected_output: VecDeque<u8>,
     parser: Parser,
-}
-
-#[derive(Default)]
-enum AppScreen {
-    #[default]
-    None,
-    Config,
-    Help,
-    Error(String),
 }
 
 impl Default for App {
@@ -150,7 +131,7 @@ impl App {
         }
     }
 
-    pub fn run(mut self, from_rebuild: Option<String>, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
+    pub fn run(mut self, start_command: String, mut main_terminal: DefaultTerminal) -> Result<(), Error> {
         main_terminal.autoresize().tui_err()?;
         self.parser = vt100::Parser::new(
             main_terminal.get_frame().area().height.max(5) - 4,
@@ -162,9 +143,7 @@ impl App {
             self.parser.process("\r\n".as_bytes());
         }
 
-        if let Some(command) = from_rebuild {
-            self.eval(command)?;
-        }
+        self.eval(start_command)?;
 
         let mut frame_start;
         let mut last_start = Instant::now();
@@ -242,6 +221,9 @@ impl App {
                     self.collected_output.pop_front();
                 }
                 self.parser.process(&line);
+            }
+            AppEvent::ChangeScreen(new_screen) => {
+                self.current_screen = new_screen;
             }
             AppEvent::Terminated => {}
         };
@@ -362,8 +344,9 @@ impl App {
     }
 
     fn eval(&mut self, command: String) -> Result<(), Error> {
-        self.current_command =
-            repl::eval(self, &command).map_err(|error| Error::Repl { command: command.clone(), error })?;
+        self.build_error = None;
+        self.current_command = repl::eval(self.event_sender.clone(), self.config.as_ref().clone(), &command)
+            .map_err(|error| Error::Repl { command: command.clone(), error })?;
         Ok(())
     }
 
@@ -417,12 +400,10 @@ impl App {
                 "This is the build tool for this project, it's a simple REPL, that you can type commands in the prompt,",
             ),
             Line::from("and press enter to evaluate."),
-            Line::from("The avaiables commands are:"),
+            Line::from("The availables commands are:"),
             Line::from("  `h` or `help` to show this popup"),
             Line::from("  `b` or `build` to build the project"),
-            Line::from(
-                "  `c` or `config` to configure the kernel (not required if you want to just build the project)",
-            ),
+            Line::from("  `c` or `config` to configure (not required if you want to just build the project)"),
             Line::from("Also the controls are:"),
             Line::from("  Press `PAGE-UP` `PAGE-DOWN` ↑↓ to scroll up and down, CTRL+PAGE-DOWN to go back down"),
             Line::from(
@@ -494,6 +475,76 @@ impl App {
             self.prompt.set_cursor_pos(prompt, frame);
         }
     }
+}
+
+pub fn run_no_tui(command: &str) -> Result<(), Error> {
+    let config = config::load();
+
+    let (sender, receiver) = channel();
+    let receiver = std::thread::spawn(move || {
+        while let Ok(event) = receiver.recv() {
+            match event {
+                AppEvent::Output(output) => {
+                    let _ = stdout().write_all(&output);
+                    let _ = stdout().flush();
+                }
+                AppEvent::ChangeScreen(screen) => match screen {
+                    AppScreen::Help => {
+                        println!(
+                            r#"This is the build tool for this project, it's a simple REPL (but you're using no TUI mode), in no TUI mode command are executed from the arguments 
+that got passed onto the build-tool, the commands are similar to the TUI mode commands 
+"#
+                        );
+                        println!("The availables commands for no TUI mode are:");
+                        println!("  `h` or `help` to print this help message");
+                        println!("  `b` or `build` to build the project");
+                    }
+                    AppScreen::Config => {
+                        eprintln!(
+                            "Unable to run `config` command, RADIUM_BUILD_TOOL_NO_TUI is set, please use tui for configuring."
+                        );
+                        exit(1);
+                    }
+                    _ => {}
+                },
+                _ => continue,
+            }
+        }
+    });
+
+    let Some(token) =
+        repl::eval(sender, config, command).map_err(|error| Error::Repl { command: command.to_string(), error })?
+    else {
+        return Ok(());
+    };
+
+    if let Some(join) = token.join() {
+        join.map_err(|error| Error::Repl { command: command.to_string(), error })
+    } else {
+        receiver.join().unwrap();
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+enum AppEvent {
+    Ui(Event),
+    Render(Duration),
+    ChangeScreen(AppScreen),
+    Output(Vec<u8>),
+    RunningCmd(String),
+    ChildProcessStarted(Box<dyn ChildKiller + Send + Sync>),
+    CmdStopped,
+    Terminated,
+}
+
+#[derive(Default, Debug, Clone)]
+enum AppScreen {
+    #[default]
+    None,
+    Config,
+    Help,
+    Error(String),
 }
 
 #[derive(Debug, Clone)]

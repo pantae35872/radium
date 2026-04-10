@@ -12,6 +12,7 @@ use thiserror::Error;
 use crate::build::{self, make_build_dir};
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
+#[serde(default)]
 pub struct ConfigRoot {
     #[config_name = "Build Mode"]
     pub build_mode: BuildMode,
@@ -26,6 +27,7 @@ pub struct ConfigRoot {
 }
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
+#[serde(default)]
 pub struct BuildTool {
     #[config_name = "Scrollback size"]
     #[default = 1000]
@@ -36,6 +38,7 @@ pub struct BuildTool {
 }
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, SmartDefault)]
+#[serde(default)]
 pub struct Qemu {
     #[config_name = "Run qemu when build finished"]
     #[default = true]
@@ -65,6 +68,7 @@ pub enum BuildMode {
 }
 
 #[derive(Config, Serialize, SmartDefault, Deserialize, Debug, Clone)]
+#[serde(default)]
 pub struct Bootloader {
     #[config_name = "Any key boot"]
     pub any_key_boot: bool,
@@ -94,6 +98,7 @@ pub struct Bootloader {
 }
 
 #[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
+#[serde(default)]
 pub struct ScreenResolution {
     #[config_name = "Width"]
     #[default = 1920]
@@ -104,6 +109,7 @@ pub struct ScreenResolution {
 }
 
 #[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
+#[serde(default)]
 pub struct Kernel {
     #[config_name = "Log level"]
     pub log_level: LogLevel,
@@ -160,7 +166,7 @@ pub fn load() -> ConfigRoot {
         return ConfigRoot::default();
     };
 
-    toml::from_str(&buf).unwrap_or_default()
+    toml::from_str(&buf).expect("Malformed config")
 }
 
 #[derive(Debug, Error)]

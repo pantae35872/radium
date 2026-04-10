@@ -20,6 +20,14 @@ cd radium
 ```bash
 cargo run --release
 ```
-Then type command `build` into the prompt, it'll build and run the project, for more information on the build system, type command `help`
+Then type command `build` into the prompt, it'll build and run the project, for more information on the build system, type command `help`.
+If you don't want TUI set RADIUM_BUILD_TOOL_NO_TUI to anything (except false or 0) before running, followed by the command you want to run. e.g.
+```bash
+# No TUI mode example
+
+RADIUM_BUILD_TOOL_NO_TUI=true cargo run --release -- build
+# with qemu
+RADIUM_BUILD_TOOL_NO_TUI=true cargo run --release -- build -qemu.run true
+```
 ## Contributing
 At this time, I am not planning to accept contributions to the project.

@@ -2,14 +2,14 @@ use std::{
     fs::remove_dir_all,
     io,
     iter::Peekable,
-    sync::Arc,
+    sync::{Arc, mpsc::Sender},
     thread::{self, JoinHandle},
 };
 
 use thiserror::Error;
 
 use crate::{
-    App, AppScreen,
+    AppEvent, AppScreen,
     build::{self, build_path},
     config::{self, Config, ConfigRoot},
     result_err_ext,
@@ -58,6 +58,11 @@ impl ExecutionToken {
         self.handle.is_none()
     }
 
+    pub fn join(self) -> Option<Result<(), Error>> {
+        let handle = self.handle?;
+        Some(handle.join().expect("Builder panicked"))
+    }
+
     pub fn poll(&mut self) -> Option<Result<(), Error>> {
         if self.handle.as_ref().is_some_and(|handle| handle.is_finished()) {
             return Some(self.handle.take().unwrap().join().expect("Builder panicked"));
@@ -70,12 +75,11 @@ impl ExecutionToken {
     }
 }
 
-pub fn eval(app: &mut App, command: &str) -> Result<Option<ExecutionToken>, Error> {
-    let mut temporary_config = app.config.as_ref().clone();
-    let Some(parsed_command) = parse_command(command, &mut temporary_config)? else {
+pub fn eval(sender: Sender<AppEvent>, mut config: ConfigRoot, command: &str) -> Result<Option<ExecutionToken>, Error> {
+    let Some(parsed_command) = parse_command(command, &mut config)? else {
         return Ok(None);
     };
-    run_command(app, parsed_command, command.to_string(), Arc::new(temporary_config))
+    run_command(sender, parsed_command, command.to_string(), Arc::new(config))
 }
 
 // build -build_mode release -qemu.run false
@@ -99,7 +103,7 @@ fn parse_command(command: &str, config: &mut ConfigRoot) -> Result<Option<Comman
 }
 
 fn run_command(
-    app: &mut App,
+    sender: Sender<AppEvent>,
     command: Command,
     original_command: String,
     config: Arc<ConfigRoot>,
@@ -107,19 +111,17 @@ fn run_command(
     let mut handle = None;
     match command {
         Command::Help => {
-            app.current_screen = AppScreen::Help;
+            sender.send(AppEvent::ChangeScreen(AppScreen::Help)).unwrap();
         }
         Command::Build => {
-            app.build_error = None;
-            let event = app.event_sender.clone();
             let command = original_command.clone();
             handle = Some(thread::spawn(move || {
-                build::build(event, build::BuildConfig { config }, command)?;
+                build::build(sender, build::BuildConfig { config }, command)?;
                 Ok(())
             }));
         }
         Command::Config => {
-            app.current_screen = AppScreen::Config;
+            sender.send(AppEvent::ChangeScreen(AppScreen::Config)).unwrap();
         }
         Command::Clean => {
             remove_dir_all(build_path()?).io_err()?;

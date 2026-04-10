@@ -2,10 +2,10 @@ use std::{
     env,
     ffi::OsStr,
     fs::{self, OpenOptions, create_dir, remove_file},
-    io::{self, Read, Write},
-    os::unix::process::CommandExt,
+    io::{self, IsTerminal, Read, Write, stdout},
+    os::unix::process::{CommandExt, ExitStatusExt},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     sync::{Arc, mpsc::Sender},
     thread,
 };
@@ -41,6 +41,26 @@ pub fn build(event: Sender<AppEvent>, config: BuildConfig, reexec_command: Strin
         reexec_command,
     }
     .build()
+}
+
+macro_rules! writeln_select {
+    ($dst:expr $(,)?) => {
+        if std::io::stdout().is_terminal() {
+            write!($dst, "\r\n")
+        } else {
+            write!($dst, "\n")
+        }
+    };
+    ($dst:expr, $($arg:tt)*) => {
+        if std::io::stdout().is_terminal() {
+            $dst.write_fmt(format_args!("{}\r\n", format_args!($($arg)*)))
+        } else {
+            $dst.write_fmt(format_args!("{}\n", format_args!($($arg)*)))
+        }
+    };
+    ($($arg:tt)*) => {
+        compile_error!("requires a destination and format arguments, like `writeln!(dest, \"format string\", args...)`")
+    };
 }
 
 pub fn project_dir() -> Result<PathBuf, Error> {
@@ -189,12 +209,12 @@ impl Builder {
 
         let mut formatter = self.formatter.clone();
         self.executor.psudo_cmd::<Result<_, _>>("Generating iso image...", || {
-            let _ = writeln!(formatter, "Creating bootable iso image...\r");
+            let _ = writeln_select!(formatter, "Creating bootable iso image...");
             let fat = fat::make(&root.directory);
             let iso = iso::make(&root.directory, Some(fat));
-            let _ = writeln!(formatter, "Writing the iso image to disk...\r");
+            let _ = writeln_select!(formatter, "Writing the iso image to disk...");
             self.write_file(self.build_path.join("radium.iso"), &iso).iso_err()?;
-            let _ = writeln!(formatter, "Done!\r");
+            let _ = writeln_select!(formatter, "Done!");
             Ok(())
         })?;
 
@@ -255,7 +275,8 @@ impl Builder {
     fn gen_config(&self) -> Result<(), Error> {
         let config = format!(
             r#"
-// GENERATED FILE. DO NOT EDIT, USE `config` COMMAND IN THE BUILD TOOL REPL TO CONFIG.
+// GENERATED FILE. DO NOT EDIT, USE `config` COMMAND IN THE BUILD TOOL REPL TO CONFIG, OR EDIT
+// config.toml DIRECTELY.
 
 pub const CONFIG: ConfigRoot = {};
 
@@ -402,6 +423,10 @@ impl CmdExecutor {
     }
 
     pub fn run(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
+        if !stdout().is_terminal() { self.run_cmd_no_pty(command) } else { self.run_cmd_pty(command) }
+    }
+
+    fn run_cmd_pty(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
         let pty_system = NativePtySystem::default();
         let pair = pty_system.openpty(Default::default()).unwrap();
         let mut reader = pair.master.try_clone_reader().unwrap();
@@ -430,5 +455,62 @@ impl CmdExecutor {
         let _ = self.0.send(AppEvent::CmdStopped);
 
         Ok(result)
+    }
+
+    fn run_cmd_no_pty(&mut self, command: CommandBuilder) -> Result<ExitStatus, io::Error> {
+        let mut cmd = Command::new(command.get_argv().iter().next().unwrap());
+
+        for arg in command.get_argv().iter().skip(1) {
+            cmd.arg(arg);
+        }
+        if let Some(cwd) = command.get_cwd() {
+            cmd.current_dir(cwd);
+        }
+        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = cmd.spawn()?;
+
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+
+        let command_display = command.get_argv().join(std::ffi::OsStr::new(" ")).to_str().unwrap_or("").to_string();
+
+        let cmd_cwd = command.get_cwd().and_then(|e| e.to_str()).unwrap_or("unknown");
+
+        let _ = self.0.send(AppEvent::Output(format!("Running `{command_display}` in {cmd_cwd}\n").into_bytes()));
+        let _ = self.0.send(AppEvent::RunningCmd(format!("`{command_display}` in {cmd_cwd}")));
+
+        let event_stream_out = self.0.clone();
+        thread::spawn(move || {
+            let mut reader = stdout;
+            let mut buffer = [0u8; 64];
+            while let Ok(read) = reader.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                let _ = event_stream_out.send(AppEvent::Output(buffer[..read].to_vec()));
+            }
+        });
+
+        let event_stream_err = self.0.clone();
+        thread::spawn(move || {
+            let mut reader = stderr;
+            let mut buffer = [0u8; 64];
+            while let Ok(read) = reader.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                let _ = event_stream_err.send(AppEvent::Output(buffer[..read].to_vec()));
+            }
+        });
+
+        let result = child.wait()?;
+        let _ = self.0.send(AppEvent::CmdStopped);
+
+        Ok(if let Some(signal) = result.signal() {
+            ExitStatus::with_signal(&signal.to_string())
+        } else {
+            ExitStatus::with_exit_code(result.code().unwrap_or(1) as u32)
+        })
     }
 }
