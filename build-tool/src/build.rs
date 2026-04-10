@@ -4,7 +4,7 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::{
     env,
     ffi::OsStr,
-    fs::{self, OpenOptions, create_dir, remove_file},
+    fs::{self, File, OpenOptions, create_dir, remove_file},
     io::{self, IsTerminal, Read, Write, stdout},
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -94,7 +94,7 @@ pub enum Error {
     #[error("Failed to run QEMU, failed with: `{error}`")]
     Qemu { error: io::Error },
     #[error("Failed to download font, failed with: `{error}`")]
-    DownloadFont { error: io::Error },
+    DownloadFont { error: reqwest::Error },
     #[error("Failed to build ovmf, failed with: `{error}`")]
     OvmfFailed { error: io::Error },
     #[error("cargo ambiguously built the executeable (cannot determine if it's .so or .efi or exe), `{exe}`")]
@@ -139,10 +139,11 @@ impl Builder {
 
         let font_file = self.build_path.join("kernel_font.ttf");
         if !font_file.exists() {
-            let mut command = CommandBuilder::new("wget");
-            command.cwd(&self.build_path);
-            command.args(["-O", "kernel_font.ttf", "https://www.1001fonts.com/download/font/open-sans.regular.ttf"]);
-            self.executor.run(command).map_err(|error| Error::DownloadFont { error })?;
+            let _ = writeln_select!(self.formatter, "Downloading font...");
+            let mut response = reqwest::blocking::get("https://www.1001fonts.com/download/font/open-sans.regular.ttf")
+                .map_err(|error| Error::DownloadFont { error })?;
+            let mut file = File::create(self.build_path.join("kernel_font.ttf")).command_io_err()?;
+            io::copy(&mut response, &mut file).command_io_err()?;
         }
 
         let ovmf_file = self.root_path.join("OVMF.fd");
