@@ -76,21 +76,6 @@ fn syscall_exit() -> ! {
 
 static COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[inline(always)]
-pub fn is_stack_aligned_16() -> bool {
-    let rsp: usize;
-
-    unsafe {
-        core::arch::asm!(
-            "mov {}, rsp",
-            out(reg) rsp,
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-
-    rsp & 0xF == 0
-}
-
 fn computation() -> ! {
     let mut x: u64 = 0x1234_5678_9ABC_DEF0;
     let mut y: u64 = 0xCAFEBABEDEADBEEF;
@@ -121,21 +106,9 @@ fn computation() -> ! {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    //for _ in 0..512 {
-    //    spawn(computation);
-    //}
-    //computation();
-    if !is_stack_aligned_16() {
-        syscall_exit();
-    }
-
     syscall_sleep(10000);
     for _ in 0..512 {
         spawn(|| {
-            if !is_stack_aligned_16() {
-                syscall_exit();
-            }
-
             for _ in 0..1_000_000 {
                 COUNT.fetch_add(1, Ordering::Relaxed);
             }
@@ -149,8 +122,8 @@ pub extern "C" fn _start() -> ! {
     }
 
     syscall_test();
-
-    syscall_exit();
+    loop {}
+    //syscall_exit();
 }
 
 #[panic_handler]

@@ -1,4 +1,4 @@
-use core::arch::naked_asm;
+use core::arch::{asm, naked_asm};
 
 use kernel_proc::{def_local, local_builder};
 use pager::{
@@ -10,7 +10,7 @@ use crate::{
     gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_CODE_SEG_DUMMY, USER_DATA_SEG},
     hlt_loop,
     initialization_context::{InitializationContext, Stage4},
-    interrupt,
+    interrupt::{self, ExtendedInterruptStackFrame},
     memory::is_stack_aligned_16,
     userland::{
         self,
@@ -56,6 +56,7 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
 
     let id = SyscallId(stack_frame.rax as u32);
     let mut should_hlt = false;
+    let mut use_iret = false;
     userland::pipeline::handle_request(
         CommonRequestContext::new(stack_frame, RequestReferer::SyscallRequest(id)),
         |CommonRequestContext { stack_frame, .. }, dispatcher| {
@@ -65,6 +66,7 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
                 }
                 DispatchAction::ReplaceState(state) => {
                     stack_frame.replace_with(state);
+                    use_iret = !state.partial_state;
                 }
             })
         },
@@ -81,6 +83,41 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
     } else {
         interrupt::disable();
         *IS_IN_SYSCALL.inner_mut() = false;
+    }
+
+    if use_iret {
+        let mut iret_stack = ExtendedInterruptStackFrame {
+            code_segment: USER_CODE_SEG.0.into(),
+            stack_segment: USER_DATA_SEG.0.into(),
+            ..Default::default()
+        };
+        iret_stack.replace_with(stack_frame);
+
+        unsafe {
+            asm! {
+                "mov rsp, {0}",
+                "pop r15",
+                "pop r14",
+                "pop r13",
+                "pop r12",
+                "pop r11",
+                "pop r10",
+                "pop r9",
+                "pop r8",
+                "pop rsi",
+                "pop rdi",
+                "pop rbp",
+                "pop rdx",
+                "pop rcx",
+                "pop rbx",
+                "pop rax",
+                "swapgs",
+                "iretq",
+
+                in(reg) &iret_stack,
+                options(noreturn)
+            }
+        };
     }
 }
 

@@ -124,6 +124,7 @@ pub struct PipelineContext {
     pub should_schedule: bool,
     pub should_hlt: bool,
     pub interrupted_slept: bool,
+    pub interrupted_freed: bool,
     pub scheduled_task: Option<TaskBlock>,
 }
 
@@ -145,6 +146,7 @@ impl ControlPipeline {
     }
 
     fn spawn_init(&mut self) {
+        log!(Info, "Spawning init");
         let packed = PACKED_DATA.get().unwrap();
         let init_program = packed.iter().find(|e| e.name == "init").expect("Can't find init!");
 
@@ -165,9 +167,11 @@ impl ControlPipeline {
         self.scheduler.sleep_interrupted(context, millis);
     }
 
-    pub fn free_thread(&mut self, thread: Thread) {
+    pub fn free_thread(&mut self, context: &mut PipelineContext, thread: Thread) {
         self.thread.free(thread);
         self.process.free_thread(thread);
+
+        context.interrupted_freed = true;
     }
 
     pub fn free_process(&mut self, process: Process) {
@@ -383,6 +387,8 @@ pub struct TaskProcesserState {
     pub stack_pointer: VirtAddr,
 
     pub extended_state: ExtendedState,
+
+    pub partial_state: bool,
 }
 
 impl<'a> From<&CommonRequestContext<'a>> for TaskProcesserState {
@@ -407,6 +413,7 @@ impl<'a> From<&CommonRequestContext<'a>> for TaskProcesserState {
             stack_pointer: context.stack_frame.stack_pointer,
             instruction_pointer: context.stack_frame.instruction_pointer,
             extended_state: ExtendedState,
+            partial_state: matches!(context.referer, RequestReferer::SyscallRequest(..)),
         }
     }
 }

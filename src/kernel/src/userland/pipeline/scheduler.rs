@@ -9,7 +9,7 @@ use derivative::Derivative;
 
 use crate::{
     interrupt::{CORE_ID, InterruptIndex, LAPIC},
-    smp::{CoreId, MAX_CPU},
+    smp::{CORE_COUNT, CoreId, MAX_CPU},
     userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
 };
 
@@ -121,29 +121,24 @@ impl SchedulerPipeline {
 
     pub fn schedule(&mut self, thread: &mut ThreadPipeline, context: &mut PipelineContext) {
         if let Some(interrupted_task) = context.interrupted_task
-            && !context.interrupted_slept
+            && !(context.interrupted_slept || context.interrupted_freed)
         {
             self.units.push_back(interrupted_task);
         }
 
         self.migrate(thread);
 
+        if CORE_ID.is_bsp() {
+            serial_println!(
+                "{}",
+                TASK_COUNT_EACH_CORE[0..*CORE_COUNT].iter().map(|e| e.load(Ordering::Relaxed)).sum::<usize>()
+            );
+        }
+
         if self.sleep_queue.peek().is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time) {
             let task = self.sleep_queue.pop().unwrap().0.task;
             self.units.push_front(task);
         }
-
-        //if CORE_ID.is_bsp() {
-        //    TASK_COUNT_EACH_CORE
-        //        .iter()
-        //        .filter_map(|t| match t.load(Ordering::Relaxed) {
-        //            usize::MAX => None,
-        //            t => Some(t),
-        //        })
-        //        .enumerate()
-        //        .for_each(|(core, task)| serial_print!("[Core {core} has {task} tasks] "));
-        //    serial_println!();
-        //}
 
         while let Some(task) = self.units.pop_front() {
             if task.valid() {

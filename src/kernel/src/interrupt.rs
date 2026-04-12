@@ -20,6 +20,7 @@ use crate::port::PortReadWrite;
 use crate::smp::ApInitializationContext;
 use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
+use crate::smp::cpu_local_avaiable;
 use crate::syscall::IS_IN_SYSCALL;
 use crate::userland;
 use crate::userland::pipeline::CommonRequestContext;
@@ -46,6 +47,7 @@ use pager::registers::Cr2;
 use pager::registers::GsBase;
 use pager::registers::RFlags;
 use pager::registers::SegmentSelector;
+use smart_default::SmartDefault;
 use spin::Mutex;
 
 pub mod apic;
@@ -220,7 +222,7 @@ impl From<&ExtendedInterruptStackFrame> for CommonRequestStackFrame {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, SmartDefault)]
 pub struct ExtendedInterruptStackFrame {
     pub r15: u64,
     pub r14: u64,
@@ -237,15 +239,18 @@ pub struct ExtendedInterruptStackFrame {
     pub rcx: u64,
     pub rbx: u64,
     pub rax: u64,
+    #[default(VirtAddr::null())]
     pub instruction_pointer: VirtAddr,
     pub code_segment: u64,
+    #[default(RFlags::ID | RFlags::AlignmentCheck | RFlags::InterruptEnable)]
     pub cpu_flags: RFlags,
+    #[default(VirtAddr::null())]
     pub stack_pointer: VirtAddr,
     pub stack_segment: u64,
 }
 
 impl ExtendedInterruptStackFrame {
-    fn replace_with(&mut self, c_stack: &CommonRequestStackFrame) {
+    pub fn replace_with(&mut self, c_stack: &CommonRequestStackFrame) {
         self.r15 = c_stack.r15;
         self.r14 = c_stack.r14;
         self.r13 = c_stack.r13;
@@ -337,8 +342,17 @@ extern "C" fn hlt_loop() {
     core::arch::naked_asm!("2:", "hlt", "jmp 2b");
 }
 
+fn eoi() {
+    LAPIC.inner_mut().eoi();
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
+    fn exit() {
+        eoi();
+        *IS_IN_ISR.inner_mut() = false;
+    }
+
     if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() {
         return;
     }
@@ -348,30 +362,30 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         unsafe { GsBase::swap() };
     }
 
-    if PANIC_COUNT.load(Ordering::Relaxed) > 0 {
-        eoi(idx);
+    if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
+        exit();
         disable();
         hlt_loop();
     }
 
-    assert!(is_stack_aligned_16(), "Unaligned stack in interrupt handler");
+    debug_assert!(cpu_local_avaiable());
+    debug_assert!(is_stack_aligned_16(), "Unaligned stack in interrupt handler");
 
     if *IS_IN_SYSCALL {
-        assert!(!from_user);
-        eoi(idx);
-        return;
+        debug_assert!(!from_user, "IS_IN_SYSCALL is set when code segment is ring 3");
+        return exit();
+    }
+
+    if *IS_IN_ISR {
+        return exit();
     }
 
     *LAST_INTERRUPT_NO.inner_mut() = idx;
     *IS_IN_ISR.inner_mut() = true;
 
-    let idx = match InterruptIndex::try_from(idx) {
-        Ok(index) => index,
-        Err(..) => {
-            eoi(idx);
-            *IS_IN_ISR.inner_mut() = false;
-            return;
-        }
+    let Ok(idx) = InterruptIndex::try_from(idx) else {
+        log!(Error, "Unknown interrupt called {idx}");
+        return exit();
     };
 
     let mut c_stack_frame = CommonRequestStackFrame::from(&*stack_frame);
@@ -400,10 +414,9 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         },
     );
 
-    stack_frame.replace_with(&c_stack_frame);
+    eoi();
 
-    eoi(idx as u8);
-    *IS_IN_ISR.inner_mut() = false;
+    stack_frame.replace_with(&c_stack_frame);
 
     match stack_frame.code_segment {
         code if KERNEL_CODE_SEG.0 as u64 == code => {
@@ -414,6 +427,8 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         }
         unknown => panic!("Unknown code segment {unknown:?}"),
     }
+
+    *IS_IN_ISR.inner_mut() = false;
 
     if swap_to_user_gs {
         unsafe { GsBase::swap() };
@@ -472,12 +487,6 @@ macro_rules! handler {
             }
         }
     };
-}
-
-fn eoi(idx: u8) {
-    if idx != InterruptIndex::DriverCall.as_u8() {
-        LAPIC.inner_mut().eoi();
-    }
 }
 
 handler!(

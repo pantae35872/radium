@@ -155,7 +155,7 @@ impl GsBase {
     ///
     /// # Safety
     ///
-    /// The caller must ensure that any use of the gs base after this called, act correspondingly
+    /// The caller must ensure that any use of the gs base after this called act correspondingly
     pub unsafe fn swap() {
         unsafe {
             asm!("swapgs", options(nostack, preserves_flags));

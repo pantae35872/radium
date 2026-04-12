@@ -28,10 +28,11 @@ use crate::{
 
 mod id;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ThreadPipeline {
     pool: Vec<ThreadContext>,
     unused_thread: Vec<usize>,
+    migrated_thread: Vec<usize>,
 }
 
 impl ThreadPipeline {
@@ -44,7 +45,7 @@ impl ThreadPipeline {
 
         event.ipp_handler(|c, cx| c.thread.handle_ipp(cx, &mut c.scheduler));
 
-        Self { pool: Vec::new(), unused_thread: Vec::new() }
+        Self::default()
     }
 
     fn begin(&mut self, context: &CommonRequestContext<'_>) -> Option<Thread> {
@@ -72,19 +73,18 @@ impl ThreadPipeline {
 
     fn handle_ipp(&mut self, _context: &mut PipelineContext, scheduler: &mut SchedulerPipeline) {
         ThreadMigratePacket::handle(|ThreadMigratePacket { context, process, global_id }| {
-            if let Some(unused) =
-                self.unused_thread.iter().find(|e| matches!(self.pool[**e].state, ThreadState::Migrated))
-            {
-                let thread_ctx = &mut self.pool[*unused];
-                *thread_ctx = context;
+            assert_matches!(context.state, ThreadState::Active, "Dead thread were migrated");
 
-                id::migrate_thread(global_id, LocalThreadId::new(*unused));
+            let id = if let Some(unused_migrated) = self.migrated_thread.pop() {
+                self.pool[unused_migrated] = context;
+                unused_migrated
             } else {
                 let id = self.pool.len();
                 self.pool.push(context);
+                id
+            };
 
-                id::migrate_thread(global_id, LocalThreadId::new(id));
-            }
+            id::migrate_thread(global_id, LocalThreadId::new(id));
             let thread = Thread { global_id, signature: id::sigature(global_id) };
 
             scheduler.add_task(TaskBlock { process, thread });
@@ -106,7 +106,7 @@ impl ThreadPipeline {
         ThreadMigratePacket { context, global_id: thread.global_id, process }.send(destination, false);
 
         id::invalidate(thread);
-        self.unused_thread.push(id);
+        self.migrated_thread.push(id);
     }
 
     pub fn free(&mut self, thread: Thread) {
@@ -119,12 +119,13 @@ impl ThreadPipeline {
 
     /// Allocate a new thread, with the provided parent_process, and a start address
     pub fn alloc(&mut self, process: &mut ProcessPipeline, parent_process: Process, start: VirtAddr) -> TaskBlock {
-        if let Some(unused) = self.unused_thread.pop() {
+        if let Some(unused) = self.unused_thread.pop().or_else(|| self.migrated_thread.pop()) {
             let thread_ctx = &mut self.pool[unused];
+
             assert_matches!(
                 thread_ctx.state,
                 ThreadState::Inactive | ThreadState::Migrated,
-                "There shouldn't be an alive thread in the unused thread pool"
+                "There shouldn't be an alive thread in the unused or migrated thread pool"
             );
 
             match (thread_ctx.state, thread_ctx.parent_process == parent_process) {

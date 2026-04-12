@@ -22,6 +22,7 @@ impl<'a> Dispatcher<'a> {
 
     pub fn dispatch(mut self, mut dispatch: impl FnMut(DispatchAction)) {
         if let Some(state) = self.state.take() {
+            debug_assert!(!self.hlt, "we should not be throwing thread into the void!");
             dispatch(DispatchAction::ReplaceState(state))
         }
 

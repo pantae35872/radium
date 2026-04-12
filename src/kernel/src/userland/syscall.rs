@@ -53,7 +53,7 @@ pub(super) fn syscall_handle(
             }
         }
         Syscall::ExitThread => {
-            pipeline.free_thread(calling_task.thread);
+            pipeline.free_thread(pipeline_context, calling_task.thread);
         }
         Syscall::Test => {
             serial_print!(".");
