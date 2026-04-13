@@ -120,6 +120,7 @@ impl SchedulerPipeline {
     }
 
     pub fn schedule(&mut self, thread: &mut ThreadPipeline, context: &mut PipelineContext) {
+        //serial_print!(".");
         if let Some(interrupted_task) = context.interrupted_task
             && !(context.interrupted_slept || context.interrupted_freed)
         {
@@ -127,13 +128,6 @@ impl SchedulerPipeline {
         }
 
         self.migrate(thread);
-
-        if CORE_ID.is_bsp() {
-            serial_println!(
-                "{}",
-                TASK_COUNT_EACH_CORE[0..*CORE_COUNT].iter().map(|e| e.load(Ordering::Relaxed)).sum::<usize>()
-            );
-        }
 
         if self.sleep_queue.peek().is_some_and(|Reverse(entry)| self.timer_count >= entry.wakeup_time) {
             let task = self.sleep_queue.pop().unwrap().0.task;

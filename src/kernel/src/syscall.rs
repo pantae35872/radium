@@ -66,7 +66,7 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
                 }
                 DispatchAction::ReplaceState(state) => {
                     stack_frame.replace_with(state);
-                    use_iret = !state.partial_state;
+                    use_iret = state.rcx != state.instruction_pointer.as_u64() || state.r11 != state.cpu_flags.bits();
                 }
             })
         },

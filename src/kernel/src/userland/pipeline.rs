@@ -387,8 +387,6 @@ pub struct TaskProcesserState {
     pub stack_pointer: VirtAddr,
 
     pub extended_state: ExtendedState,
-
-    pub partial_state: bool,
 }
 
 impl<'a> From<&CommonRequestContext<'a>> for TaskProcesserState {
@@ -413,7 +411,6 @@ impl<'a> From<&CommonRequestContext<'a>> for TaskProcesserState {
             stack_pointer: context.stack_frame.stack_pointer,
             instruction_pointer: context.stack_frame.instruction_pointer,
             extended_state: ExtendedState,
-            partial_state: matches!(context.referer, RequestReferer::SyscallRequest(..)),
         }
     }
 }
