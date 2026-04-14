@@ -10,7 +10,7 @@ use crate::{
     gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_CODE_SEG_DUMMY, USER_DATA_SEG},
     hlt_loop,
     initialization_context::{InitializationContext, Stage4},
-    interrupt::{self, ExtendedInterruptStackFrame},
+    interrupt::{self, ExtendedInterruptStackFrame, enable},
     memory::is_stack_aligned_16,
     userland::{
         self,
@@ -52,7 +52,7 @@ pub fn init(ctx: &mut InitializationContext<Stage4>) {
 extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
     *IS_IN_SYSCALL.inner_mut() = true;
     interrupt::enable();
-    assert!(is_stack_aligned_16(), "Unaligned stack in syscall handler");
+    debug_assert!(is_stack_aligned_16(), "Unaligned stack in syscall handler");
 
     let id = SyscallId(stack_frame.rax as u32);
     let mut should_hlt = false;
@@ -72,17 +72,16 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
         },
     );
 
+    interrupt::disable();
+    interrupt::drain_pending();
+    *IS_IN_SYSCALL.inner_mut() = false;
+
     if should_hlt {
-        interrupt::without_interrupts(|| {
-            *IS_IN_SYSCALL.inner_mut() = false;
-        });
+        enable();
         // We can directly do hlt loop here since theres no requirement to return from,
         // the syscall instruction, and the stack will reset to a default value, when
         // the next syscall instruction is executed
         hlt_loop();
-    } else {
-        interrupt::disable();
-        *IS_IN_SYSCALL.inner_mut() = false;
     }
 
     if use_iret {

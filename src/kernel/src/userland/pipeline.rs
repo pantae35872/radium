@@ -266,6 +266,15 @@ impl TaskBlock {
     }
 }
 
+pub fn handle_hw_interrupt(idx: InterruptIndex) {
+    let idx = match idx {
+        InterruptIndex::CheckIPP => return,
+        idx => idx,
+    };
+
+    PIPELINE.borrow_mut().hardware_interrupt(idx);
+}
+
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
 /// [`Dispatcher`] that must be used to operate the right following actions.
 pub fn handle_request<'b>(

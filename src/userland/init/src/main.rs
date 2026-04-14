@@ -122,8 +122,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     syscall_test();
-    loop {}
-    //syscall_exit();
+    syscall_exit();
 }
 
 #[panic_handler]

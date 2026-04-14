@@ -5,7 +5,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use alloc::{boxed::Box, sync::Arc, vec::Vec};
+use alloc::{boxed::Box, collections::vec_deque::VecDeque, sync::Arc, vec::Vec};
 use bootbridge::BootBridge;
 use conquer_once::spin::OnceCell;
 use kernel_proc::{def_local, local_builder, local_gen};
@@ -30,7 +30,7 @@ use crate::{
     hlt, hlt_loop,
     initialization_context::{End, InitializationContext, Stage2, Stage3, Stage4, select_context},
     interrupt::{
-        self, APIC_ID, LAPIC,
+        self, APIC_ID, InterruptIndex, LAPIC,
         apic::{ApicId, apic_id},
         io_apic::IoApicManager,
     },

@@ -1,4 +1,5 @@
 use core::arch::asm;
+use core::cell::RefCell;
 use core::fmt;
 use core::fmt::LowerHex;
 use core::sync::atomic::Ordering;
@@ -22,12 +23,13 @@ use crate::smp::CoreId;
 use crate::smp::CpuLocalBuilder;
 use crate::smp::cpu_local_avaiable;
 use crate::syscall::IS_IN_SYSCALL;
-use crate::userland;
+use crate::userland::pipeline;
 use crate::userland::pipeline::CommonRequestContext;
 use crate::userland::pipeline::CommonRequestStackFrame;
 use crate::userland::pipeline::RequestReferer;
 use crate::userland::pipeline::dispatch::DispatchAction;
 use alloc::boxed::Box;
+use alloc::collections::vec_deque::VecDeque;
 use alloc::sync::Arc;
 use apic::LocalApic;
 use apic::LocalApicArguments;
@@ -121,6 +123,8 @@ fn create_idt() -> &'static Idt {
 }
 
 def_local!(static IDT: &'static crate::interrupt::idt::Idt);
+def_local!(static INTERRUPT_QUEUE: RefCell<VecDeque<InterruptIndex>>);
+def_local!(static HLT_STACK: crate::memory::stack_allocator::Stack);
 def_local!(pub static LAPIC: crate::interrupt::apic::LocalApic);
 def_local!(pub static CORE_ID: CoreId);
 def_local!(pub static APIC_ID: ApicId);
@@ -146,6 +150,9 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
 
     let lapic = move |cpu: &mut CpuLocalBuilder, ctx: &ApInitializationContext, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
+        let hlt_stack =
+            ctx.stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for the hlt thread");
+
         let idt = create_idt();
         idt.load();
         let mut lapic = lapic.clone();
@@ -159,11 +166,13 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
             IDT(idt),
             LAPIC(lapic),
             APIC_ID(apic_id),
+            HLT_STACK(hlt_stack),
             CORE_ID(core_id),
             LAST_INTERRUPT_NO(0),
             IS_IN_ISR(false),
             TPMS(1000),
             IO_APIC(Arc::clone(&ctx.io_apic)),
+            INTERRUPT_QUEUE(Default::default()),
         );
     };
 
@@ -348,57 +357,52 @@ fn eoi() {
 
 #[unsafe(no_mangle)]
 extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStackFrame, idx: u8) {
-    fn exit() {
-        eoi();
-        *IS_IN_ISR.inner_mut() = false;
-    }
-
-    if idx == InterruptIndex::SpuriousInterruptsVector.as_u8() {
-        return;
-    }
-
     let from_user = SegmentSelector(stack_frame.code_segment as u16).privilege_level() == PrivilegeLevel::Ring3;
     if from_user {
         unsafe { GsBase::swap() };
     }
 
+    let Ok(idx) = InterruptIndex::try_from(idx) else {
+        log!(Error, "Unknown interrupt occurs {idx}");
+        return eoi();
+    };
+
+    if matches!(idx, InterruptIndex::SpuriousInterruptsVector) {
+        return;
+    }
+
     if PANIC_COUNT.load(Ordering::SeqCst) > 0 {
-        exit();
-        disable();
+        eoi();
         hlt_loop();
     }
 
     debug_assert!(cpu_local_avaiable());
     debug_assert!(is_stack_aligned_16(), "Unaligned stack in interrupt handler");
+    debug_assert!(!(from_user && *IS_IN_SYSCALL), "IS_IN_SYSCALL is set when code segment is ring 3");
+    debug_assert!(!(from_user && *IS_IN_ISR), "IS_IN_ISR is set when code segment is ring 3");
 
-    if *IS_IN_SYSCALL {
-        debug_assert!(!from_user, "IS_IN_SYSCALL is set when code segment is ring 3");
-        log!(Warning, "Missing interrupt: {idx}");
-        return exit();
+    if *IS_IN_ISR || *IS_IN_SYSCALL {
+        INTERRUPT_QUEUE.borrow_mut().push_back(idx);
+        return eoi();
     }
 
-    if *IS_IN_ISR {
-        log!(Warning, "Missing interrupt: {idx}");
-        return exit();
-    }
-
-    *LAST_INTERRUPT_NO.inner_mut() = idx;
     *IS_IN_ISR.inner_mut() = true;
+    *LAST_INTERRUPT_NO.inner_mut() = idx.as_u8();
 
-    let Ok(idx) = InterruptIndex::try_from(idx) else {
-        log!(Error, "Unknown interrupt occurs {idx}");
-        return exit();
-    };
+    // this is safe now since IS_IN_ISR is set, the interrupt will be queued
+    enable();
+    eoi();
 
     let mut c_stack_frame = CommonRequestStackFrame::from(&*stack_frame);
     let mut swap_to_user_gs = from_user;
 
-    userland::pipeline::handle_request(
+    pipeline::handle_request(
         CommonRequestContext::new(&mut c_stack_frame, RequestReferer::HardwareInterrupt(idx)),
         |CommonRequestContext { stack_frame: c_stack_frame, .. }, dispatcher| {
             dispatcher.dispatch(|action| match action {
                 DispatchAction::HltLoop => {
                     *c_stack_frame = Default::default();
+                    c_stack_frame.stack_pointer = HLT_STACK.top();
                     c_stack_frame.instruction_pointer = VirtAddr::new(hlt_loop as *const () as u64);
 
                     stack_frame.code_segment = KERNEL_CODE_SEG.0.into();
@@ -416,8 +420,6 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         },
     );
 
-    eoi();
-
     stack_frame.replace_with(&c_stack_frame);
 
     match stack_frame.code_segment {
@@ -430,10 +432,20 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
         unknown => panic!("Unknown code segment {unknown:?}"),
     }
 
+    disable();
+    drain_pending();
+
     *IS_IN_ISR.inner_mut() = false;
 
     if swap_to_user_gs {
         unsafe { GsBase::swap() };
+    }
+}
+
+/// Must be called in a disabled interrupt context
+pub fn drain_pending() {
+    while let Some(idx) = INTERRUPT_QUEUE.borrow_mut().pop_front() {
+        pipeline::handle_hw_interrupt(idx);
     }
 }
 

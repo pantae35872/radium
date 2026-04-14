@@ -9,7 +9,7 @@ use derivative::Derivative;
 
 use crate::{
     interrupt::{CORE_ID, InterruptIndex, LAPIC},
-    smp::{CORE_COUNT, CoreId, MAX_CPU},
+    smp::{CoreId, MAX_CPU},
     userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
 };
 
@@ -126,12 +126,16 @@ impl SchedulerPipeline {
             self.units.push_back(interrupted_task);
         }
 
-        if CORE_ID.is_bsp() {
-            serial_println!(
-                "Total task: {}",
-                TASK_COUNT_EACH_CORE[0..*CORE_COUNT].iter().map(|c| c.load(Ordering::Relaxed)).sum::<usize>()
-            );
-        }
+        //if CORE_ID.is_bsp() {
+        //    let sum = TASK_COUNT_EACH_CORE
+        //        .iter()
+        //        .map(|c| c.load(Ordering::Relaxed))
+        //        .filter(|c| *c != usize::MAX)
+        //        .sum::<usize>();
+        //    if sum != 0 {
+        //        serial_println!("Total task: {sum}");
+        //    }
+        //}
 
         self.migrate(thread);
 
