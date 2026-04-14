@@ -58,6 +58,9 @@ pub struct Qemu {
     #[config_name = "Enable KVM"]
     #[default = true]
     pub enable_kvm: bool,
+    #[config_name = "Enable Display"]
+    #[default = true]
+    pub enable_display: bool,
 }
 
 #[derive(Config, Serialize, Deserialize, Debug, Clone, Copy, Default)]

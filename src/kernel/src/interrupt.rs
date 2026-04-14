@@ -373,10 +373,12 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
 
     if *IS_IN_SYSCALL {
         debug_assert!(!from_user, "IS_IN_SYSCALL is set when code segment is ring 3");
+        log!(Warning, "Missing interrupt: {idx}");
         return exit();
     }
 
     if *IS_IN_ISR {
+        log!(Warning, "Missing interrupt: {idx}");
         return exit();
     }
 
