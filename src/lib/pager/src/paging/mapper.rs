@@ -571,45 +571,46 @@ impl<Root: RootLevel> Mapper<Root> {
         let addr_start = start_frame.start_address();
         let addr_end = PhysAddr::new(start_frame.start_address().as_u64() + page_count as u64 * Size4K::SIZE);
 
-        while {
-            current_addr = addr_end - page_count * Size4K::SIZE as usize;
+        while page_count > 0 {
+            while {
+                current_addr = addr_end - page_count * Size4K::SIZE as usize;
 
-            let offset = current_addr.as_u64() - addr_start.as_u64();
-            target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
+                let offset = current_addr.as_u64() - addr_start.as_u64();
+                target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
 
-            page_count >= Size1G::count_of::<Size4K>() as usize
-                && current_addr.is_page_align::<Size1G>()
-                && target_addr.is_page_align::<Size1G>()
-        } {
-            unsafe { self.map_to::<_, Size1G>(target_addr.into(), current_addr.into(), flags, allocator) };
+                page_count >= Size1G::count_of::<Size4K>() as usize
+                    && current_addr.is_page_align::<Size1G>()
+                    && target_addr.is_page_align::<Size1G>()
+            } {
+                unsafe { self.map_to::<_, Size1G>(target_addr.into(), current_addr.into(), flags, allocator) };
 
-            page_count -= Size1G::count_of::<Size4K>() as usize;
-        }
+                page_count -= Size1G::count_of::<Size4K>() as usize;
+            }
 
-        while {
-            current_addr = addr_end - page_count * Size4K::SIZE as usize;
+            while {
+                current_addr = addr_end - page_count * Size4K::SIZE as usize;
 
-            let offset = current_addr.as_u64() - addr_start.as_u64();
-            target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
+                let offset = current_addr.as_u64() - addr_start.as_u64();
+                target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset);
 
-            page_count >= Size2M::count_of::<Size4K>() as usize
-                && current_addr.is_page_align::<Size2M>()
-                && target_addr.is_page_align::<Size2M>()
-        } {
-            unsafe { self.map_to::<_, Size2M>(target_addr.into(), current_addr.into(), flags, allocator) };
+                page_count >= Size2M::count_of::<Size4K>() as usize
+                    && current_addr.is_page_align::<Size2M>()
+                    && target_addr.is_page_align::<Size2M>()
+            } {
+                unsafe { self.map_to::<_, Size2M>(target_addr.into(), current_addr.into(), flags, allocator) };
 
-            page_count -= Size2M::count_of::<Size4K>() as usize;
-        }
+                page_count -= Size2M::count_of::<Size4K>() as usize;
+            }
 
-        while {
-            current_addr = addr_end - page_count * Size4K::SIZE as usize;
-            page_count > 0
-        } {
-            let offset = current_addr.as_u64() - addr_start.as_u64();
-            let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
-            unsafe { self.map_to::<_, Size4K>(target_addr, current_addr.into(), flags, allocator) };
+            if page_count > 0 {
+                current_addr = addr_end - page_count * Size4K::SIZE as usize;
 
-            page_count -= 1;
+                let offset = current_addr.as_u64() - addr_start.as_u64();
+                let target_addr = VirtAddr::new(start_page.start_address().as_u64() + offset).into();
+                unsafe { self.map_to::<_, Size4K>(target_addr, current_addr.into(), flags, allocator) };
+
+                page_count -= 1;
+            }
         }
     }
 

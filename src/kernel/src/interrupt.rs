@@ -386,7 +386,7 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     *IS_IN_ISR.inner_mut() = true;
 
     let Ok(idx) = InterruptIndex::try_from(idx) else {
-        log!(Error, "Unknown interrupt called {idx}");
+        log!(Error, "Unknown interrupt occurs {idx}");
         return exit();
     };
 
