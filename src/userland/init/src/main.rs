@@ -3,6 +3,7 @@
 
 use core::{
     arch::asm,
+    fmt,
     hint::black_box,
     panic::PanicInfo,
     sync::atomic::{AtomicUsize, Ordering},
@@ -21,11 +22,24 @@ pub fn spawn(f: fn() -> !) {
     }
 }
 
-fn syscall_test() {
+fn syscall_test(c: char) {
     unsafe {
         asm!(
             "syscall",
             in("rax") 4,
+            in("rdx") c as u64,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack),
+        );
+    }
+}
+
+fn syscall_flush_log() {
+    unsafe {
+        asm!(
+            "syscall",
+            in("rax") 5,
             out("rcx") _,
             out("r11") _,
             options(nostack),
@@ -98,15 +112,49 @@ fn computation() -> ! {
         }
 
         i += i.wrapping_add(1);
-        syscall_test();
+        syscall_test(' ');
 
         black_box((x, y));
     }
 }
 
+struct SyscallWriter;
+
+impl fmt::Write for SyscallWriter {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            syscall_test(c);
+        }
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub fn _print(args: ::core::fmt::Arguments) {
+    use core::fmt::Write;
+    let _ = SyscallWriter.write_fmt(args);
+}
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:tt)*) => {
+        $crate::_print(format_args!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    () => ($crate::serial_print!("\n"));
+    ($($arg:tt)*) => {
+        $crate::_print(format_args!("{}\n", format_args!($($arg)*)))
+    };
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() -> ! {
-    syscall_sleep(10000);
+    println!("counting..");
+    syscall_sleep(3000);
+
     for _ in 0..512 {
         spawn(|| {
             for _ in 0..1_000_000 {
@@ -117,11 +165,21 @@ pub extern "C" fn _start() -> ! {
         });
     }
 
-    while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 {
-        core::hint::spin_loop();
+    let mut timeout = 0;
+    while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 && timeout < 10 {
+        //core::hint::spin_loop();
+        syscall_sleep(1000);
+        println!("{}", COUNT.load(Ordering::Relaxed));
+        timeout += 1;
     }
 
-    syscall_test();
+    if timeout >= 10 {
+        println!("Failed");
+        syscall_flush_log();
+    } else {
+        println!("Finished {}", COUNT.load(Ordering::SeqCst));
+    }
+
     syscall_exit();
 }
 

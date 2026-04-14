@@ -21,12 +21,12 @@ pub fn init_gdt(ctx: &mut InitializationContext<Stage3>) {
 
     let gdt_initializer = |cpu: &mut CpuLocalBuilder, ctx: &ApInitializationContext, id| {
         let double_fault = ctx
-            .stack_allocator(|mut s| s.alloc_stack(256))
+            .stack_allocator(|mut s| s.alloc_stack_kernel())
             .expect("Failed to allocate stack for the double fault handler");
         let general_stack =
-            ctx.stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate general interrupt stack");
+            ctx.stack_allocator(|mut s| s.alloc_stack_kernel()).expect("Failed to allocate general interrupt stack");
         let rsp0_stack = ctx
-            .stack_allocator(|mut s| s.alloc_stack(256))
+            .stack_allocator(|mut s| s.alloc_stack_kernel())
             .expect("Failed to allocate stack for rsp0 privilage change in TSS");
 
         log!(Debug, "Initializing gdt for core: {id}");

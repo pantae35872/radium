@@ -51,6 +51,10 @@ impl<'a, A: FrameAllocator, R: RootLevel> WithMapper<'a, StackAllocator, A, R> {
     pub fn alloc_stack(&mut self, size_in_pages: usize) -> Option<stack_allocator::Stack> {
         self.inner.alloc_stack(self.mapper.mapper, self.mapper.allocator, size_in_pages)
     }
+
+    pub fn alloc_stack_kernel(&mut self) -> Option<stack_allocator::Stack> {
+        self.inner.alloc_stack_kernel(self.mapper.mapper, self.mapper.allocator)
+    }
 }
 
 def_local!(pub static ACTIVE_TABLE_UPPER: Arc<Mutex<ActivePageTable<RootRecurseUpperHalf>>>);

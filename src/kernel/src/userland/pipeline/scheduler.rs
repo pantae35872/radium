@@ -53,7 +53,8 @@ impl SchedulerPipeline {
     fn finalize(&mut self, context: &mut PipelineContext) {
         self.units.extend(&context.added_tasks);
 
-        context.should_hlt = (context.should_schedule || context.interrupted_slept) && context.scheduled_task.is_none();
+        context.should_hlt = (context.should_schedule || context.interrupted_slept || context.interrupted_freed)
+            && context.scheduled_task.is_none();
     }
 
     pub fn timer_count(&self) -> usize {
@@ -125,17 +126,6 @@ impl SchedulerPipeline {
         {
             self.units.push_back(interrupted_task);
         }
-
-        //if CORE_ID.is_bsp() {
-        //    let sum = TASK_COUNT_EACH_CORE
-        //        .iter()
-        //        .map(|c| c.load(Ordering::Relaxed))
-        //        .filter(|c| *c != usize::MAX)
-        //        .sum::<usize>();
-        //    if sum != 0 {
-        //        serial_println!("Total task: {sum}");
-        //    }
-        //}
 
         self.migrate(thread);
 

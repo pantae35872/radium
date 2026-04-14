@@ -118,7 +118,7 @@ impl ApInitializer {
 
     fn prepare_stack_and_info(&self, ctx: Arc<ApInitializationContext>) {
         let ctx_ap = Arc::clone(&ctx);
-        let stack = stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for ap");
+        let stack = stack_allocator(|mut s| s.alloc_stack_kernel()).expect("Failed to allocate stack for ap");
 
         let data = SmpInitializationData {
             page_table: self.ap_bootstrap_page_table.start_address().as_u64() as u32,
@@ -333,7 +333,7 @@ impl LocalInitializer {
 
         init_local(
             cpu_local_builder,
-            ctx.stack_allocator(|mut stack| stack.alloc_stack(16))
+            ctx.stack_allocator(|mut stack| stack.alloc_stack_kernel())
                 .expect("Failed to allocate stack for syscall cpu local stack"),
             id,
         );

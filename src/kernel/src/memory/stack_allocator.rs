@@ -1,3 +1,4 @@
+use config::config;
 use pager::{
     EntryFlags, PAGE_SIZE,
     address::{Page, PageIter, Size4K, VirtAddr},
@@ -19,6 +20,14 @@ impl StackAllocator {
 
     pub fn original_range(&self) -> PageIter<Size4K> {
         self.original_range.clone()
+    }
+
+    pub fn alloc_stack_kernel<Root: RootLevel, A: FrameAllocator>(
+        &mut self,
+        mapper: &mut Mapper<Root>,
+        frame_allocator: &mut A,
+    ) -> Option<Stack> {
+        self.alloc_stack(mapper, frame_allocator, config().kernel.stack_size as usize)
     }
 
     pub fn alloc_stack<Root: RootLevel, A: FrameAllocator>(

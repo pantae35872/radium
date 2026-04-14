@@ -122,6 +122,9 @@ pub struct Kernel {
     #[config_name = "Clock Hz rate"]
     #[default(1000)]
     pub clock_hz_rate: i32,
+    #[config_name = "Stack size in pages"]
+    #[default(128)]
+    pub stack_size: i32,
 }
 
 #[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]

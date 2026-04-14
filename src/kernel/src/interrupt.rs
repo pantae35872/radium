@@ -151,7 +151,7 @@ pub fn init(mut ctx: InitializationContext<Stage3>) -> InitializationContext<Sta
     let lapic = move |cpu: &mut CpuLocalBuilder, ctx: &ApInitializationContext, id| {
         log!(Info, "Initializing interrupts for CPU: {id}");
         let hlt_stack =
-            ctx.stack_allocator(|mut s| s.alloc_stack(256)).expect("Failed to allocate stack for the hlt thread");
+            ctx.stack_allocator(|mut s| s.alloc_stack_kernel()).expect("Failed to allocate stack for the hlt thread");
 
         let idt = create_idt();
         idt.load();
@@ -368,6 +368,10 @@ extern "C" fn external_interrupt_handler(stack_frame: &mut ExtendedInterruptStac
     };
 
     if matches!(idx, InterruptIndex::SpuriousInterruptsVector) {
+        if from_user {
+            unsafe { GsBase::swap() };
+        }
+
         return;
     }
 

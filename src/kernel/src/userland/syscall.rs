@@ -1,6 +1,9 @@
 use pager::address::VirtAddr;
 
-use crate::userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext};
+use crate::{
+    logger::LOGGER,
+    userland::pipeline::{CommonRequestContext, ControlPipeline, PipelineContext},
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct SyscallId(pub u32);
@@ -11,6 +14,7 @@ enum Syscall {
     Spawn,
     ExitThread,
     Test,
+    Flush,
 }
 
 impl TryFrom<SyscallId> for Syscall {
@@ -23,6 +27,7 @@ impl TryFrom<SyscallId> for Syscall {
             SyscallId(2) => Ok(Self::Spawn),
             SyscallId(3) => Ok(Self::ExitThread),
             SyscallId(4) => Ok(Self::Test),
+            SyscallId(5) => Ok(Self::Flush),
             SyscallId(unknown) => Err(unknown),
         }
     }
@@ -55,8 +60,11 @@ pub(super) fn syscall_handle(
         Syscall::ExitThread => {
             pipeline.free_thread(pipeline_context, calling_task.thread);
         }
+        Syscall::Flush => {
+            LOGGER.flush_all(&[|s| serial_print!("{s}")]);
+        }
         Syscall::Test => {
-            serial_print!(".");
+            serial_print!("{}", char::from_u32(rq_context.stack_frame.rdx.try_into().unwrap_or(0)).unwrap_or('?'));
         }
     }
 }

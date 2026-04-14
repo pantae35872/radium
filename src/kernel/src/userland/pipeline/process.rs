@@ -67,7 +67,9 @@ impl ProcessPipeline {
 
                 self.hlt_page_table = Some(switch_lower_half(with));
             }
-            (Some(TaskBlock { process, .. }), None) if context.should_schedule => {
+            (Some(TaskBlock { process, .. }), None)
+                if context.should_schedule || context.interrupted_slept || context.interrupted_freed =>
+            {
                 let hlt_table = self.hlt_page_table.take().expect("HLT Page table stolen or uninitialized");
 
                 self.page_tables[process.id] = Some(switch_lower_half(hlt_table));

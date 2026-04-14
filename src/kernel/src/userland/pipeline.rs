@@ -87,6 +87,7 @@ pub struct ControlPipeline {
 
     events: Option<Event>,
     should_schedule: bool,
+    should_check_ipp: bool,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +139,7 @@ impl ControlPipeline {
             scheduler: SchedulerPipeline::new(&mut events),
             events: Some(events),
             should_schedule: false,
+            should_check_ipp: false,
         }
     }
 
@@ -232,8 +234,6 @@ impl ControlPipeline {
     }
 
     fn handle_ipp(&mut self, context: &mut PipelineContext) {
-        context.should_schedule = false;
-
         if let Some(event) = self.events.take() {
             for handler in event.ipp_handlers.iter() {
                 handler(self, context)
@@ -267,12 +267,14 @@ impl TaskBlock {
 }
 
 pub fn handle_hw_interrupt(idx: InterruptIndex) {
-    let idx = match idx {
-        InterruptIndex::CheckIPP => return,
-        idx => idx,
+    match idx {
+        InterruptIndex::CheckIPP => {
+            PIPELINE.borrow_mut().should_check_ipp = true;
+        }
+        idx => {
+            PIPELINE.borrow_mut().hardware_interrupt(idx);
+        }
     };
-
-    PIPELINE.borrow_mut().hardware_interrupt(idx);
 }
 
 /// Handle the request with the provided [`CommonRequestContext`], returning a dispatcher
@@ -287,13 +289,18 @@ pub fn handle_request<'b>(
         RequestReferer::SyscallRequest(id) => {
             super::syscall::syscall_handle(&rq_context, &mut pipeline, &mut context, id)
         }
+        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) if !pipeline.should_check_ipp => {
+            pipeline.handle_ipp(&mut context);
+        }
         RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
             pipeline.handle_ipp(&mut context);
+            pipeline.should_check_ipp = false;
         }
         RequestReferer::HardwareInterrupt(i) => {
             pipeline.hardware_interrupt(i);
         }
     }
+
     pipeline.schedule(&mut context);
     pipeline.finalize(&mut context);
     dispatch(rq_context, Dispatcher::new(context, &pipeline.thread))
