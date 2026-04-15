@@ -45,7 +45,15 @@ pub struct PromtState {
     current_input: usize,
     character_index: usize,
     #[serde(skip)]
+    reverse_search_state: Option<ReverseSearchState>,
+    #[serde(skip)]
     rainbow_interpolate: RainbowInterpolateState,
+}
+
+#[derive(Default, Debug)]
+struct ReverseSearchState {
+    search: String,
+    success: bool,
 }
 
 impl PromtState {
@@ -104,7 +112,7 @@ impl PromtState {
         self.character_index = self.clamp_cursor(cursor_moved_left);
     }
 
-    fn input(&self) -> &str {
+    pub fn input(&self) -> &str {
         &self.history[self.current_input]
     }
 
@@ -129,6 +137,10 @@ impl PromtState {
     }
 
     fn delete_char_back(&mut self) {
+        if self.reverse_search_state.is_some() {
+            return;
+        }
+
         let is_cursor_rightmost = self.character_index > self.len_index();
         if !is_cursor_rightmost {
             let current_index = self.character_index;
@@ -140,6 +152,11 @@ impl PromtState {
     }
 
     fn delete_char(&mut self) {
+        if let Some(ReverseSearchState { search, .. }) = self.reverse_search_state.as_mut() {
+            search.pop();
+            return;
+        }
+
         let is_not_cursor_leftmost = self.character_index != 0;
         if is_not_cursor_leftmost {
             let current_index = self.character_index;
@@ -158,13 +175,50 @@ impl PromtState {
     }
 
     fn enter_char(&mut self, new_char: char) {
+        if let Some(ReverseSearchState { search, .. }) = self.reverse_search_state.as_mut() {
+            search.push(new_char);
+            return;
+        }
+
         let index = self.byte_index();
         self.input_mut().insert(index, new_char);
         self.move_cursor_right();
     }
 
+    pub fn cancel_reverse_search(&mut self) -> bool {
+        self.reverse_search_state.take().is_some()
+    }
+
     pub fn set_cursor_pos(&self, area: Rect, frame: &mut Frame) {
+        if let Some(ReverseSearchState { search, success }) = self.reverse_search_state.as_ref() {
+            let result = if *success {
+                format!(" (reverse search {search}) >")
+            } else {
+                format!(" (failed reverse search ({search})) >")
+            };
+            frame.set_cursor_position(Position::new(area.x + result.len() as u16 + 2, area.y + 1));
+            return;
+        }
+
         frame.set_cursor_position(Position::new(area.x + self.character_index as u16 + 4, area.y + 1));
+    }
+
+    pub fn enter(&mut self) -> Option<String> {
+        self.reverse_search_state = None;
+
+        let ret = self.input_mut().clone();
+        if self.current_input == self.history.len() - 1 {
+            self.history.push(String::new());
+            self.current_input = self.history.len() - 1;
+        } else {
+            self.history.insert(self.history.len() - 1, self.input().to_string());
+            self.current_input = self.history.len() - 1;
+            self.input_mut().clear();
+        }
+
+        self.character_index = 0;
+        self.save();
+        Some(ret)
     }
 
     pub fn key_event(&mut self, event: KeyEvent) -> Option<String> {
@@ -180,40 +234,39 @@ impl PromtState {
             {
                 self.paste_string(text.as_str());
             }
-            KeyCode::Char('r') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                todo!("Reverse search!")
+            KeyCode::Char('r')
+                if event.modifiers.contains(KeyModifiers::CONTROL) && self.reverse_search_state.is_none() =>
+            {
+                self.reverse_search_state = Some(ReverseSearchState::default());
             }
-            KeyCode::Enter => {
-                let ret = self.input_mut().clone();
-                if self.current_input == self.history.len() - 1 {
-                    self.history.push(String::new());
-                    self.current_input = self.history.len() - 1;
-                } else {
-                    self.history.insert(self.history.len() - 1, self.input().to_string());
-                    self.current_input = self.history.len() - 1;
-                    self.input_mut().clear();
-                }
-
-                self.character_index = 0;
-                self.save();
-                return Some(ret);
+            KeyCode::Esc => {
+                self.reverse_search_state = None;
             }
+            KeyCode::Enter => return self.enter(),
             KeyCode::Char(to_insert) => self.enter_char(to_insert),
             KeyCode::Backspace => self.delete_char(),
             KeyCode::Delete => self.delete_char_back(),
             KeyCode::Left => self.move_cursor_left(),
             KeyCode::Right => self.move_cursor_right(),
-            KeyCode::Up => {
+            KeyCode::Up if self.reverse_search_state.is_none() => {
                 self.current_input = self.current_input.saturating_sub(1);
                 self.character_index = self.input().len();
             }
-            KeyCode::Down => {
+            KeyCode::Down if self.reverse_search_state.is_none() => {
                 self.current_input = self.current_input.saturating_add(1).clamp(0, self.history.len() - 1);
                 self.character_index = self.input().len();
             }
             _ => {}
         };
 
+        if let Some(ReverseSearchState { search, success }) = self.reverse_search_state.as_mut() {
+            if let Some(found) = self.history.iter().rposition(|e| e.contains(search.as_str())) {
+                self.current_input = found;
+                *success = true;
+            } else {
+                *success = false;
+            }
+        }
         None
     }
 }
@@ -229,8 +282,19 @@ impl StatefulWidget for Promt<'_> {
         };
 
         state.expand_history();
+        let promt = state
+            .reverse_search_state
+            .as_ref()
+            .map(|ReverseSearchState { search, success }| {
+                if *success {
+                    format!(" (reverse search {search}) > {}", state.input())
+                } else {
+                    format!(" (failed reverse search ({search})) > {}", state.input())
+                }
+            })
+            .unwrap_or_else(|| format!(" > {}", state.input()));
 
-        Paragraph::new(format!(" > {}", state.input()))
+        Paragraph::new(promt)
             .block(
                 Block::bordered()
                     .border_type(BorderType::Rounded)

@@ -282,6 +282,15 @@ impl App {
             }
             Event::Key(key) => match key.code {
                 KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if self.prompt.cancel_reverse_search() {
+                        return Ok(());
+                    }
+
+                    if !self.prompt.input().is_empty() {
+                        self.prompt.enter();
+                        return Ok(());
+                    }
+
                     if let Some(killer) = self.child_process_killer.as_mut()
                         && self.current_command.as_ref().is_some_and(|command| !command.is_finished())
                     {
