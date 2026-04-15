@@ -1,0 +1,12 @@
+[package]
+name = "sink"
+version = "0.1.0"
+edition = "2024"
+description = "All synchronization stuff"
+
+[features]
+default = ["interrupt_safe"]
+interrupt_safe = ["pager"]
+
+[dependencies]
+pager = { workspace = true, optional = true }

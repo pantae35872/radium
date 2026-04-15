@@ -39,7 +39,6 @@ pub mod memory;
 pub mod port;
 pub mod print;
 pub mod serial;
-pub mod sync;
 pub mod syscall;
 pub mod userland;
 pub mod utils;

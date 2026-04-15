@@ -2199,6 +2199,7 @@ dependencies = [
  "raw-cpuid",
  "santa",
  "sentinel",
+ "sink",
  "smart-default",
  "spin",
  "thiserror 2.0.17",
@@ -2777,6 +2778,13 @@ checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
 dependencies = [
  "errno",
  "libc",
+]
+
+[[package]]
+name = "sink"
+version = "0.1.0"
+dependencies = [
+ "pager",
 ]
 
 [[package]]

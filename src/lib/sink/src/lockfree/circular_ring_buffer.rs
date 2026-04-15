@@ -120,7 +120,7 @@ pub mod lockfree {
         sync::atomic::{AtomicUsize, Ordering},
     };
 
-    use crate::interrupt;
+    use crate::without_interrupts;
 
     /// Lock free circular ring buffer
     /// this buffer if overflowed will overwrite the oldest data
@@ -200,7 +200,7 @@ pub mod lockfree {
         }
 
         fn write(&self, value: T) {
-            interrupt::without_interrupts(|| {
+            without_interrupts(|| {
                 loop {
                     match self.state.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed) {
                         Ok(..) => {
@@ -227,7 +227,7 @@ pub mod lockfree {
         }
 
         fn take(&self) -> Option<T> {
-            interrupt::without_interrupts(|| {
+            without_interrupts(|| {
                 loop {
                     match self.state.compare_exchange(2, 1, Ordering::Acquire, Ordering::Relaxed) {
                         Ok(..) => {

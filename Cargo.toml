@@ -15,6 +15,7 @@ members = [
     "src/lib/sentinel",
     "src/lib/packery",
     "src/lib/config",
+    "src/lib/sink",
 
     # proc macros
     "src/proc/kernel",
@@ -45,6 +46,7 @@ pager       = { path = "src/lib/pager" }
 santa       = { path = "src/lib/santa" }
 sentinel    = { path = "src/lib/sentinel" }
 config      = { path = "src/lib/config" }
+sink        = { path = "src/lib/sink" }
 # proc macros
 kernel_proc     = { path = "src/proc/kernel" }
 build_tool_proc = { path = "src/proc/build-tool" }

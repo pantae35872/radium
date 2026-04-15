@@ -3,6 +3,7 @@ use core::{cmp::Ordering, u8};
 use alloc::vec::Vec;
 use bit_field::BitField;
 use pager::address::VirtAddr;
+use sink::VolatileCell;
 
 use crate::{
     driver::acpi::{
@@ -11,7 +12,6 @@ use crate::{
     },
     initialization_context::{InitializationContext, Stage3, select_context},
     memory::{MMIOBuffer, MMIOBufferInfo, MMIODevice},
-    sync::VolatileCell,
 };
 
 use super::{InterruptIndex, apic::ApicId};

@@ -8,8 +8,7 @@ use crc::{
     Hasher64,
     crc64::{self},
 };
-
-use crate::sync::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
+use sink::lockfree::circular_ring_buffer::{lockfree::CircularRingBuffer, singlethreaded};
 
 use super::{CallbackFormatter, LogLevel};
 
