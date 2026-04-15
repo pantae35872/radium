@@ -10,7 +10,10 @@ use derivative::Derivative;
 use crate::{
     interrupt::{CORE_ID, InterruptIndex, LAPIC},
     smp::{CoreId, MAX_CPU},
-    userland::pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
+    userland::{
+        pipeline::{Event, PipelineContext, TaskBlock, thread::ThreadPipeline},
+        syscall::MIGRATE_COUNT,
+    },
 };
 
 const MIGRATION_THRESHOLD: usize = 2;
@@ -113,6 +116,7 @@ impl SchedulerPipeline {
             let core = CoreId::new(target_core).expect("Unintialized core selected when calcuating thread migration");
 
             thread.migrate(core, task);
+            MIGRATE_COUNT.fetch_add(1, Ordering::Relaxed);
 
             TASK_COUNT_EACH_CORE[local_core].fetch_sub(1, Ordering::Relaxed);
             TASK_COUNT_EACH_CORE[target_core].fetch_add(1, Ordering::Relaxed);
@@ -138,6 +142,8 @@ impl SchedulerPipeline {
             if task.valid() {
                 context.scheduled_task = Some(task);
                 break;
+            } else {
+                log!(Debug, "invalid task! {task:?}");
             }
         }
     }

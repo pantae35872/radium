@@ -124,7 +124,7 @@ fn create_idt() -> &'static Idt {
 
 def_local!(static IDT: &'static crate::interrupt::idt::Idt);
 def_local!(static INTERRUPT_QUEUE: RefCell<VecDeque<InterruptIndex>>);
-def_local!(static HLT_STACK: crate::memory::stack_allocator::Stack);
+def_local!(pub static HLT_STACK: crate::memory::stack_allocator::Stack);
 def_local!(pub static LAPIC: crate::interrupt::apic::LocalApic);
 def_local!(pub static CORE_ID: CoreId);
 def_local!(pub static APIC_ID: ApicId);

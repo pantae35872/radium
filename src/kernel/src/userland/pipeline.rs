@@ -289,18 +289,16 @@ pub fn handle_request<'b>(
         RequestReferer::SyscallRequest(id) => {
             super::syscall::syscall_handle(&rq_context, &mut pipeline, &mut context, id)
         }
-        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) if !pipeline.should_check_ipp => {
-            pipeline.handle_ipp(&mut context);
-        }
-        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {
-            pipeline.handle_ipp(&mut context);
+        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) if pipeline.should_check_ipp => {
             pipeline.should_check_ipp = false;
         }
+        RequestReferer::HardwareInterrupt(InterruptIndex::CheckIPP) => {}
         RequestReferer::HardwareInterrupt(i) => {
             pipeline.hardware_interrupt(i);
         }
     }
 
+    pipeline.handle_ipp(&mut context);
     pipeline.schedule(&mut context);
     pipeline.finalize(&mut context);
     dispatch(rq_context, Dispatcher::new(context, &pipeline.thread))

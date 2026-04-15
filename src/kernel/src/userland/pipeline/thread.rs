@@ -19,10 +19,13 @@ use crate::{
     interrupt::CORE_ID,
     memory::stack_allocator::Stack,
     smp::CoreId,
-    userland::pipeline::{
-        CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock, TaskProcesserState,
-        process::{Process, ProcessPipeline},
-        scheduler::SchedulerPipeline,
+    userland::{
+        pipeline::{
+            CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock, TaskProcesserState,
+            process::{Process, ProcessPipeline},
+            scheduler::SchedulerPipeline,
+        },
+        syscall::MIGRATE_RECEIVED_COUNT,
     },
 };
 
@@ -71,7 +74,7 @@ impl ThreadPipeline {
         &self.thread_context(thread).processor_state
     }
 
-    fn handle_ipp(&mut self, _context: &mut PipelineContext, scheduler: &mut SchedulerPipeline) {
+    fn handle_ipp(&mut self, pipeline_context: &mut PipelineContext, scheduler: &mut SchedulerPipeline) {
         ThreadMigratePacket::handle(|ThreadMigratePacket { context, process, global_id }| {
             assert_matches!(context.state, ThreadState::Active, "Dead thread were migrated");
 
@@ -84,10 +87,13 @@ impl ThreadPipeline {
                 id
             };
 
-            id::migrate_thread(global_id, LocalThreadId::new(id));
-            let thread = Thread { global_id, signature: id::sigature(global_id) };
+            let new_sig = id::migrate_thread(global_id, LocalThreadId::new(id));
+            let thread = Thread { global_id, signature: new_sig };
+            let task = TaskBlock { process, thread };
+            pipeline_context.added_tasks.push(task);
+            assert!(task.valid(), "Migrated task invalid");
 
-            scheduler.add_task(TaskBlock { process, thread });
+            MIGRATE_RECEIVED_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         });
     }
 
@@ -103,9 +109,9 @@ impl ThreadPipeline {
                 ..unsafe { zeroed() }
             },
         );
+        id::invalidate(thread);
         ThreadMigratePacket { context, global_id: thread.global_id, process }.send(destination, false);
 
-        id::invalidate(thread);
         self.migrated_thread.push(id);
     }
 

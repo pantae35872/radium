@@ -31,8 +31,9 @@ impl GlobalThreadIdPool {
         self.pool[global_id.get() - 1].local_id
     }
 
-    fn migrate(&mut self, global_id: NonZeroUsize, new_local_id: LocalThreadId) {
+    fn migrate(&mut self, global_id: NonZeroUsize, new_local_id: LocalThreadId) -> usize {
         self.pool[global_id.get() - 1].local_id = new_local_id;
+        self.pool[global_id.get() - 1].signature
     }
 
     fn invalidate(&mut self, global_id: NonZeroUsize) {
@@ -87,13 +88,13 @@ pub(super) fn alloc_thread(local_id: LocalThreadId) -> Thread {
 }
 
 pub(super) fn free_thread(thread: Thread) {
-    GLOBAL_THREAD_ID_MAP.write().free(thread.global_id);
+    GLOBAL_THREAD_ID_MAP.write().free(thread.global_id)
 }
 
 pub(super) fn invalidate(thread: Thread) {
-    GLOBAL_THREAD_ID_MAP.write().invalidate(thread.global_id);
+    GLOBAL_THREAD_ID_MAP.write().invalidate(thread.global_id)
 }
 
-pub(super) fn migrate_thread(global_id: NonZeroUsize, local_id: LocalThreadId) {
-    GLOBAL_THREAD_ID_MAP.write().migrate(global_id, local_id);
+pub(super) fn migrate_thread(global_id: NonZeroUsize, local_id: LocalThreadId) -> usize {
+    GLOBAL_THREAD_ID_MAP.write().migrate(global_id, local_id)
 }

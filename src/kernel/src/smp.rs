@@ -368,6 +368,7 @@ const _: () = assert!(offset_of!(CpuLocalPointer, cpu_local) == 16, "syscall rsp
 ///
 /// Panics if the cpu local is not initialized, can be checked by cpu_local_avaiable function
 #[inline(always)]
+#[track_caller]
 pub fn cpu_local() -> &'static mut CpuLocal {
     let ptr: *mut CpuLocal;
     if GsBase::read().is_null() || !GsBase::read().is_canonical_higher_half() {

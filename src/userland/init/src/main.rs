@@ -177,6 +177,7 @@ pub extern "C" fn _start() -> ! {
         println!("Failed");
         syscall_flush_log();
     } else {
+        syscall_flush_log();
         println!("Finished {}", COUNT.load(Ordering::SeqCst));
     }
 

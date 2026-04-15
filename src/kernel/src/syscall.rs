@@ -8,9 +8,8 @@ use pager::{
 
 use crate::{
     gdt::{KERNEL_CODE_SEG, KERNEL_DATA_SEG, USER_CODE_SEG, USER_CODE_SEG_DUMMY, USER_DATA_SEG},
-    hlt_loop,
     initialization_context::{InitializationContext, Stage4},
-    interrupt::{self, ExtendedInterruptStackFrame, enable},
+    interrupt::{self, ExtendedInterruptStackFrame, HLT_STACK},
     memory::is_stack_aligned_16,
     userland::{
         self,
@@ -77,11 +76,11 @@ extern "C" fn syscall_handler(stack_frame: &mut CommonRequestStackFrame) {
     *IS_IN_SYSCALL.inner_mut() = false;
 
     if should_hlt {
-        enable();
+        let stack = HLT_STACK.top();
         // We can directly do hlt loop here since theres no requirement to return from,
         // the syscall instruction, and the stack will reset to a default value, when
         // the next syscall instruction is executed
-        hlt_loop();
+        unsafe { asm!("mov rsp, {0}", "sti", "2:", "hlt", "jmp 2b", in(reg) stack.as_u64(), options(noreturn)) };
     }
 
     if use_iret {

@@ -1,3 +1,5 @@
+use core::sync::atomic::AtomicUsize;
+
 use pager::address::VirtAddr;
 
 use crate::{
@@ -33,6 +35,10 @@ impl TryFrom<SyscallId> for Syscall {
     }
 }
 
+pub static MIGRATE_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static MIGRATE_RECEIVED_COUNT: AtomicUsize = AtomicUsize::new(0);
+pub static THREAD_FREE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
 pub(super) fn syscall_handle(
     rq_context: &CommonRequestContext,
     pipeline: &mut ControlPipeline,
@@ -59,8 +65,16 @@ pub(super) fn syscall_handle(
         }
         Syscall::ExitThread => {
             pipeline.free_thread(pipeline_context, calling_task.thread);
+            THREAD_FREE_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         }
         Syscall::Flush => {
+            log!(Debug, "Thread free total count: {}", THREAD_FREE_COUNT.load(core::sync::atomic::Ordering::Relaxed));
+            log!(Debug, "migrate total count: {}", MIGRATE_COUNT.load(core::sync::atomic::Ordering::Relaxed));
+            log!(
+                Debug,
+                "migrate total received count: {}",
+                MIGRATE_RECEIVED_COUNT.load(core::sync::atomic::Ordering::Relaxed)
+            );
             LOGGER.flush_all(&[|s| serial_print!("{s}")]);
         }
         Syscall::Test => {

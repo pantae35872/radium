@@ -296,16 +296,19 @@ pub fn def_local(input: TokenStream) -> TokenStream {
         impl core::ops::Deref for #access_type {
             type Target = #ty;
 
+            #[track_caller]
             fn deref(&self) -> &Self::Target {
                 self.inner()
             }
         }
 
         impl #access_type {
+            #[track_caller]
             pub fn inner(&self) -> &'static #ty {
                 &crate::smp::cpu_local().#full_name
             }
 
+            #[track_caller]
             pub fn inner_mut(&self) -> &'static mut #ty {
                 &mut crate::smp::cpu_local().#full_name
             }
