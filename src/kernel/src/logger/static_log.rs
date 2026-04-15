@@ -17,28 +17,6 @@ const CHUNK_SIZE: usize = 128;
 const DATA_SIZE_PER_CHUNK: usize = CHUNK_SIZE - size_of::<ChunkHeader>();
 const HEADER_MAGIC: u64 = u64::from_le_bytes(*b"LogrMagi");
 
-/// TODO: REWRITE this, wtf was i'm on
-/// One chunk can respresent two possible modes, first is master, second is slave, if the
-/// chunk is a master it'll respresent one "log", if the chunk is a slave, it'll just contain the
-/// string bytes of the master it's owned to
-///
-/// "log" is a definition of a one log, it's must only have one log level.
-/// Example using log! macro:
-/// ```
-/// log!(Info, "This is one log ... another 64 charactors");  // This will be respresent as two chunk assuming chunk size is 64 bytes
-/// log!(Debug, "This is still one log \n");
-/// log!(Trace, "This is one log");
-/// ```
-/// # Example
-/// First chunk:
-/// |The header. 32 bytes, is a master (length field != 0), and log level is Info|
-/// |32 bytes of the string|
-/// Second chunk and ..:
-/// |The slaves continue respresenting the string...|
-///
-///
-/// # Warning
-/// This when the log is readed, it'll **consume** the log
 pub struct StaticLog<const BUFFER_SIZE: usize> {
     buffer: CircularRingBuffer<[u8; CHUNK_SIZE], BUFFER_SIZE>,
     id_count: AtomicU64,

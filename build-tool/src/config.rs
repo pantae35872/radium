@@ -31,7 +31,7 @@ pub struct ConfigRoot {
 pub struct BuildTool {
     #[config_name = "Scrollback size"]
     #[default = 1000]
-    pub max_scrollback_size: i32,
+    pub max_scrollback_size: usize,
     #[config_name = "ReExec when build-tool changed"]
     #[default = true]
     pub reexec: bool,
@@ -45,10 +45,10 @@ pub struct Qemu {
     pub run: bool,
     #[config_name = "QEMU Guest Memory (in MB)"]
     #[default = 1024]
-    pub memory: i32,
+    pub memory: usize,
     #[config_name = "SMP Core count"]
     #[default = 8]
-    pub core_count: i32,
+    pub core_count: u32,
     #[config_name = "Open GDB Server"]
     #[default = false]
     pub gdb: bool,
@@ -105,10 +105,10 @@ pub struct Bootloader {
 pub struct ScreenResolution {
     #[config_name = "Width"]
     #[default = 1920]
-    pub width: i32,
+    pub width: usize,
     #[config_name = "Height"]
     #[default = 1080]
-    pub height: i32,
+    pub height: usize,
 }
 
 #[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
@@ -118,13 +118,16 @@ pub struct Kernel {
     pub log_level: LogLevel,
     #[config_name = "Font size"]
     #[default(14)]
-    pub font_size: i32,
+    pub font_size: usize,
     #[config_name = "Clock Hz rate"]
     #[default(1000)]
-    pub clock_hz_rate: i32,
+    pub clock_hz_rate: usize,
     #[config_name = "Stack size in pages"]
     #[default(128)]
-    pub stack_size: i32,
+    pub stack_size: usize,
+    #[config_name = "qemu exit on panic"]
+    #[default(false)]
+    pub panic_exit: bool,
 }
 
 #[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]
@@ -216,7 +219,8 @@ pub enum ConfigTree {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigValue {
-    Number(i32),
+    NumberSigned(isize),
+    Number(usize),
     Bool(bool),
     Text(String),
     Union { current: usize, values: Vec<String> },
@@ -265,10 +269,58 @@ macro_rules! cfg_value_impl {
     };
 }
 
-cfg_value_impl!(Number(i32), "{}", |s: &mut i32, value: &str| -> Result<(), Error> {
-    *s = value.parse().map_err(|_| Error::InvalidValue(value.to_string()))?;
-    Ok(())
-});
+macro_rules! impl_number {
+    ($variant: ident($from_ty: ty => $to_type: ty)) => {
+        impl From<$from_ty> for ConfigValue {
+            fn from(value: $from_ty) -> Self {
+                Self::$variant(value as $to_type)
+            }
+        }
+        impl Config for $from_ty {
+            fn into_tree(self, name: String, overwriting_name: String) -> ConfigTree {
+                ConfigTree::Value { name, overwriting_name, value: ConfigValue::$variant(self as $to_type) }
+            }
+            fn into_const_rust(&self) -> String {
+                format!("{}", self)
+            }
+            fn modifier_config<'a, C: IntoIterator<Item = &'a str>>(
+                &mut self,
+                _config: C,
+                value: &str,
+            ) -> Result<(), Error> {
+                (|s: &mut $from_ty, value: &str| -> Result<(), Error> {
+                    *s = value.parse().map_err(|_| Error::InvalidValue(value.to_string()))?;
+                    Ok(())
+                })(self, value)
+            }
+            fn into_const_rust_types(&self) -> String {
+                String::new()
+            }
+        }
+        impl TryFrom<ConfigTree> for $from_ty {
+            type Error = ConfigTree;
+
+            fn try_from(value: ConfigTree) -> Result<Self, Self::Error> {
+                match value {
+                    ConfigTree::Value { value: ConfigValue::$variant(value), .. } => Ok(value as $from_ty),
+                    t => Err(t),
+                }
+            }
+        }
+    };
+}
+
+impl_number!(NumberSigned(isize => isize));
+impl_number!(NumberSigned(i64 => isize));
+impl_number!(NumberSigned(i32 => isize));
+impl_number!(NumberSigned(i16 => isize));
+impl_number!(NumberSigned(i8 => isize));
+
+impl_number!(Number(usize => usize));
+impl_number!(Number(u64 => usize));
+impl_number!(Number(u32 => usize));
+impl_number!(Number(u16 => usize));
+impl_number!(Number(u8 => usize));
 
 cfg_value_impl!(Bool(bool), "{}", |s: &mut bool, value: &str| -> Result<(), Error> {
     *s = match value {
@@ -287,6 +339,7 @@ cfg_value_impl!(Text(String), "r\"{}\"", |s: &mut String, value: &str| -> Result
 impl Display for ConfigValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::NumberSigned(value) => write!(f, "{value}"),
             Self::Number(value) => write!(f, "{value}"),
             Self::Bool(value) => write!(f, "{value}"),
             Self::Text(value) => write!(f, "{value}"),

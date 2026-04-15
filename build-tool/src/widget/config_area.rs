@@ -147,6 +147,9 @@ impl StatefulWidget for ConfigArea {
                 ConfigValue::Number(value) => {
                     vec![Line::from(value.to_string())]
                 }
+                ConfigValue::NumberSigned(value) => {
+                    vec![Line::from(value.to_string())]
+                }
                 ConfigValue::Text(value) => {
                     vec![Line::from(value.clone())]
                 }
@@ -301,6 +304,7 @@ impl ConfigAreaState {
         if let Some(ConfigTree::Value { value, .. }) =
             self.edit.as_ref().and_then(|edit| edit.get_value_mut(&mut self.config_staging))
         {
+            // TODO: Negative numbers
             match (event.code, value) {
                 (KeyCode::Enter | KeyCode::Esc, _) => {
                     self.edit = None;
@@ -309,10 +313,16 @@ impl ConfigAreaState {
                     *value = 0;
                 }
                 (KeyCode::Backspace, ConfigValue::Number(value)) => {
-                    *value = *value / 10;
+                    *value /= 10;
+                }
+                (KeyCode::Backspace, ConfigValue::NumberSigned(value)) => {
+                    *value /= 10;
                 }
                 (KeyCode::Char(c), ConfigValue::Number(value)) if let Some(digit) = c.to_digit(10) => {
-                    *value = value.saturating_mul(10).saturating_add(digit as i32);
+                    *value = value.saturating_mul(10).saturating_add(digit as usize);
+                }
+                (KeyCode::Char(c), ConfigValue::NumberSigned(value)) if let Some(digit) = c.to_digit(10) => {
+                    *value = value.saturating_mul(10).saturating_add(digit as isize);
                 }
                 (KeyCode::Char('h'), ConfigValue::Text(value)) if event.modifiers.contains(KeyModifiers::CONTROL) => {
                     value.clear();
@@ -330,7 +340,7 @@ impl ConfigAreaState {
                     if *current == 0 {
                         *current = values.len().saturating_sub(1);
                     } else {
-                        *current = *current - 1;
+                        *current -= 1;
                     }
                 }
                 (KeyCode::Down | KeyCode::Tab, ConfigValue::Union { current, values, .. }) => {

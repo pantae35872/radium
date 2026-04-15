@@ -27,7 +27,7 @@ impl StackAllocator {
         mapper: &mut Mapper<Root>,
         frame_allocator: &mut A,
     ) -> Option<Stack> {
-        self.alloc_stack(mapper, frame_allocator, config().kernel.stack_size as usize)
+        self.alloc_stack(mapper, frame_allocator, config().kernel.stack_size)
     }
 
     pub fn alloc_stack<Root: RootLevel, A: FrameAllocator>(

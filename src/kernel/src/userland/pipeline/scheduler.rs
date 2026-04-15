@@ -35,7 +35,7 @@ pub struct SchedulerPipeline {
 }
 
 const fn timer_ms() -> usize {
-    1000 / config().kernel.clock_hz_rate as usize
+    1000 / config().kernel.clock_hz_rate
 }
 
 impl SchedulerPipeline {

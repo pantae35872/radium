@@ -23,6 +23,7 @@ extern crate core;
 
 pub mod prelude;
 
+use config::config;
 #[prelude_import]
 #[allow(unused)]
 use prelude::*;
@@ -144,7 +145,6 @@ pub trait Testable {
 }
 
 pub const TESTING: bool = cfg!(test) | cfg!(feature = "testing");
-pub const QEMU_EXIT_PANIC: bool = cfg!(feature = "panic_exit");
 
 static PANIC_COUNT: AtomicUsize = AtomicUsize::new(0);
 
@@ -211,7 +211,7 @@ fn panic(info: &PanicInfo) -> ! {
 
     if TESTING {
         test_panic_handler(info);
-    } else if QEMU_EXIT_PANIC {
+    } else if config().kernel.panic_exit {
         exit_qemu(QemuExitCode::Failed);
     } else {
         hlt_loop();

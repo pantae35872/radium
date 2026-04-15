@@ -23,7 +23,6 @@ use crate::{
         pipeline::{
             CURRENT_THREAD_ID, CommonRequestContext, Event, PipelineContext, TaskBlock, TaskProcesserState,
             process::{Process, ProcessPipeline},
-            scheduler::SchedulerPipeline,
         },
         syscall::MIGRATE_RECEIVED_COUNT,
     },
@@ -46,7 +45,7 @@ impl ThreadPipeline {
 
         event.finalize(|c, s| c.thread.finalize(s));
 
-        event.ipp_handler(|c, cx| c.thread.handle_ipp(cx, &mut c.scheduler));
+        event.ipp_handler(|c, cx| c.thread.handle_ipp(cx));
 
         Self::default()
     }
@@ -74,7 +73,7 @@ impl ThreadPipeline {
         &self.thread_context(thread).processor_state
     }
 
-    fn handle_ipp(&mut self, pipeline_context: &mut PipelineContext, scheduler: &mut SchedulerPipeline) {
+    fn handle_ipp(&mut self, pipeline_context: &mut PipelineContext) {
         ThreadMigratePacket::handle(|ThreadMigratePacket { context, process, global_id }| {
             assert_matches!(context.state, ThreadState::Active, "Dead thread were migrated");
 
