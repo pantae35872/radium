@@ -80,26 +80,23 @@ impl<T, const N: usize> Queue<T, N> {
     /// Attempt to pop a value. Returns Some(T) if successful, or None if empty.
     /// Only a single consumer must call pop.
     pub fn pop(&self) -> Option<T> {
-        let Ok(pos) = self.head.try_update(Ordering::AcqRel, Ordering::Acquire, |head| {
-            let tail = self.tail.load(Ordering::Acquire);
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Acquire);
 
-            if head >= tail {
-                return None;
-            }
-            Some(head.wrapping_add(1))
-        }) else {
+        if head >= tail {
             return None;
-        };
+        }
 
-        let slot = &self.buffer[pos % N];
+        let slot = &self.buffer[head % N];
 
         // Wait until slot.sequence == pos + 1 (data ready)
-        while slot.sequence.load(Ordering::Acquire) != pos.wrapping_add(1) {
+        while slot.sequence.load(Ordering::Acquire) != head.wrapping_add(1) {
             core::hint::spin_loop();
         }
         // Read the data
         let value = unsafe { (*slot.data.get()).assume_init_read() };
-        slot.sequence.store(pos.wrapping_add(N), Ordering::Release);
+        slot.sequence.store(head.wrapping_add(N), Ordering::Release);
+        self.head.store(head.wrapping_add(1), Ordering::Release);
         Some(value)
     }
 }

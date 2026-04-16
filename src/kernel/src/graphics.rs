@@ -62,6 +62,9 @@ impl Graphic {
     pub fn swap(&mut self) {
         let min_pos = self.backbuffer_tracker.frame_buffer_min();
         let max_pos = self.backbuffer_tracker.frame_buffer_max().min(self.real_buffer.len() - 1);
+        if max_pos < min_pos {
+            return;
+        }
         unsafe {
             let src = &self.frame_buffer[min_pos..=max_pos];
             let dst = &mut self.real_buffer[min_pos..=max_pos];

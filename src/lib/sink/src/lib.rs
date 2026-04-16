@@ -4,9 +4,13 @@
 
 use core::{arch::asm, cell::SyncUnsafeCell, fmt::Debug};
 
+#[cfg(feature = "interrupt_safe")]
 use pager::registers::RFlags;
 
+extern crate alloc;
+
 pub mod lockfree;
+pub mod singlethreaded;
 
 #[repr(transparent)]
 pub struct VolatileCell<T> {
@@ -32,6 +36,15 @@ impl<T: Copy + Debug> Debug for VolatileCell<T> {
 }
 
 #[inline(always)]
+fn spin_loop() {
+    #[cfg(not(feature = "loom_test"))]
+    core::hint::spin_loop();
+
+    #[cfg(feature = "loom_test")]
+    loom::thread::yield_now();
+}
+
+#[inline(always)]
 pub fn disable() {
     // SAFETY: Enabling and Disabling interrupt is considered safe in kernel context
     unsafe { asm!("cli", options(nomem, nostack)) }
@@ -48,15 +61,20 @@ pub fn without_interrupts<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let was_enable = RFlags::read().contains(RFlags::InterruptEnable);
-    if was_enable {
-        disable();
-    }
+    #[cfg(feature = "interrupt_safe")]
+    {
+        let was_enable = RFlags::read().contains(RFlags::InterruptEnable);
+        if was_enable {
+            disable();
+        }
 
-    let ret = f();
+        let ret = f();
 
-    if was_enable {
-        enable();
+        if was_enable {
+            enable();
+        }
+        ret
     }
-    ret
+    #[cfg(not(feature = "interrupt_safe"))]
+    f()
 }

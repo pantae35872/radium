@@ -17,7 +17,7 @@ use crate::{
 mod static_log;
 
 pub static LOGGER: MainLogger = MainLogger::new();
-const BUFFER_SIZE: usize = 0x4000;
+const BUFFER_SIZE: usize = 0x2000;
 
 struct CallbackFormatter<C: FnMut(&str)> {
     callback: C,
@@ -75,17 +75,16 @@ impl MainLogger {
     }
 
     pub fn flush_all(&self, displays: &[fn(&str)]) {
-        while let Some(losts) = self.logger.read(CallbackFormatter::new(|s| {
+        let losts = self.logger.read(CallbackFormatter::new(|s| {
             displays.iter().for_each(|d| (d)(s));
-        })) {
-            if losts == 0 {
-                continue;
-            }
-            let _ = CallbackFormatter::new(|s| {
-                displays.iter().for_each(|d| (d)(s));
-            })
-            .write_fmt(format_args!("\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes"));
+        }));
+        if losts == 0 {
+            return;
         }
+        let _ = CallbackFormatter::new(|s| {
+            displays.iter().for_each(|d| (d)(s));
+        })
+        .write_fmt(format_args!("\n\n\x1b[93mWARNING\x1b[0m: Could not recover some logs, lost {losts} bytes\n\n"));
     }
 
     pub fn flush_select(&self) {

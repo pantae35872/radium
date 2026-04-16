@@ -7,6 +7,8 @@ description = "All synchronization stuff"
 [features]
 default = ["interrupt_safe"]
 interrupt_safe = ["pager"]
+loom_test = ["loom"]
 
 [dependencies]
 pager = { workspace = true, optional = true }
+loom = { version = "0.7", optional = true }

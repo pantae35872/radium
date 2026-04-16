@@ -167,7 +167,6 @@ pub extern "C" fn _start() -> ! {
 
     let mut timeout = 0;
     while COUNT.load(Ordering::Relaxed) < 1_000_000 * 512 && timeout < 10 {
-        //core::hint::spin_loop();
         syscall_sleep(1000);
         println!("{}", COUNT.load(Ordering::Relaxed));
         timeout += 1;
