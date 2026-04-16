@@ -122,12 +122,25 @@ pub struct Kernel {
     #[config_name = "Clock Hz rate"]
     #[default(1000)]
     pub clock_hz_rate: usize,
-    #[config_name = "Stack size in pages"]
-    #[default(128)]
-    pub stack_size: usize,
     #[config_name = "qemu exit on panic"]
     #[default(false)]
     pub panic_exit: bool,
+    #[config_name = "Stack size in pages"]
+    #[default(64)]
+    pub stack_size: usize,
+    #[config_name = "Logger"]
+    pub logger: Logger,
+}
+
+#[derive(Config, Serialize, Deserialize, SmartDefault, Debug, Clone)]
+#[serde(default)]
+pub struct Logger {
+    #[config_name = "Chunk size"]
+    #[default = 128]
+    pub chunk_size: usize,
+    #[config_name = "Buffer length"]
+    #[default = 8192]
+    pub buffer_length: usize,
 }
 
 #[derive(Config, Serialize, Deserialize, Clone, Copy, Debug, Default)]

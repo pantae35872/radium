@@ -17,7 +17,7 @@ use crate::{
 mod static_log;
 
 pub static LOGGER: MainLogger = MainLogger::new();
-const BUFFER_SIZE: usize = 0x2000;
+const BUFFER_LENGTH: usize = config().kernel.logger.buffer_length;
 
 struct CallbackFormatter<C: FnMut(&str)> {
     callback: C,
@@ -37,7 +37,7 @@ impl<C: FnMut(&str)> Write for CallbackFormatter<C> {
 }
 
 pub struct MainLogger {
-    logger: StaticLog<BUFFER_SIZE>,
+    logger: StaticLog<BUFFER_LENGTH>,
     /// SAFETY: This is sync because this is our kernel does not have multi threaded
     /// initialization and the logger instance is only initialize once across all cores
     level: SyncUnsafeCell<LogLevel>,

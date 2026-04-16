@@ -4,12 +4,13 @@ use core::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
+use config::config;
 use sink::{lockfree::overwrite::continuous::ContinuousRingBuffer, singlethreaded};
 use spin::Mutex;
 
 use super::{CallbackFormatter, LogLevel};
 
-const CHUNK_SIZE: usize = 128;
+const CHUNK_SIZE: usize = config().kernel.logger.chunk_size;
 
 pub struct StaticLog<const BUFFER_SIZE: usize> {
     buffer: ContinuousRingBuffer<Chunk, BUFFER_SIZE>,
@@ -222,51 +223,3 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         return new_hold_count;
     }
 }
-
-//struct Connector<const B: usize> {
-//    current_id: usize,
-//    buffers: [singlethreaded::RingBuffer<Chunk, B>; 2],
-//    current_buffer: usize,
-//}
-//
-//impl<const B: usize> Connector<B> {
-//    pub const fn new() -> Self {
-//        Self { current_id: 0, buffers: array::from_fn(|_| singlethreaded::RingBuffer::new()), current_buffer: 0 }
-//    }
-//
-//    pub fn hold_buffer(&mut self) -> &mut singlethreaded::RingBuffer<Chunk, B> {
-//        &mut self.buffers[self.current_buffer.wrapping_add(1) % 2]
-//    }
-//
-//    pub fn current_buffer(&mut self) -> &mut singlethreaded::RingBuffer<Chunk, B> {
-//        &mut self.buffers[self.current_buffer % 2]
-//    }
-//
-//    pub fn buffer_of<'a>(&'a mut self, chunk: &Chunk) -> &'a mut singlethreaded::RingBuffer<Chunk, B> {
-//        if chunk.id.get() == self.current_id { self.current_buffer() } else { self.hold_buffer() }
-//    }
-//
-//    pub fn swap_buffer(&mut self) {
-//        self.current_buffer = self.current_buffer.wrapping_add(1);
-//    }
-//
-//    pub fn connect(&mut self, chunk: Chunk, start: impl FnMut(LogLevel, &[u8])) {
-//        match chunk.role {
-//            ChunkRole::Start => {
-//                if self.current_id == 0 {
-//                    self.current_id = chunk.id.get();
-//                }
-//            }
-//            ChunkRole::Data => {}
-//            ChunkRole::End => {}
-//        }
-//
-//        self.buffer_of(&chunk).write(chunk.clone());
-//
-//        if matches!(chunk.role, ChunkRole::End) {
-//            while let Some(read) = self.buffer_of(&chunk).read() {
-//                process(read)
-//            }
-//        }
-//    }
-//}
