@@ -22,6 +22,7 @@ pub struct StaticLog<const BUFFER_SIZE: usize> {
 struct Chunk {
     role: ChunkRole,
     length: usize,
+    self_close: bool,
     level: LogLevel,
     id: NonZeroUsize,
     data: [u8; CHUNK_SIZE],
@@ -106,8 +107,14 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                 first = false;
             }
 
-            chunk =
-                Some(Chunk { role: ChunkRole::Data, id: NonZeroUsize::new(id).unwrap(), level, length, data: *buf });
+            chunk = Some(Chunk {
+                role: ChunkRole::Data,
+                self_close: false,
+                id: NonZeroUsize::new(id).unwrap(),
+                level,
+                length,
+                data: *buf,
+            });
         });
 
         let _ = CallbackFormatter::new(|s| {
@@ -119,21 +126,12 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
         if let Some(mut chunk) = chunk.take() {
             if first {
                 chunk.role = ChunkRole::Start;
+                chunk.self_close = true;
             } else {
                 chunk.role = ChunkRole::End;
             }
 
             self.buffer.write(chunk);
-
-            if first {
-                self.buffer.write(Chunk {
-                    role: ChunkRole::End,
-                    id: NonZeroUsize::new(id).unwrap(),
-                    level,
-                    length: 0,
-                    data: [0; CHUNK_SIZE],
-                });
-            }
         }
     }
 
@@ -160,6 +158,9 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                         chunk.level,
                         str::from_utf8(&chunk.data[..chunk.length.min(CHUNK_SIZE)]).unwrap_or("?")
                     ));
+                    if chunk.self_close {
+                        current_id = 0;
+                    }
                 }
                 ChunkRole::Data => {
                     let _ =
@@ -208,6 +209,10 @@ impl<const BUFFER_SIZE: usize> StaticLog<BUFFER_SIZE> {
                         chunk.level,
                         str::from_utf8(&chunk.data[..chunk.length.min(CHUNK_SIZE)]).unwrap_or("?")
                     ));
+
+                    if chunk.self_close {
+                        current_id = 0;
+                    }
                 }
                 ChunkRole::Data => {
                     let _ =
