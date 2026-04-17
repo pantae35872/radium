@@ -119,3 +119,78 @@ struct Slot<T> {
     data: UnsafeCell<MaybeUninit<T>>,
     sequence: AtomicUsize,
 }
+
+#[cfg(all(feature = "loom_test", test))]
+mod test_loom {
+    use alloc::vec::Vec;
+    use loom::{sync::Arc, thread};
+
+    use crate::lockfree::mpsc::Queue;
+
+    #[derive(Debug)]
+    struct Data {
+        thread: usize,
+        count: usize,
+    }
+
+    fn loom_test<const P: usize, const D: usize>() {
+        let data = Arc::new(Queue::<Data, 64>::new());
+        let mut handles = Vec::new();
+
+        for thread in 0..P {
+            let data = data.clone();
+            handles.push(thread::spawn(move || {
+                for count in 1..D {
+                    data.push(Data { thread, count }).unwrap();
+                }
+            }));
+        }
+
+        let mut thread_counts = [0; P];
+        while let Some(pop) = data.pop() {
+            match thread_counts[pop.thread].cmp(&pop.count) {
+                core::cmp::Ordering::Greater => panic!("Thread data got reordered"),
+                core::cmp::Ordering::Equal => panic!("Thread send duplicated data!"),
+                core::cmp::Ordering::Less => {
+                    if thread_counts[pop.thread] != pop.count - 1 {
+                        panic!("Thread skipped data!");
+                    }
+                    thread_counts[pop.thread] = pop.count;
+                }
+            }
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        while let Some(pop) = data.pop() {
+            match thread_counts[pop.thread].cmp(&pop.count) {
+                core::cmp::Ordering::Greater => panic!("Thread data got reordered"),
+                core::cmp::Ordering::Equal => panic!("Thread send duplicated data!"),
+                core::cmp::Ordering::Less => {
+                    if thread_counts[pop.thread] != pop.count - 1 {
+                        panic!("Thread skipped data!");
+                    }
+                    thread_counts[pop.thread] = pop.count;
+                }
+            }
+        }
+
+        assert!(thread_counts.iter().all(|e| *e == D - 1), "Missing data!");
+    }
+
+    #[test]
+    fn loom_2_producer() {
+        loom::model(|| {
+            loom_test::<2, 16>();
+        });
+    }
+
+    #[test]
+    fn loom_3_producer() {
+        loom::model(|| {
+            loom_test::<3, 16>();
+        });
+    }
+}
